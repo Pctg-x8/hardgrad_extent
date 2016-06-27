@@ -1,0 +1,15 @@
+[package]
+name = "hardgrad_extent"
+version = "0.1.0"
+authors = ["S.Percentage <Syn.Tri.Naga@gmail.com>"]
+publish = false
+
+[dependencies]
+libc = "0.2.12"
+
+[dependencies.x11]
+version = "2.6.1"
+features = ["xlib"]
+
+[features]
+use_x11 = []
