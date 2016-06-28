@@ -60,7 +60,7 @@ impl RenderBackend
 		}
 	}
 }
-impl SwapchainFactory<vk::Surface, vk::SwapchainKHR> for RenderBackend
+impl <'a> SwapchainFactory<vk::Surface<'a>, vk::SwapchainKHR<'a>> for RenderBackend
 {
 	fn create_swapchain(&self, target: &vk::Surface) -> Result<vk::SwapchainKHR, String>
 	{

@@ -58,7 +58,7 @@ impl Frame
 #[cfg(feature = "use_vk")]
 impl VkSurfaceProvider for Frame
 {
-	fn create_surface_vk(&self) -> Result<vk::Surface, VkResult>
+	fn create_surface_vk<'a>(&self, instance: &'a vk::Instance) -> Result<vk::Surface<'a>, VkResult>
 	{
 
 	}

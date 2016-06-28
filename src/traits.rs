@@ -1,12 +1,15 @@
 // Traits
 
-#[cfg(feature = "use_vk")]
-use vulkan::*;
-#[cfg(feature = "use_vk")]
-use vkffi::*;
-
-#[cfg(feature = "use_vk")]
-pub trait VkSurfaceProvider
+pub mod ex
 {
-	fn create_surface_vk(&self) -> Result<vk::Surface, VkResult>;
+	#![cfg(feature = "use_vk")]
+
+	pub use vulkan::*;
+	pub use vkffi::*;
+
+	pub trait VkSurfaceProvider
+	{
+		fn create_surface_vk<'a>(&self, instance: &'a vk::Instance) -> Result<vk::Surface<'a>, VkResult>;
+	}
 }
+pub use self::ex::*;

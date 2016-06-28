@@ -25,6 +25,14 @@ impl std::ops::Drop for Instance
 {
 	fn drop(&mut self) { unsafe { vkDestroyInstance(self.obj, std::ptr::null_mut()) }; }
 }
+pub struct Device<'a> { instance_ref: &'a Instance, obj: VkDevice }
+impl <'a> Device<'a>
+{
+	fn create(instance: &'a Instance, info: &VkDeviceCreateInfo) -> Result<Device<'a>, VkResult>
+	{
+		
+	}
+}
 
 #[cfg(feature = "use_win32")]
 use winapi::*;
@@ -53,5 +61,22 @@ impl <'a> Surface<'a>
 }
 impl <'a> std::ops::Drop for Surface<'a>
 {
-	fn drop(&mut self) { unsafe { vkDestorySurfaceKHR(self.instance_ref, self.obj, std::ptr::null()) }; }
+	fn drop(&mut self) { unsafe { vkDestroySurfaceKHR(self.instance_ref.obj, self.obj, std::ptr::null()) }; }
+}
+
+pub struct Swapchain<'a>
+{
+	device_ref: &'a Device,
+	obj: VkSwapchainKHR
+}
+impl <'a> Swapchain<'a>
+{
+	fn create(device_ref: &'a Device, surface: &Surface<'a>) -> Result<Self, VkResult>
+	{
+
+	}
+}
+impl <'a> std::ops::Drop for Swapchain<'a>
+{
+	fn drop(&mut self) { unsafe { vkDestroySwapchainKHR(self.device_ref.obj, self.obj, std::ptr::null()) }; }
 }

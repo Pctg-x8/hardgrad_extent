@@ -1,11 +1,12 @@
 #![allow(non_snake_case)]
+#![feature(concat_idents)]
 
 // Vulkan C to Rust FFI (Dispatchable/Non-Dispatchable) Objects
 
 // Defines Dispatchable Handles(by Opaque Structs representing in Rust)
 macro_rules! DefHandle
 {
-	($name: ident behinds in $bname: ident) =>
+	($name: ident: $bname: ident) =>
 	{
 		mod $bname { pub enum _T {} }
 		pub type $name = *mut $bname::_T;
@@ -14,7 +15,7 @@ macro_rules! DefHandle
 #[cfg(target_pointer_width = "64")]
 macro_rules! DefNonDispatchableHandle
 {
-	($name: ident behinds in $bname: ident) =>
+	($name: ident: $bname: ident) =>
 	{
 		mod $bname { pub enum _T {} }
 		pub type $name = *mut $bname::_T;
@@ -23,15 +24,22 @@ macro_rules! DefNonDispatchableHandle
 #[cfg(target_pointer_width = "32")]
 macro_rules! DefNonDispatchableHandle
 {
-	($name: ident behinds in $bname: ident) =>
+	($name: ident: $bname: ident) =>
 	{
 		pub type $name = u64;
 	}
 }
 
-DefHandle!(VkInstance behinds in __VkInstance);
-DefHandle!(VkPhysicalDevice behinds in __VkPhysicalDevice);
-DefHandle!(VkDevice behinds in __VkDevice);
-DefHandle!(VkQueue behinds in __VkQueue);
+DefHandle!(VkInstance: __VkInstance);
+DefHandle!(VkPhysicalDevice: __VkPhysicalDevice);
+DefHandle!(VkDevice: __VkDevice);
+DefHandle!(VkQueue: __VkQueue);
+DefNonDispatchableHandle!(VkSemaphore: __VkSemaphore);
+DefHandle!(VkCommandBuffer: __VkCommandBuffer);
+DefNonDispatchableHandle!(VkFence: __VkFence);
+DefNonDispatchableHandle!(VkDeviceMemory: __VkDeviceMemory);
+DefNonDispatchableHandle!(VkBuffer: __VkBuffer);
+DefNonDispatchableHandle!(VkImage: __VkImage);
 
-DefNonDispatchableHandle!(VkSurfaceKHR behinds in __VkSurfaceKHR);
+DefNonDispatchableHandle!(VkSurfaceKHR: __VkSurfaceKHR);
+DefNonDispatchableHandle!(VkSwapchainKHR: VkSwapchainKHR__);
