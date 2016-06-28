@@ -18,4 +18,4 @@ For Android N(in progress, many features are not implemented) => [Pctg-x8/hardgr
 > % cargo build --features use_x11
 
 ### Use on Windows
-> % cargo build -- features use_win
+> % cargo build -- features use_win32
