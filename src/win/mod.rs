@@ -32,14 +32,11 @@ pub fn create_frame() -> Frame
 		let window_style = WS_OVERLAPPED | WS_BORDER | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX;
 		let mut window_rect = RECT { left: 0, top: 0, right: 640, bottom: 480 };
 		unsafe { AdjustWindowRectEx(&mut window_rect, window_style, FALSE, WS_EX_APPWINDOW) };
-		let handle_opt = Some(unsafe { CreateWindowExW(WS_EX_APPWINDOW, class_name.as_ptr(), window_name.as_ptr(), window_style,
+		let handle = Some(unsafe { CreateWindowExW(WS_EX_APPWINDOW, class_name.as_ptr(), window_name.as_ptr(), window_style,
 			CW_USEDEFAULT, CW_USEDEFAULT, window_rect.right - window_rect.left, window_rect.bottom - window_rect.top,
-			std::ptr::null_mut(), std::ptr::null_mut(), app_instance, std::ptr::null_mut()) });
-		match handle_opt
-		{
-			Some(h) => Frame { handle: h },
-			_ => panic!("Failed to create window")
-		}
+			std::ptr::null_mut(), std::ptr::null_mut(), app_instance, std::ptr::null_mut()) }).expect("Failed to create window");
+		
+		Frame { handle: handle }
 	}
 	else { panic!("Failed to register window class"); }
 }
