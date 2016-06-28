@@ -6,10 +6,16 @@ publish = false
 
 [dependencies]
 libc = "0.2.12"
+winapi = { version = "0.2.7", optional = true }
+kernel32-sys = { version = "0.2.2", optional = true }
+user32-sys = { version = "0.2.0", optional = true }
+widestring = { version = "0.2.0", optional = true }
 
 [dependencies.x11]
 version = "2.6.1"
 features = ["xlib"]
+optional = true
 
 [features]
-use_x11 = []
+use_x11 = ["x11"]
+use_win32 = ["winapi", "kernel32-sys", "user32-sys", "widestring"]

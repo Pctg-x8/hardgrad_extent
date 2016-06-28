@@ -8,7 +8,7 @@ use vkffi::objects::*;
 use std::os::raw::*;
 use libc::size_t;
 
-#[link(name = "vulkan")]
+#[link(name = "vulkan-1")]
 extern "system"
 {
 	pub fn vkCreateInstance(pCreateInfo: *const VkInstanceCreateInfo, pAllocator: *const VkAllocationCallbacks, pInstance: *mut VkInstance) -> VkResult;
