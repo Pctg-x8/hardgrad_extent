@@ -2,7 +2,7 @@
 
 use render::backend::RenderBackend;
 #[cfg(feature = "use_x11")] use xorg as platform;
-#[cfg(windows)] use win as platform;
+#[cfg(feature = "use_win32")] use win as platform;
 
 pub struct MainFrame
 {

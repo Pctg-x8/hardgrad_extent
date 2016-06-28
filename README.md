@@ -12,10 +12,10 @@ For Android N(in progress, many features are not implemented) => [Pctg-x8/hardgr
 - Build System: cargo 0.10.0
 - Supported Platform: Windows(future support with DirectX12)/Linux(Xorg/Vulkan)
 
-## Build options
-
-### Use X11 Window System
-> % cargo build --features use_x11
-
-### Use on Windows
-> % cargo build -- features use_win32
+## Build features
+- Window System Dependencies
+  - `use_x11`: Use X11 as Window System
+  - `use_win32`: Use default window system of Windows
+- Rendering API Dependencies
+  - `use_d3d12`: Use Direct3D12 as Rendering API
+  - `use_vk`: Use Vulkan as Rendering API

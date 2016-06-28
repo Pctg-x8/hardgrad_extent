@@ -7,7 +7,7 @@ use ::std;
 use std::ffi::CString;
 
 const VK_KHR_SURFACE_EXTENSION_NAME: &'static str = "VK_KHR_surface\0";
-#[cfg(windows)]
+#[cfg(feature = "use_win32")]
 const VK_KHR_PLATFORM_SURFACE_EXTENSION_NAME: &'static str = "VK_KHR_win32_surface\0";
 #[cfg(feature = "use_x11")]
 const VK_KHR_PLATFORM_SURFACE_EXTENSION_NAME: &'static str = "VK_KHR_xlib_surface\0";
