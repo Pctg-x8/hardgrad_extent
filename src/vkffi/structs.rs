@@ -3,10 +3,14 @@
 
 // Vulkan C to Rust FFI Structs and Handles
 
+#[cfg(not(windows))]
 use std::os::raw::*;
 use vkffi::enums::*;
 use vkffi::types::*;
 use vkffi::functions::*;
+
+#[cfg(windows)]
+use winapi::*;
 
 #[repr(C)]
 pub struct VkInstanceCreateInfo
@@ -33,4 +37,12 @@ pub struct VkAllocationCallbacks
 	pub fnFree: PFN_vkFreeFunction,
 	pub pfnInternalAllocation: PFN_vkInternalAllocationNotification,
 	pub pfnInternalFree: PFN_vkInternalFreeNotification
+}
+
+#[repr(C)] #[cfg(windows)]
+pub struct VkWin32SurfaceCreateInfoKHR
+{
+	pub sType: VkStructureType, pub pNext: *const c_void,
+	pub flags: VkWin32SurfaceCreateFlagsKHR, pub hinstance: HINSTANCE,
+	pub hwnd: HWND
 }

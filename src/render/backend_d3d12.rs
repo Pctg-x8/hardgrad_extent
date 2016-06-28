@@ -2,6 +2,7 @@
 
 use d3d12_sw::*;
 use winapi::*;
+use render::SwapchainFactory;
 
 pub struct RenderBackend
 {
@@ -24,5 +25,12 @@ impl RenderBackend
 		{
 			instance: factory, physical_device: adapter, device: device, queue: queue
 		}
+	}
+}
+impl SwapchainFactory<HWND, DXGISwapChain> for RenderBackend
+{
+	fn create_swapchain(&self, target: &HWND) -> Result<DXGISwapChain, String>
+	{
+		self.instance.create_swapchain(&self.queue, *target).map_err(|hr| format!("{:?}", hr))
 	}
 }

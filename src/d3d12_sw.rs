@@ -57,9 +57,8 @@ impl DXGIFactory
 
 		let mut desc = DXGI_SWAP_CHAIN_DESC
 		{
-			BufferCount: 2, BufferUsage: DXGI_USAGE_RENDER_TARGET_OUTPUT,
+			BufferCount: 2, BufferUsage: DXGI_USAGE_RENDER_TARGET_OUTPUT, Windowed: TRUE,
 			SwapEffect: DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL, OutputWindow: target, SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
-			Windowed: TRUE,
 			BufferDesc: DXGI_MODE_DESC
 			{
 				Width: (rect.right - rect.left) as u32, Height: (rect.bottom - rect.top) as u32, Format: DXGI_FORMAT_R8G8B8A8_UNORM,

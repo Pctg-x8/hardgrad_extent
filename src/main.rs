@@ -16,6 +16,7 @@ extern crate libc;
 #[cfg(feature = "use_d3d12")] extern crate dxguid;
 #[cfg(feature = "use_d3d12")] mod d3d12_sw;
 
+mod traits;
 mod mainframe;
 mod render;
 

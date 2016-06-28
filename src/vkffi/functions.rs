@@ -13,6 +13,11 @@ extern "system"
 {
 	pub fn vkCreateInstance(pCreateInfo: *const VkInstanceCreateInfo, pAllocator: *const VkAllocationCallbacks, pInstance: *mut VkInstance) -> VkResult;
 	pub fn vkDestroyInstance(instance: VkInstance, pAllocator: *const VkAllocationCallbacks);
+
+	// Surface Extension //
+	#[cfg(windows)]
+	pub fn vkCreateWin32SurfaceKHR(instance: VkInstance, pCreateInfo: *const VkWin32SurfaceCreateInfoKHR, pAllocator: *const VkAllocationCallbacks, pSurface: *mut VkSurfaceKHR) -> VkResult;
+	pub fn vkDestroySurfaceKHR(instance: VkInstance, ssurface: VkSurfaceKHR, pAllocator: *const VkAllocationCallbacks);
 }
 
 // Function Pointers

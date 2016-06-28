@@ -5,6 +5,7 @@ use vulkan as vk;
 use vulkan::*;
 use ::std;
 use std::ffi::CString;
+use render::SwapchainFactory;
 
 const VK_KHR_SURFACE_EXTENSION_NAME: &'static str = "VK_KHR_surface\0";
 #[cfg(feature = "use_win32")]
@@ -57,5 +58,12 @@ impl RenderBackend
 		{
 			instance: inst
 		}
+	}
+}
+impl SwapchainFactory<vk::Surface, vk::SwapchainKHR> for RenderBackend
+{
+	fn create_swapchain(&self, target: &vk::Surface) -> Result<vk::SwapchainKHR, String>
+	{
+		unreachable!();
 	}
 }

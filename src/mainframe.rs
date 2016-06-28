@@ -4,25 +4,16 @@ use render::backend::RenderBackend;
 #[cfg(feature = "use_x11")] use xorg as platform;
 #[cfg(feature = "use_win32")] use win as platform;
 
-pub struct MainFrame
-{
-	internal: platform::Frame
-}
+pub enum MainFrame {}
 impl MainFrame
 {
 	pub fn launch_static() -> i32
 	{
 		println!("=== HardGrad -> Extent ===");
 
-		let mf = MainFrame::create();
+		let internal = platform::create_frame();
 		let backend = RenderBackend::init();
 
 		0
-	}
-	fn create() -> MainFrame
-	{
-		let internal = platform::create_frame();
-
-		MainFrame { internal: internal }
 	}
 }

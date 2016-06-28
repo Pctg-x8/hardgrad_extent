@@ -6,3 +6,5 @@ pub type VkDeviceSize = u64;
 pub type VkSampleMask = u32;
 
 pub type VkInstanceCreateFlags = VkFlags;
+#[cfg(windows)]
+pub type VkWin32SurfaceCreateFlagsKHR = VkFlags;

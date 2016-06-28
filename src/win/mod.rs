@@ -5,6 +5,9 @@ use kernel32::*;
 use user32::*;
 use widestring::*;
 use ::std;
+use traits::*;
+#[cfg(feature = "use_vk")] use vulkan as vk;
+#[cfg(feature = "use_vk")] use vkffi::*;
 
 pub struct Frame
 {
@@ -35,7 +38,7 @@ pub fn create_frame() -> Frame
 		let handle = Some(unsafe { CreateWindowExW(WS_EX_APPWINDOW, class_name.as_ptr(), window_name.as_ptr(), window_style,
 			CW_USEDEFAULT, CW_USEDEFAULT, window_rect.right - window_rect.left, window_rect.bottom - window_rect.top,
 			std::ptr::null_mut(), std::ptr::null_mut(), app_instance, std::ptr::null_mut()) }).expect("Failed to create window");
-		
+
 		Frame { handle: handle }
 	}
 	else { panic!("Failed to register window class"); }
@@ -49,5 +52,14 @@ impl Frame
 			WM_DESTROY => { PostQuitMessage(0); DefWindowProcW(handle, message, wp, lp) },
 			_ => DefWindowProcW(handle, message, wp, lp)
 		}
+	}
+}
+
+#[cfg(feature = "use_vk")]
+impl VkSurfaceProvider for Frame
+{
+	fn create_surface_vk(&self) -> Result<vk::Surface, VkResult>
+	{
+
 	}
 }
