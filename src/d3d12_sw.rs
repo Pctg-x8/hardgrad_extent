@@ -32,7 +32,7 @@ impl ComResult
 
 DefSafetyObject!(DXGIFactory for IDXGIFactory2);
 DefSafetyObject!(DXGIAdapter for IDXGIAdapter1);
-DefSafetyObject!(DXGISwapChain for IDXGISwapChain3);
+DefSafetyObject!(DXGISwapchain for IDXGISwapChain3);
 impl DXGIFactory
 {
 	pub fn create(debug: bool) -> Result<Self, HRESULT>
@@ -47,10 +47,10 @@ impl DXGIFactory
 		ComResult::from(unsafe { (*self.ptr).EnumAdapters1(index, std::mem::transmute(&mut obj.ptr)) }).failure_or(obj)
 	}
 
-	pub fn create_swapchain(&self, queue: &D3D12CommandQueue, target: HWND) -> Result<DXGISwapChain, HRESULT>
+	pub fn create_swapchain(&self, queue: &D3D12CommandQueue, target: HWND) -> Result<DXGISwapchain, HRESULT>
 	{
 		let mut obj1: *mut IDXGISwapChain = std::ptr::null_mut();
-		let mut obj: DXGISwapChain = Default::default();
+		let mut obj: DXGISwapchain = Default::default();
 
 		let mut rect = RECT { left: 0, top: 0, right: 0, bottom: 0 };
 		unsafe { GetClientRect(target, &mut rect) };

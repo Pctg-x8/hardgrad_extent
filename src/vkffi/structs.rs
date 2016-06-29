@@ -51,7 +51,7 @@ pub struct VkDeviceQueueCreateInfo
 	pub pNext: *const c_void,
 	pub flags: VkDeviceQueueCreateFlags,
 	pub queueFamilyIndex: u32,
-	pub queueCount: u32,pub pQueuePriorities: *const f32;
+	pub queueCount: u32,pub pQueuePriorities: *const f32
 }
 #[repr(C)]
 pub struct VkDeviceCreateInfo

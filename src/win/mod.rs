@@ -6,8 +6,10 @@ use user32::*;
 use widestring::*;
 use ::std;
 use traits::*;
+use render::SwapchainFactory;
 #[cfg(feature = "use_vk")] use vulkan as vk;
 #[cfg(feature = "use_vk")] use vkffi::*;
+#[cfg(feature = "use_d3d12")] use d3d12_sw::*;
 
 pub struct Frame
 {
@@ -61,5 +63,14 @@ impl VkSurfaceProvider for Frame
 	fn create_surface_vk<'a>(&self, instance: &'a vk::Instance) -> Result<vk::Surface<'a>, VkResult>
 	{
 
+	}
+}
+
+#[cfg(feature = "use_d3d12")]
+impl DXGISwapchainProvider for Frame
+{
+	fn create_swapchain(&self, backend: &SwapchainFactory<HWND, DXGISwapchain>) -> Result<DXGISwapchain, String>
+	{
+		backend.create_swapchain(&self.handle)
 	}
 }

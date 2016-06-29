@@ -1,14 +1,16 @@
 // Render Modules
 
-#[cfg(feature = "use_vk")]
-pub mod backend_vk;
-#[cfg(feature = "use_vk")]
-pub use self::backend_vk as backend;
+macro_rules! ModuleRenamed
+{
+	($name: ident from $pkg: ident) =>
+	{
+		pub mod $pkg;
+		pub use self::$pkg as $name;
+	}
+}
 
-#[cfg(feature = "use_d3d12")]
-pub mod backend_d3d12;
-#[cfg(feature = "use_d3d12")]
-pub use self::backend_d3d12 as backend;
+#[cfg(feature = "use_vk")] ModuleRenamed!(backend from vk);
+#[cfg(feature = "use_d3d12")] ModuleRenamed!(backend from d3d12);
 
 pub mod backend_common;
 pub use self::backend_common::*;
