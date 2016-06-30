@@ -1,5 +1,4 @@
 #![allow(non_snake_case)]
-#![feature(concat_idents)]
 
 // Vulkan C to Rust FFI (Dispatchable/Non-Dispatchable) Objects
 
@@ -43,3 +42,5 @@ DefNonDispatchableHandle!(VkImage: __VkImage);
 
 DefNonDispatchableHandle!(VkSurfaceKHR: __VkSurfaceKHR);
 DefNonDispatchableHandle!(VkSwapchainKHR: VkSwapchainKHR__);
+
+DefNonDispatchableHandle!(VkDebugReportCallbackEXT: __VkDebugReportCallbackEXT);

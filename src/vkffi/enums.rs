@@ -74,7 +74,7 @@ pub enum VkStructureType
 	DisplayModeCreateInfoKHR = 1000002000,
 	DisplaySurfaceCreateInfoKHR = 1000002001,
 	DisplayPresentInfoKHR = 1000003000,
-	XlibSurfaceCreateInfoKHR = 10000040000,
+	XlibSurfaceCreateInfoKHR = 1000004000,
 	XcbSurfaceCreateInfoKHR = 1000005000,
 	WaylandSurfaceCreateInfoKHR = 1000006000,
 	MIRSurfaceCreateInfoKHR = 1000007000,
@@ -86,7 +86,7 @@ pub enum VkStructureType
 	DebugMarker_ObjectTagInfoEXT = 1000022001,
 	DebugMarker_MarkerInfoEXT = 1000022002
 }
-#[repr(C)]
+#[repr(C)] #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum VkFormat
 {
     UNDEFINED = 0,
@@ -311,12 +311,28 @@ pub enum VkResult
 	Error_InvalidShaderNV = -1000012000
 }
 
-#[repr(C)]
+#[repr(C)] pub enum VkQueueFlagBits
+{
+	Graphics = 0x00000001,
+	Compute = 0x00000002,
+	Transfer = 0x00000004,
+	SparseBinding = 0x00000008
+}
+#[repr(C)] pub enum VkPhysicalDeviceType
+{
+	Other = 0,
+	IntegratedGPU = 1,
+	DiscreteGPU = 2,
+	VirtualGPU = 3,
+	CPU = 4
+}
+
+#[repr(C)] #[derive(Clone)]
 pub enum VkColorSpaceKHR
 {
 	SRGB_NonLinear = 0
 }
-#[repr(C)]
+#[repr(C)] #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum VkPresentModeKHR
 {
 	Immediate = 0,
@@ -327,21 +343,58 @@ pub enum VkPresentModeKHR
 #[repr(C)]
 pub enum VkSurfaceTransformFlagBitsKHR
 {
-	IdentityBit = 0x00000001,
-	Rotate90Bit = 0x00000002,
-	Rotate180Bit = 0x00000004,
-	Rotate270Bit = 0x00000008,
-	HorizontalMirrorBit = 0x00000010,
-	HorizontalMirrorRotate90Bit = 0x00000020,
-	HorizontalMirrorRotate180Bit = 0x00000040,
-	HorizontalMirrorRotate270Bit = 0x00000080,
-	InheritBit = 0x00000100
+	Identity = 0x00000001,
+	Rotate90 = 0x00000002,
+	Rotate180 = 0x00000004,
+	Rotate270 = 0x00000008,
+	HorizontalMirror = 0x00000010,
+	HorizontalMirrorRotate90 = 0x00000020,
+	HorizontalMirrorRotate180 = 0x00000040,
+	HorizontalMirrorRotate270 = 0x00000080,
+	Inherit = 0x00000100
 }
 #[repr(C)]
 pub enum VkCompositeAlphaFlagBitsKHR
 {
-	OpaqueBit = 0x00000001,
-	PremultipliedBit = 0x00000002,
-	PostmultipliedBit = 0x00000004,
-	InheritBit = 0x00000008
+	Opaque = 0x00000001,
+	Premultiplied = 0x00000002,
+	Postmultiplied = 0x00000004,
+	Inherit = 0x00000008
+}
+#[repr(C)] pub enum VkImageUsageFlagBits
+{
+	TransferSrc = 0x00000001,
+	TransferDst = 0x00000002,
+	Sampled = 0x00000004,
+	Storage = 0x00000008,
+	ColorAttachment = 0x00000010,
+	DepthStencilAttachment = 0x00000020,
+	TransientAttachment = 0x00000040,
+	InputAttachment = 0x00000080
+}
+
+#[derive(Debug)]
+#[repr(C)] pub enum VkDebugReportObjectTypeEXT
+{
+	Unknown = 0, Instance = 1,
+	PhysicalDevice = 2, Device = 3,
+	Queue = 4, Semaphore = 5, CommandBuffer = 6,
+	Fence = 7, DeviceMemory = 8, Buffer = 9, Image = 10, Event = 11,
+	QueryPool = 12, BufferView = 13, ImageView = 14, ShaderModule = 15,
+	PipelineCache = 16, PipelineLayout = 17, RenderPass = 18, Pipeline = 19,
+	DescriptorSetLayout = 20, Sampler = 21, DescriptorPool = 22, DescriptorSet = 23,
+	Framebuffer = 24, CommandPool = 25, SurfaceKHR = 26, SwapchainKHR = 27, DebugReportEXT = 28
+}
+#[repr(C)] pub enum VkDebugReportErrorEXT
+{
+	_None = 0, CallbackRef = 1
+}
+#[derive(Debug)]
+#[repr(C)] pub enum VkDebugReportFlagBitsEXT
+{
+	Information = 0x00000001,
+	Warning = 0x00000002,
+	PerformanceWarning = 0x00000004,
+	Error = 0x00000008,
+	Debug = 0x00000010
 }
