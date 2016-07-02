@@ -39,6 +39,10 @@ DefNonDispatchableHandle!(VkFence: __VkFence);
 DefNonDispatchableHandle!(VkDeviceMemory: __VkDeviceMemory);
 DefNonDispatchableHandle!(VkBuffer: __VkBuffer);
 DefNonDispatchableHandle!(VkImage: __VkImage);
+DefNonDispatchableHandle!(VkImageView: __VkImageView);
+DefNonDispatchableHandle!(VkRenderPass: __VkRenderPass);
+DefNonDispatchableHandle!(VkFramebuffer: __VkFramebuffer);
+DefNonDispatchableHandle!(VkCommandPool: __VkCommandPool);
 
 DefNonDispatchableHandle!(VkSurfaceKHR: __VkSurfaceKHR);
 DefNonDispatchableHandle!(VkSwapchainKHR: VkSwapchainKHR__);

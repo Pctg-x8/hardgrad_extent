@@ -6,7 +6,7 @@ mod xlib;
 
 use vkffi::*;
 use render_vk::wrap as vk;
-use render_vk::wrap::{CreationObject, InternalProvider};
+use render_vk::wrap::{CreationObject, InternalProvider, HasParent};
 use xlib::XlibWindow;
 
 const APP_NAME: &'static str = "HardGrad -> Extent\0";
@@ -73,7 +73,7 @@ fn create_surface<'i, 'dpy>(instance_ref: &'i vk::Instance, window: &xlib::Windo
 	};
 	vk::Surface::create(instance_ref, &x11_surface_info).unwrap()
 }
-fn create_swapchain<'d>(adapter: &vk::PhysicalDevice, device_ref: &'d vk::Device, surface: &vk::Surface) -> vk::Swapchain<'d>
+fn create_swapchain<'d>(adapter: &vk::PhysicalDevice, device_ref: &'d vk::Device, surface: &vk::Surface) -> (vk::Swapchain<'d>, VkFormat, VkExtent2D)
 {
 	// capabilities check //
 	if !adapter.is_surface_support(device_ref.queue_family_index, surface) { panic!("Unsupported Surface"); }
@@ -104,7 +104,77 @@ fn create_swapchain<'d>(adapter: &vk::PhysicalDevice, device_ref: &'d vk::Device
 		oldSwapchain: std::ptr::null_mut(), flags: 0, surface: *surface.get()
 	};
 
-	vk::Swapchain::create(device_ref, &swapchain_info).unwrap()
+	(vk::Swapchain::create(device_ref, &swapchain_info).unwrap(), format.format, sc_extent)
+}
+fn create_image_views<'d, ImageObj: vk::VkImageResource + vk::HasParent<ParentRefType=&'d vk::Device>>(images: &'d Vec<ImageObj>, format: VkFormat) -> Vec<vk::ImageView>
+{
+	images.into_iter().map(|o|
+	{
+		let view_info = VkImageViewCreateInfo
+		{
+			sType: VkStructureType::ImageViewCreateInfo, pNext: std::ptr::null(),
+			image: o.get(), viewType: VkImageViewType::Dim2, format: format,
+			components: VkComponentMapping { r: VkComponentSwizzle::R, g: VkComponentSwizzle::G, b: VkComponentSwizzle::B, a: VkComponentSwizzle::A },
+			subresourceRange: VkImageSubresourceRange
+			{
+				aspectMask: VK_IMAGE_ASPECT_COLOR_BIT,
+				baseArrayLayer: 0, layerCount: 1,
+				baseMipLevel: 0, levelCount: 1
+			},
+			flags: 0
+		};
+		o.parent().create_image_view(&view_info).unwrap()
+	}).collect::<Vec<_>>()
+}
+fn create_render_pass<'d>(dev: &'d vk::Device, attachments: &[VkAttachmentDescription], subpasses: &[VkSubpassDescription], dependencies: &[VkSubpassDependency])
+	-> Result<vk::RenderPass<'d>, VkResult>
+{
+	dev.create_render_pass(&VkRenderPassCreateInfo
+	{
+		sType: VkStructureType::RenderPassCreateInfo, pNext: std::ptr::null(), flags: 0,
+		attachmentCount: attachments.len() as u32, pAttachments: attachments.as_ptr(),
+		subpassCount: subpasses.len() as u32, pSubpasses: subpasses.as_ptr(),
+		dependencyCount: dependencies.len() as u32, pDependencies: dependencies.as_ptr()
+	})
+}
+fn create_simple_render_pass<'d>(dev: &'d vk::Device, format: VkFormat) -> vk::RenderPass<'d>
+{
+	let color_attref = VkAttachmentReference { attachment: 0, layout: VkImageLayout::ColorAttachmentOptimal };
+	let subpasses = [
+		VkSubpassDescription
+		{
+			inputAttachmentCount: 0, pInputAttachments: std::ptr::null(),
+			colorAttachmentCount: 1, pColorAttachments: &color_attref,
+			pDepthStencilAttachment: std::ptr::null(), pResolveAttachments: std::ptr::null(),
+			preserveAttachmentCount: 0, pPreserveAttachments: std::ptr::null(),
+			pipelineBindPoint: VkPipelineBindPoint::Graphics, flags: 0
+		}
+	];
+	let attachment_descs = [
+		VkAttachmentDescription
+		{
+			format: format, samples: VK_SAMPLE_COUNT_1_BIT, flags: 0,
+			loadOp: VkAttachmentLoadOp::Clear, storeOp: VkAttachmentStoreOp::Store,
+			stencilLoadOp: VkAttachmentLoadOp::DontCare, stencilStoreOp: VkAttachmentStoreOp::DontCare,
+			initialLayout: VkImageLayout::ColorAttachmentOptimal, finalLayout: VkImageLayout::PresentSrcKHR
+		}
+	];
+	create_render_pass(dev, &attachment_descs, &subpasses, &[]).unwrap()
+}
+fn create_framebuffers<'d>(views: &Vec<vk::ImageView<'d>>, rp: &vk::RenderPass<'d>, extent: VkExtent2D) -> Vec<vk::Framebuffer<'d>>
+{
+	let VkExtent2D(width, height) = extent;
+
+	views.into_iter().map(|v|
+	{
+		let fb_info = VkFramebufferCreateInfo
+		{
+			sType: VkStructureType::FramebufferCreateInfo, pNext: std::ptr::null(),
+			attachmentCount: 1, pAttachments: v.get(), renderPass: *rp.get(),
+			width: width, height: height, layers: 1, flags: 0
+		};
+		v.parent().create_framebuffer(&fb_info).unwrap()
+	}).collect::<Vec<_>>()
 }
 
 pub fn start_app() -> i32
@@ -132,7 +202,11 @@ pub fn start_app() -> i32
 
 	// Ready for Rendering
 	let surface = create_surface(&instance, &window);
-	let swapchain = create_swapchain(&adapter, &device, &surface);
+	let (swapchain, sc_format, sc_extent) = create_swapchain(&adapter, &device, &surface);
+	let final_images = swapchain.get_images().unwrap();
+	let final_image_views = create_image_views(&final_images, sc_format);
+	let simple_pass = create_simple_render_pass(&device, sc_format);
+	let final_framebuffers = create_framebuffers(&final_image_views, &simple_pass, sc_extent);
 
 	// Application Loop
 	'app_loop: loop

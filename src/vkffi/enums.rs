@@ -2,6 +2,7 @@
 #![allow(dead_code)]
 
 // Vulkan C to Rust FFI Enumerations
+use vkffi::types::VkFlags;
 
 #[repr(C)]
 pub enum VkSystemAllocationScope
@@ -86,7 +87,7 @@ pub enum VkStructureType
 	DebugMarker_ObjectTagInfoEXT = 1000022001,
 	DebugMarker_MarkerInfoEXT = 1000022002
 }
-#[repr(C)] #[derive(Clone, Debug, Eq, PartialEq)]
+#[repr(C)] #[derive(Clone, Debug, Eq, PartialEq, Copy)]
 pub enum VkFormat
 {
     UNDEFINED = 0,
@@ -275,13 +276,6 @@ pub enum VkFormat
     ASTC_12x12_UNORM_BLOCK = 183,
     ASTC_12x12_SRGB_BLOCK = 184
 }
-#[repr(C)]
-pub enum VkSharingMode
-{
-	Exclusive = 0,
-	Concurrent = 1
-}
-
 #[repr(C)] #[derive(PartialEq, Eq, Debug)]
 pub enum VkResult
 {
@@ -326,6 +320,93 @@ pub enum VkResult
 	VirtualGPU = 3,
 	CPU = 4
 }
+#[repr(C)] pub enum VkImageViewType
+{
+	Dim1 = 0, Dim2 = 1, Dim3 = 2, Cube = 3, Dim1Array = 4, Dim2Array = 5, CubeArray = 6
+}
+#[repr(C)] pub enum VkComponentSwizzle
+{
+	Identity = 0, Zero = 1, One = 2,
+	R = 3, G = 4, B = 5, A = 6
+}
+#[repr(C)]
+pub enum VkSharingMode
+{
+	Exclusive = 0,
+	Concurrent = 1
+}
+#[repr(C)] pub enum VkImageLayout
+{
+	Undefined = 0, General = 1,
+	ColorAttachmentOptimal = 2, DepthStencilAttachmentOptimal = 3, DepthStencilReadOnlyOptimal = 4,
+	ShaderReadOnlyOptimal = 5, TransferSrcOptimal = 6, TransferDestOptimal = 7, Preinitialized = 8,
+	PresentSrcKHR = 1000001002
+}
+pub const VK_IMAGE_ASPECT_COLOR_BIT: VkFlags	= 0x00000001;
+pub const VK_IMAGE_ASPECT_DEPTH_BIT: VkFlags	= 0x00000002;
+pub const VK_IMAGE_ASPECT_STENCIL_BIT: VkFlags	= 0x00000004;
+pub const VK_IMAGE_ASPECT_METADATA_BIT: VkFlags	= 0x00000008;
+
+pub const VK_ATTACHMENT_DESCRIPTION_MAY_ALIAS_BIT: VkFlags = 0x00000001;
+
+pub const VK_ACCESS_INDIRECT_COMMAND_READ_BIT: VkFlags			= 0x00000001;
+pub const VK_ACCESS_IDEX_READ_BIT: VkFlags						= 0x00000002;
+pub const VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT: VkFlags			= 0x00000004;
+pub const VK_ACCESS_UNIFORM_READ_BIT: VkFlags					= 0x00000008;
+pub const VK_ACCESS_INPUT_ATTACHMENT_READ_BIT: VkFlags			= 0x00000010;
+pub const VK_ACCESS_SHADER_READ_BIT: VkFlags					= 0x00000020;
+pub const VK_ACCESS_SHADER_WRITE_BIT: VkFlags					= 0x00000040;
+pub const VK_ACCESS_COLOR_ATTACHMENT_READ_BIT: VkFlags			= 0x00000080;
+pub const VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT: VkFlags			= 0x00000100;
+pub const VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT: VkFlags	= 0x00000200;
+pub const VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT: VkFlags	= 0x00000400;
+pub const VK_ACCESS_TRANSFER_READ_BIT: VkFlags					= 0x00000800;
+pub const VK_ACCESS_TRANSFER_WRITE_BIT: VkFlags					= 0x00001000;
+pub const VK_ACCESS_HOST_READ_BIT: VkFlags						= 0x00002000;
+pub const VK_ACCESS_HOST_WRITE_BIT: VkFlags						= 0x00004000;
+pub const VK_ACCESS_MEMORY_READ_BIT: VkFlags					= 0x00008000;
+pub const VK_ACCESS_MEMORY_WRITE_BIT: VkFlags					= 0x00010000;
+
+pub const VK_SAMPLE_COUNT_1_BIT: VkFlags	= 0x00000001;
+pub const VK_SAMPLE_COUNT_2_BIT: VkFlags	= 0x00000002;
+pub const VK_SAMPLE_COUNT_4_BIT: VkFlags	= 0x00000004;
+pub const VK_SAMPLE_COUNT_8_BIT: VkFlags	= 0x00000008;
+pub const VK_SAMPLE_COUNT_16_BIT: VkFlags	= 0x00000010;
+pub const VK_SAMPLE_COUNT_32_BIT: VkFlags	= 0x00000020;
+pub const VK_SAMPLE_COUNT_64_BIT: VkFlags	= 0x00000040;
+
+#[repr(C)] pub enum VkAttachmentLoadOp
+{
+	Load = 0, Clear = 1, DontCare = 2
+}
+#[repr(C)] pub enum VkAttachmentStoreOp
+{
+	Store = 0, DontCare = 1
+}
+#[repr(C)] pub enum VkPipelineBindPoint
+{
+	Graphics = 0, Compute = 1
+}
+
+pub const VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT: VkFlags					= 0x00000001;
+pub const VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT: VkFlags					= 0x00000002;
+pub const VK_PIPELINE_STAGE_VERTEX_INPUT_BIT: VkFlags					= 0x00000004;
+pub const VK_PIPELINE_STAGE_VERTEX_SHADER_BIT: VkFlags					= 0x00000008;
+pub const VK_PIPELINE_STAGE_TESSELLATION_CONTROL_SHADER_BIT: VkFlags	= 0x00000010;
+pub const VK_PIPELINE_STAGE_TESSELLATION_EVALUATION_SHADER_BIT: VkFlags	= 0x00000020;
+pub const VK_PIPELINE_STAGE_GEOMETRY_SHADER_BIT: VkFlags				= 0x00000040;
+pub const VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT: VkFlags				= 0x00000080;
+pub const VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT: VkFlags			= 0x00000100;
+pub const VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT: VkFlags			= 0x00000200;
+pub const VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT: VkFlags		= 0x00000400;
+pub const VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT: VkFlags					= 0x00000800;
+pub const VK_PIPELINE_STAGE_TRANSFER_BIT: VkFlags						= 0x00001000;
+pub const VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT: VkFlags					= 0x00002000;
+pub const VK_PIPELINE_STAGE_HOST_BIT: VkFlags							= 0x00004000;
+pub const VK_PIPELINE_STAGE_ALL_GRAPHICS_BIT: VkFlags					= 0x00008000;
+pub const VK_PIPELINE_STAGE_ALL_COMMANDS_BIT: VkFlags					= 0x00010000;
+
+pub const VK_DEPENDENCY_BY_REGION_BIT: VkFlags = 0x00000001;
 
 #[repr(C)] #[derive(Clone)]
 pub enum VkColorSpaceKHR

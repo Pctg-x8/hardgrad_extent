@@ -15,7 +15,7 @@ use x11;
 
 // Basic Types //
 #[repr(C)] pub struct VkOffset2D(pub i32, pub i32);
-#[repr(C)] pub struct VkExtent2D(pub u32, pub u32);
+#[repr(C)] #[derive(Clone, Copy)] pub struct VkExtent2D(pub u32, pub u32);
 #[repr(C)] pub struct VkRect2D(pub VkOffset2D, pub VkExtent2D);
 #[repr(C)] #[derive(Clone)] pub struct VkExtent3D(pub u32, pub u32, pub u32);
 
@@ -262,6 +262,63 @@ pub struct VkDeviceCreateInfo
 	pub enabledExtensionCount: u32,
 	pub ppEnabledExtensionNames: *const *const c_char,
 	pub pEnabledFeatures: *const VkPhysicalDeviceFeatures
+}
+#[repr(C)] pub struct VkImageViewCreateInfo
+{
+	pub sType: VkStructureType, pub pNext: *const c_void,
+	pub flags: VkImageViewCreateFlags, pub image: VkImage,
+	pub viewType: VkImageViewType, pub format: VkFormat,
+	pub components: VkComponentMapping, pub subresourceRange: VkImageSubresourceRange
+}
+#[repr(C)] pub struct VkComponentMapping
+{
+	pub r: VkComponentSwizzle, pub g: VkComponentSwizzle, pub b: VkComponentSwizzle, pub a: VkComponentSwizzle
+}
+#[repr(C)] pub struct VkImageSubresourceRange
+{
+	pub aspectMask: VkImageAspectFlags,
+	pub baseMipLevel: u32, pub levelCount: u32,
+	pub baseArrayLayer: u32, pub layerCount: u32
+}
+#[repr(C)] pub struct VkAttachmentDescription
+{
+	pub flags: VkAttachmentDescriptionFlags, pub format: VkFormat,
+	pub samples: VkSampleCountFlagBits,
+	pub loadOp: VkAttachmentLoadOp, pub storeOp: VkAttachmentStoreOp,
+	pub stencilLoadOp: VkAttachmentLoadOp, pub stencilStoreOp: VkAttachmentStoreOp,
+	pub initialLayout: VkImageLayout, pub finalLayout: VkImageLayout
+}
+#[repr(C)] pub struct VkAttachmentReference
+{
+	pub attachment: u32, pub layout: VkImageLayout
+}
+#[repr(C)] pub struct VkSubpassDescription
+{
+	pub flags: VkSubpassDescriptionFlags, pub pipelineBindPoint: VkPipelineBindPoint,
+	pub inputAttachmentCount: u32, pub pInputAttachments: *const VkAttachmentReference,
+	pub colorAttachmentCount: u32, pub pColorAttachments: *const VkAttachmentReference,
+	pub pResolveAttachments: *const VkAttachmentReference, pub pDepthStencilAttachment: *const VkAttachmentReference,
+	pub preserveAttachmentCount: u32, pub pPreserveAttachments: *const u32
+}
+#[repr(C)] pub struct VkSubpassDependency
+{
+	pub srcSubpass: u32, pub dstSubpass: u32,
+	pub srcStageMask: VkPipelineStageFlags, pub dstStageMask: VkPipelineStageFlags,
+	pub srcAccessMask: VkAccessFlags, pub dstAccessMask: VkAccessFlags,
+	pub dependencyFlags: VkDependencyFlags
+}
+#[repr(C)] pub struct VkRenderPassCreateInfo
+{
+	pub sType: VkStructureType, pub pNext: *const c_void, pub flags: VkRenderPassCreateFlags,
+	pub attachmentCount: u32, pub pAttachments: *const VkAttachmentDescription,
+	pub subpassCount: u32, pub pSubpasses: *const VkSubpassDescription,
+	pub dependencyCount: u32, pub pDependencies: *const VkSubpassDependency
+}
+#[repr(C)] pub struct VkFramebufferCreateInfo
+{
+	pub sType: VkStructureType, pub pNext: *const c_void, pub flags: VkFramebufferCreateFlags,
+	pub renderPass: VkRenderPass, pub attachmentCount: u32, pub pAttachments: *const VkImageView,
+	pub width: u32, pub height: u32, pub layers: u32
 }
 
 #[repr(C)]
