@@ -1,7 +1,7 @@
 HardGrad -> Extent
 ---
 
-**This is development branch for Linux(X11) and Vulkan**  
+**This is development branch for Linux(XCB) and Vulkan**  
 
 -- Beyond the Galaxy of Wires --  
 (Bullet-hell) Shooting game for Linux with Vulkan

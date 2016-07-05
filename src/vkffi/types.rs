@@ -27,7 +27,7 @@ pub type VkPipelineStageFlags = VkFlags;
 pub type VkMemoryMapFlags = VkFlags;
 pub type VkDependencyFlags = VkFlags;
 
-pub type VkXlibSurfaceCreateFlagsKHR = VkFlags;
+pub type VkXcbSurfaceCreateFlagsKHR = VkFlags;
 pub type VkSurfaceTransformFlagsKHR = VkFlags;
 pub type VkCompositeAlphaFlagsKHR = VkFlags;
 pub type VkSwapchainCreateFlagsKHR = VkFlags;

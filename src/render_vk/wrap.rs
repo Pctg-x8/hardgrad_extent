@@ -5,7 +5,8 @@ use std;
 use std::ffi::*;
 use std::os::raw::*;
 use libc::size_t;
-use x11;
+use xcb;
+use xcb::ffi::*;
 
 pub trait CreationObject<StructureT> where Self: std::marker::Sized
 {
@@ -124,10 +125,9 @@ impl PhysicalDevice
 		unsafe { vkGetPhysicalDeviceQueueFamilyProperties(self.obj, &mut property_count, properties.as_mut_ptr()) };
 		properties.into_iter().enumerate().filter(|&(_, ref x)| (x.queueFlags & (VkQueueFlagBits::Graphics as u32)) != 0).map(|(i, _)| i as u32).next()
 	}
-	pub fn is_xlib_presentation_support(&self, qf: u32, dpy: *mut x11::xlib::Display, vid: x11::xlib::VisualID) -> bool
+	pub fn is_xcb_presentation_support(&self, qf: u32, con: *mut xcb_connection_t, vid: xcb_visualid_t) -> bool
 	{
-		let b = unsafe { vkGetPhysicalDeviceXlibPresentationSupportKHR(self.obj, qf, dpy, vid) };
-		b == 1
+		unsafe { vkGetPhysicalDeviceXcbPresentationSupportKHR(self.obj, qf, con, vid) == 1 }
 	}
 	pub fn is_surface_support<'i>(&self, queue_family_index: u32, surface: &Surface<'i>) -> bool
 	{
@@ -235,10 +235,10 @@ pub struct Surface<'a>
 }
 impl <'a> Surface<'a>
 {
-	pub fn create(instance: &'a Instance, info: &VkXlibSurfaceCreateInfoKHR) -> Result<Self, VkResult>
+	pub fn create(instance: &'a Instance, info: &VkXcbSurfaceCreateInfoKHR) -> Result<Self, VkResult>
 	{
 		let mut obj: VkSurfaceKHR = std::ptr::null_mut();
-		let res = unsafe { vkCreateXlibSurfaceKHR(instance.obj, info, std::ptr::null(), &mut obj) };
+		let res = unsafe { vkCreateXcbSurfaceKHR(instance.obj, info, std::ptr::null(), &mut obj) };
 		if res != VkResult::Success { Err(res) } else { Ok(Surface { instance_ref: instance, obj: obj }) }
 	}
 }

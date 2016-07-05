@@ -3,7 +3,7 @@ name = "hardgrad_extent"
 version = "0.1.0"
 dependencies = [
  "libc 0.2.12 (registry+https://github.com/rust-lang/crates.io-index)",
- "x11 2.6.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "xcb 0.7.3 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
 [[package]]
@@ -12,16 +12,16 @@ version = "0.2.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 
 [[package]]
-name = "pkg-config"
-version = "0.3.8"
+name = "log"
+version = "0.3.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 
 [[package]]
-name = "x11"
-version = "2.6.1"
+name = "xcb"
+version = "0.7.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 dependencies = [
  "libc 0.2.12 (registry+https://github.com/rust-lang/crates.io-index)",
- "pkg-config 0.3.8 (registry+https://github.com/rust-lang/crates.io-index)",
+ "log 0.3.6 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 

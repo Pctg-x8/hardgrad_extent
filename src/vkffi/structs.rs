@@ -11,7 +11,8 @@ use vkffi::types::*;
 use vkffi::functions::*;
 use vkffi::objects::*;
 use vkffi::macros::*;
-use x11;
+use xcb;
+use xcb::ffi::*;
 
 // Basic Types //
 #[repr(C)] pub struct VkOffset2D(pub i32, pub i32);
@@ -322,10 +323,11 @@ pub struct VkDeviceCreateInfo
 }
 
 #[repr(C)]
-pub struct VkXlibSurfaceCreateInfoKHR
+pub struct VkXcbSurfaceCreateInfoKHR
 {
-	pub sType: VkStructureType, pub pNext: *const c_void, pub flags: VkXlibSurfaceCreateFlagsKHR,
-	pub dpy: *mut x11::xlib::Display, pub window: x11::xlib::Window
+	pub sType: VkStructureType, pub pNext: *const c_void,
+	pub flags: VkXcbSurfaceCreateFlagsKHR, pub connection: *mut xcb_connection_t,
+	pub window: xcb_window_t
 }
 #[repr(C)]
 pub struct VkSurfaceCapabilitiesKHR

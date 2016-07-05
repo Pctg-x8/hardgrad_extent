@@ -1,19 +1,17 @@
 extern crate libc;
-extern crate x11;
+extern crate xcb;
 #[macro_use] mod vkffi;
 mod render_vk;
-mod xlib;
 
 use vkffi::*;
 use render_vk::wrap as vk;
 use render_vk::wrap::{CreationObject, InternalProvider, HasParent};
-use xlib::XlibWindow;
 
 const APP_NAME: &'static str = "HardGrad -> Extent\0";
 const ENGINE_NAME: &'static str = "Hybrid-ML\0";
 const DEBUG_LAYER_NAME: &'static str = "VK_LAYER_LUNARG_standard_validation\0";
 const SURFACE_EXTENSION_NAME: &'static str = "VK_KHR_surface\0";
-const PSURFACE_EXTENSION_NAME: &'static str = "VK_KHR_xlib_surface\0";
+const PSURFACE_EXTENSION_NAME: &'static str = "VK_KHR_xcb_surface\0";
 const DEBUG_EXTENSION_NAME: &'static str = "VK_EXT_debug_report\0";
 const SWAPCHAIN_EXTENSION_NAME: &'static str = "VK_KHR_swapchain\0";
 
@@ -64,14 +62,14 @@ fn create_graphics_device(adapter_ref: &vk::PhysicalDevice) -> vk::Device
 
 	adapter_ref.create_device(&device_info, gqf_index).unwrap()
 }
-fn create_surface<'i, 'dpy>(instance_ref: &'i vk::Instance, window: &xlib::WindowWithColormap<'dpy>) -> vk::Surface<'i>
+fn create_surface<'i>(instance_ref: &'i vk::Instance, con: &xcb::Connection, window_id: xcb::ffi::xproto::xcb_window_t) -> vk::Surface<'i>
 {
-	let x11_surface_info = VkXlibSurfaceCreateInfoKHR
+	let xcb_surface_info = VkXcbSurfaceCreateInfoKHR
 	{
-		sType: VkStructureType::XlibSurfaceCreateInfoKHR, pNext: std::ptr::null(),
-		dpy: window.display_ref.internal, window: window.internal, flags: 0
+		sType: VkStructureType::XcbSurfaceCreateInfoKHR, pNext: std::ptr::null(), flags: 0,
+		connection: con.get_raw_conn(), window: window_id
 	};
-	vk::Surface::create(instance_ref, &x11_surface_info).unwrap()
+	vk::Surface::create(instance_ref, &xcb_surface_info).unwrap()
 }
 fn create_swapchain<'d>(adapter: &vk::PhysicalDevice, device_ref: &'d vk::Device, surface: &vk::Surface) -> (vk::Swapchain<'d>, VkFormat, VkExtent2D)
 {
@@ -80,7 +78,8 @@ fn create_swapchain<'d>(adapter: &vk::PhysicalDevice, device_ref: &'d vk::Device
 	let surface_caps = adapter.get_surface_capabilities(surface);
 
 	// making desired parameters //
-	let format = adapter.enumerate_surface_formats(surface).into_iter().filter(|ref x| x.format == VkFormat::B8G8R8A8_UNORM || x.format == VkFormat::R8G8B8A8_UNORM)
+	let format = adapter.enumerate_surface_formats(surface).into_iter()
+		.filter(|ref x| x.format == VkFormat::B8G8R8A8_UNORM || x.format == VkFormat::R8G8B8A8_UNORM || x.format == VkFormat::B8G8R8A8_SRGB)
 		.next().expect("Desired format is not found");
 	let present_mode = adapter.enumerate_present_modes(surface).into_iter().filter(|ref x| **x == VkPresentModeKHR::Mailbox || **x == VkPresentModeKHR::FIFO)
 		.next().expect("Desired Present Mode is not found");
@@ -177,31 +176,55 @@ fn create_framebuffers<'d>(views: &Vec<vk::ImageView<'d>>, rp: &vk::RenderPass<'
 	}).collect::<Vec<_>>()
 }
 
-pub fn start_app() -> i32
+fn screen_of_display(con: &xcb::Connection, scr: i32) -> *mut xcb::ffi::xproto::xcb_screen_t
 {
-	// init x11
-	let display = xlib::Display::open(None).unwrap();
-	let root = display.get_default_root_window();
-	let wa = root.get_window_attributes();
-	let vid = unsafe { x11::xlib::XVisualIDFromVisual(wa.visual) };
-	println!("visual_id: {}", vid);
+	fn recursive(mut iter: xcb::ffi::xproto::xcb_screen_iterator_t, remain: i32) -> Option<*mut xcb::ffi::xproto::xcb_screen_t>
+	{
+		if remain <= 0 { Some(iter.data) }
+		else if iter.rem == 0 { None }
+		else
+		{
+			unsafe { xcb::ffi::xproto::xcb_screen_next(&mut iter) };
+			recursive(iter, remain - 1)
+		}
+	}
+	let iter = unsafe { xcb::ffi::xproto::xcb_setup_roots_iterator(con.get_setup().ptr) };
+	recursive(iter, scr).expect("Unable to find default screen")
+}
+
+fn main()
+{
+	// init xcb(connection to display)
+	let (xcon, screen_default_num) = xcb::Connection::connect(None).unwrap();
+	let screen = screen_of_display(&xcon, screen_default_num);
+	let visual_id = unsafe { (*screen).root_visual };
 
 	// init vulkan
 	let instance = create_instance();
 	let adapter = vk::PhysicalDevice::wrap(instance.enumerate_adapters().unwrap()[0]);
 	let qf = adapter.get_graphics_queue_family_index().unwrap();
-	if !adapter.is_xlib_presentation_support(qf, display.internal, vid) { panic!("Unsupported Display Format"); }
+	if !adapter.is_xcb_presentation_support(qf, xcon.get_raw_conn(), visual_id) { panic!("Unsupported Display Format"); }
 	let device = create_graphics_device(&adapter);
 
-	// create window
-	let window = display.create_window(&root, &wa).unwrap();
-	let atom_delete_window_msg = display.intern_atom("WM_DELETE_WINDOW", false);
-	window.set_wm_protocols(&mut [atom_delete_window_msg]);
-	window.map();
-	window.set_title_raw(APP_NAME);
+	// init display
+	let wm_protocols_str = "WM_PROTOCOLS";
+	let wm_delete_window_str = "WM_DELETE_WINDOW";
+	let window_id = xcon.generate_id();
+	unsafe { xcb::ffi::xproto::xcb_create_window(xcon.get_raw_conn(), (*screen).root_depth, window_id, (*screen).root,
+		0, 0, 640, 480, 0, xcb::ffi::xproto::XCB_WINDOW_CLASS_INPUT_OUTPUT as u16, (*screen).root_visual,
+		0, std::ptr::null()) };
+	unsafe { xcb::ffi::xproto::xcb_change_property(xcon.get_raw_conn(), xcb::ffi::xproto::XCB_PROP_MODE_REPLACE as u8, window_id,
+		xcb::xproto::ATOM_WM_NAME, xcb::xproto::ATOM_STRING, 8, APP_NAME.len() as u32 - 1, APP_NAME.as_ptr() as *const libc::c_void) };
+	let ia_protocols_c = unsafe { xcb::ffi::xproto::xcb_intern_atom(xcon.get_raw_conn(), false as u8, wm_protocols_str.len() as u16, wm_protocols_str.as_ptr() as *const i8) };
+	let ia_protocols = unsafe { xcb::ffi::xproto::xcb_intern_atom_reply(xcon.get_raw_conn(), ia_protocols_c, std::ptr::null_mut()) };
+	let ia_delete_window_c = unsafe { xcb::ffi::xproto::xcb_intern_atom(xcon.get_raw_conn(), false as u8, wm_delete_window_str.len() as u16, wm_delete_window_str.as_ptr() as *const i8) };
+	let ia_delete_window = unsafe { xcb::ffi::xproto::xcb_intern_atom_reply(xcon.get_raw_conn(), ia_delete_window_c, std::ptr::null_mut()) };
+	unsafe { xcb::ffi::xproto::xcb_change_property(xcon.get_raw_conn(), xcb::ffi::xproto::XCB_PROP_MODE_REPLACE as u8, window_id,
+		(*ia_protocols).atom, 4, 32, 1, std::mem::transmute(&(*ia_delete_window).atom)) };
+	unsafe { xcb::ffi::xproto::xcb_map_window(xcon.get_raw_conn(), window_id) };
 
 	// Ready for Rendering
-	let surface = create_surface(&instance, &window);
+	let surface = create_surface(&instance, &xcon, window_id);
 	let (swapchain, sc_format, sc_extent) = create_swapchain(&adapter, &device, &surface);
 	let final_images = swapchain.get_images().unwrap();
 	let final_image_views = create_image_views(&final_images, sc_format);
@@ -209,27 +232,32 @@ pub fn start_app() -> i32
 	let final_framebuffers = create_framebuffers(&final_image_views, &simple_pass, sc_extent);
 
 	// Application Loop
+	xcon.flush();
 	'app_loop: loop
 	{
-		while unsafe { x11::xlib::XPending(display.internal) } > 0
+		'event_loop: loop
 		{
-			let mut event: x11::xlib::XEvent = unsafe { std::mem::uninitialized() };
-			unsafe { x11::xlib::XNextEvent(display.internal, &mut event) };
-
-			match event.get_type()
+			match xcon.poll_for_event()
 			{
-				x11::xlib::ClientMessage =>
+				Some(ev) =>
 				{
-					let xc: x11::xlib::XClientMessageEvent = unsafe { *std::mem::transmute::<*const x11::xlib::XEvent, *const _>(&event) };
-					let first_long: u32 = unsafe { *std::mem::transmute::<*const _, *const _>(&xc.data) };
-					if first_long as x11::xlib::Atom == atom_delete_window_msg { break 'app_loop; }
+					match unsafe { (*ev.ptr).response_type & 0x7f }
+					{
+						xcb::ffi::xproto::XCB_CLIENT_MESSAGE =>
+						{
+							let event_ptr = unsafe { std::mem::transmute::<_, *mut xcb::ffi::xproto::xcb_client_message_event_t>(ev.ptr) };
+							if unsafe { std::mem::transmute::<_, [u32; 5]>((*event_ptr).data)[0] == (*ia_delete_window).atom }
+							{
+								break 'app_loop;
+							}
+						},
+						_ => println!("xcb event response: {}", unsafe { (*ev.ptr).response_type })
+					}
 				},
-				_ => ()
+				None => break 'event_loop
 			}
 		}
-		// println!("Render");
-	}
 
-	0
+		// render
+	}
 }
-fn main() { std::process::exit(start_app()); }

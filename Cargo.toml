@@ -6,4 +6,4 @@ publish = false
 
 [dependencies]
 libc = "0.2.12"
-x11 = { version = "2.6.1", features = ["xlib"] }
+xcb = "0.7.3"
