@@ -3,6 +3,10 @@ extern crate xcb;
 #[macro_use] mod vkffi;
 mod render_vk;
 
+mod traits;
+use traits::*;
+mod xcbw;
+use xcbw::*;
 mod vertex_formats;
 use vertex_formats::*;
 mod meshstore;
@@ -10,7 +14,7 @@ use meshstore::MeshStore;
 
 use vkffi::*;
 use render_vk::wrap as vk;
-use render_vk::wrap::{CreationObject, InternalProvider, HasParent};
+use render_vk::wrap::CreationObject;
 
 const APP_NAME: &'static str = "HardGrad -> Extent\0";
 const ENGINE_NAME: &'static str = "Hybrid-ML\0";
@@ -67,12 +71,12 @@ fn create_graphics_device(adapter_ref: &vk::PhysicalDevice) -> vk::Device
 
 	adapter_ref.create_device(&device_info, gqf_index).unwrap()
 }
-fn create_surface<'i>(instance_ref: &'i vk::Instance, con: &xcb::Connection, window_id: xcb::ffi::xproto::xcb_window_t) -> vk::Surface<'i>
+fn create_surface<'i, 'c>(instance_ref: &'i vk::Instance, window: &XWindow<'c>) -> vk::Surface<'i>
 {
 	let xcb_surface_info = VkXcbSurfaceCreateInfoKHR
 	{
 		sType: VkStructureType::XcbSurfaceCreateInfoKHR, pNext: std::ptr::null(), flags: 0,
-		connection: con.get_raw_conn(), window: window_id
+		connection: window.parent().get_raw(), window: window.get()
 	};
 	vk::Surface::create(instance_ref, &xcb_surface_info).unwrap()
 }
@@ -110,7 +114,7 @@ fn create_swapchain<'d>(adapter: &vk::PhysicalDevice, device_ref: &'d vk::Device
 
 	(vk::Swapchain::create(device_ref, &swapchain_info).unwrap(), format.format, sc_extent)
 }
-fn create_image_views<'d, ImageObj: vk::VkImageResource + vk::HasParent<ParentRefType=&'d vk::Device>>(images: &'d Vec<ImageObj>, format: VkFormat) -> Vec<vk::ImageView>
+fn create_image_views<'d, ImageObj: vk::VkImageResource + HasParent<ParentRefType=&'d vk::Device>>(images: &'d Vec<ImageObj>, format: VkFormat) -> Vec<vk::ImageView>
 {
 	images.into_iter().map(|o|
 	{
@@ -182,59 +186,29 @@ fn create_framebuffers<'d>(views: &Vec<vk::ImageView<'d>>, rp: &vk::RenderPass<'
 	}).collect::<Vec<_>>()
 }
 
-fn screen_of_display(con: &xcb::Connection, scr: i32) -> *mut xcb::ffi::xproto::xcb_screen_t
-{
-	fn recursive(mut iter: xcb::ffi::xproto::xcb_screen_iterator_t, remain: i32) -> Option<*mut xcb::ffi::xproto::xcb_screen_t>
-	{
-		if remain <= 0 { Some(iter.data) }
-		else if iter.rem == 0 { None }
-		else
-		{
-			unsafe { xcb::ffi::xproto::xcb_screen_next(&mut iter) };
-			recursive(iter, remain - 1)
-		}
-	}
-	let iter = unsafe { xcb::ffi::xproto::xcb_setup_roots_iterator(con.get_setup().ptr) };
-	recursive(iter, scr).expect("Unable to find default screen")
-}
-
 fn main()
 {
 	// init xcb(connection to display)
-	let (xcon, screen_default_num) = xcb::Connection::connect(None).unwrap();
-	let screen = screen_of_display(&xcon, screen_default_num);
-	let visual_id = unsafe { (*screen).root_visual };
+	let xcon = XServerConnection::connect();
 
 	// init vulkan
 	let instance = create_instance();
 	let adapter = vk::PhysicalDevice::wrap(instance.enumerate_adapters().unwrap()[0]);
 	let qf = adapter.get_graphics_queue_family_index().unwrap();
-	if !adapter.is_xcb_presentation_support(qf, xcon.get_raw_conn(), visual_id) { panic!("Unsupported Display Format"); }
+	if !xcon.is_vk_presentation_support(&adapter, qf) { panic!("Unsupported Display Format"); }
 	let device = create_graphics_device(&adapter);
 
 	// init display
-	let wm_protocols_str = "WM_PROTOCOLS";
-	let wm_delete_window_str = "WM_DELETE_WINDOW";
-	let window_id = xcon.generate_id();
-	unsafe { xcb::ffi::xproto::xcb_create_window(xcon.get_raw_conn(), (*screen).root_depth, window_id, (*screen).root,
-		0, 0, 640, 480, 0, xcb::ffi::xproto::XCB_WINDOW_CLASS_INPUT_OUTPUT as u16, (*screen).root_visual,
-		0, std::ptr::null()) };
-	unsafe { xcb::ffi::xproto::xcb_change_property(xcon.get_raw_conn(), xcb::ffi::xproto::XCB_PROP_MODE_REPLACE as u8, window_id,
-		xcb::xproto::ATOM_WM_NAME, xcb::xproto::ATOM_STRING, 8, APP_NAME.len() as u32 - 1, APP_NAME.as_ptr() as *const libc::c_void) };
-	let ia_protocols_c = unsafe { xcb::ffi::xproto::xcb_intern_atom(xcon.get_raw_conn(), false as u8, wm_protocols_str.len() as u16, wm_protocols_str.as_ptr() as *const i8) };
-	let ia_protocols = unsafe { xcb::ffi::xproto::xcb_intern_atom_reply(xcon.get_raw_conn(), ia_protocols_c, std::ptr::null_mut()) };
-	let ia_delete_window_c = unsafe { xcb::ffi::xproto::xcb_intern_atom(xcon.get_raw_conn(), false as u8, wm_delete_window_str.len() as u16, wm_delete_window_str.as_ptr() as *const i8) };
-	let ia_delete_window = unsafe { xcb::ffi::xproto::xcb_intern_atom_reply(xcon.get_raw_conn(), ia_delete_window_c, std::ptr::null_mut()) };
-	unsafe { xcb::ffi::xproto::xcb_change_property(xcon.get_raw_conn(), xcb::ffi::xproto::XCB_PROP_MODE_REPLACE as u8, window_id,
-		(*ia_protocols).atom, 4, 32, 1, std::mem::transmute(&(*ia_delete_window).atom)) };
-	unsafe { xcb::ffi::xproto::xcb_map_window(xcon.get_raw_conn(), window_id) };
+	let window = xcon.new_window(VkExtent2D(640, 480), APP_NAME);
+	window.map();
+	xcon.flush();
 
 	// Device to Device and Resource to Resource Synchronization //
 	let semaphore = device.create_semaphore().unwrap();
 	let fence = device.create_fence().unwrap();
 
 	// Ready for Rendering
-	let surface = create_surface(&instance, &xcon, window_id);
+	let surface = create_surface(&instance, &window);
 	let (swapchain, sc_format, sc_extent) = create_swapchain(&adapter, &device, &surface);
 	let VkExtent2D(sc_width, sc_height) = sc_extent;
 	let render_area = VkRect2D(VkOffset2D(0, 0), sc_extent);
@@ -408,12 +382,11 @@ fn main()
 	}
 
 	// Application Loop
-	xcon.flush();
 	'app_loop: loop
 	{
 		'event_loop: loop
 		{
-			match xcon.poll_for_event()
+			match xcon.poll_event()
 			{
 				Some(ev) =>
 				{
@@ -422,10 +395,7 @@ fn main()
 						xcb::ffi::xproto::XCB_CLIENT_MESSAGE =>
 						{
 							let event_ptr = unsafe { std::mem::transmute::<_, *mut xcb::ffi::xproto::xcb_client_message_event_t>(ev.ptr) };
-							if unsafe { std::mem::transmute::<_, [u32; 5]>((*event_ptr).data)[0] == (*ia_delete_window).atom }
-							{
-								break 'app_loop;
-							}
+							if xcon.is_delete_window_message(event_ptr) { break 'app_loop; }
 						},
 						_ => println!("xcb event response: {}", unsafe { (*ev.ptr).response_type })
 					}

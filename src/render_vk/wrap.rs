@@ -6,15 +6,11 @@ use std;
 use std::ffi::*;
 use std::os::raw::*;
 use libc::size_t;
-use xcb;
+use traits::*;
 
 pub trait CreationObject<StructureT> where Self: std::marker::Sized
 {
 	fn create(info: &StructureT) -> Result<Self, VkResult>;
-}
-pub trait InternalProvider<InternalType>
-{
-	fn get(&self) -> InternalType;
 }
 
 trait ResultValueToObject where Self: std::marker::Sized { fn to_result(self) -> Result<(), Self>; }
@@ -22,7 +18,6 @@ impl ResultValueToObject for VkResult
 {
 	fn to_result(self) -> Result<(), Self> { return if self == VkResult::Success { Ok(()) } else { Err(self) } }
 }
-pub trait HasParent { type ParentRefType; fn parent(&self) -> Self::ParentRefType; }
 
 pub struct Instance
 {
@@ -130,11 +125,6 @@ impl PhysicalDevice
 		unsafe { vkGetPhysicalDeviceQueueFamilyProperties(self.obj, &mut property_count, properties.as_mut_ptr()) };
 		properties.into_iter().enumerate().filter(|&(_, ref x)| (x.queueFlags & (VkQueueFlagBits::Graphics as u32)) != 0).map(|(i, _)| i as u32).next()
 	}
-	pub fn is_xcb_presentation_support(&self, qf: u32, con: *mut xcb::ffi::xcb_connection_t, vid: xcb::ffi::xproto::xcb_visualid_t) -> bool
-	{
-		let b = unsafe { vkGetPhysicalDeviceXcbPresentationSupportKHR(self.obj, qf, con, vid) };
-		b == 1
-	}
 	pub fn is_surface_support<'i>(&self, queue_family_index: u32, surface: &Surface<'i>) -> bool
 	{
 		let mut supported: VkBool32 = 0;
@@ -187,6 +177,10 @@ impl PhysicalDevice
 			.iter().enumerate().filter(|&(_, &VkMemoryType(property_flags, _))| (property_flags & desired_property_flags) != 0)
 			.map(|(i, _)| i).next()
 	}
+}
+impl InternalProvider<VkPhysicalDevice> for PhysicalDevice
+{
+	fn get(&self) -> VkPhysicalDevice { self.obj }
 }
 pub struct Device { obj: VkDevice, pub queue_family_index: u32, queue_obj: VkQueue }
 impl std::ops::Drop for Device

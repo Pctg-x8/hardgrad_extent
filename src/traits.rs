@@ -1,26 +1,13 @@
 // Traits
 
-#[cfg(feature = "use_vk")]
-pub mod ex
+// Provides Internal Pointer type(for wrapper objects)
+pub trait InternalProvider<InternalType>
 {
-	use vulkan::*;
-	use vkffi::*;
-
-	pub trait VkSurfaceProvider
-	{
-		fn create_surface_vk<'a>(&self, instance: &'a vk::Instance) -> Result<vk::Surface<'a>, VkResult>;
-	}
+	fn get(&self) -> InternalType;
 }
-#[cfg(feature = "use_d3d12")]
-pub mod ex
+// Provides Reference to Parent object
+pub trait HasParent
 {
-	use winapi::*;
-	use d3d12_sw::*;
-	use render::SwapchainFactory;
-
-	pub trait DXGISwapchainProvider
-	{
-		fn create_swapchain(&self, backend: &SwapchainFactory<HWND, DXGISwapchain>) -> Result<DXGISwapchain, String>;
-	}
+	type ParentRefType;
+	fn parent(&self) -> Self::ParentRefType;
 }
-pub use self::ex::*;
