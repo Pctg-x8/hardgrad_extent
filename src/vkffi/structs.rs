@@ -12,13 +12,13 @@ use vkffi::functions::*;
 use vkffi::objects::*;
 use vkffi::macros::*;
 use xcb;
-use xcb::ffi::*;
 
-// Basic Types //
-#[repr(C)] pub struct VkOffset2D(pub i32, pub i32);
+// Basic Types(Copyable) //
+#[repr(C)] #[derive(Clone, Copy)] pub struct VkOffset2D(pub i32, pub i32);
 #[repr(C)] #[derive(Clone, Copy)] pub struct VkExtent2D(pub u32, pub u32);
-#[repr(C)] pub struct VkRect2D(pub VkOffset2D, pub VkExtent2D);
+#[repr(C)] #[derive(Clone, Copy)] pub struct VkRect2D(pub VkOffset2D, pub VkExtent2D);
 #[repr(C)] #[derive(Clone)] pub struct VkExtent3D(pub u32, pub u32, pub u32);
+#[repr(C)] pub struct VkViewport(pub f32, pub f32, pub f32, pub f32, pub f32, pub f32);
 
 #[repr(C)]
 pub struct VkInstanceCreateInfo
@@ -239,8 +239,8 @@ pub struct VkPhysicalDeviceFeatures
 	pub memoryTypeCount: u32, pub memoryTypes: [VkMemoryType; VK_MAX_MEMORY_TYPES],
 	pub memoryHeapCount: u32, pub memoryHeaps: [VkMemoryHeap; VK_MAX_MEMORY_HEAPS]
 }
-#[repr(C)] pub struct VkMemoryType(VkMemoryPropertyFlags, u32);
-#[repr(C)] pub struct VkMemoryHeap(VkDeviceSize, VkMemoryHeapFlags);
+#[repr(C)] pub struct VkMemoryType(pub VkMemoryPropertyFlags, pub u32);
+#[repr(C)] pub struct VkMemoryHeap(pub VkDeviceSize, pub VkMemoryHeapFlags);
 #[repr(C)]
 pub struct VkDeviceQueueCreateInfo
 {
@@ -275,7 +275,7 @@ pub struct VkDeviceCreateInfo
 {
 	pub r: VkComponentSwizzle, pub g: VkComponentSwizzle, pub b: VkComponentSwizzle, pub a: VkComponentSwizzle
 }
-#[repr(C)] pub struct VkImageSubresourceRange
+#[repr(C)] #[derive(Clone)] pub struct VkImageSubresourceRange
 {
 	pub aspectMask: VkImageAspectFlags,
 	pub baseMipLevel: u32, pub levelCount: u32,
@@ -321,13 +321,251 @@ pub struct VkDeviceCreateInfo
 	pub renderPass: VkRenderPass, pub attachmentCount: u32, pub pAttachments: *const VkImageView,
 	pub width: u32, pub height: u32, pub layers: u32
 }
+#[repr(C)] pub struct VkCommandPoolCreateInfo
+{
+	pub sType: VkStructureType, pub pNext: *const c_void,
+	pub flags: VkCommandPoolCreateFlags, pub queueFamilyIndex: u32
+}
+#[repr(C)] pub struct VkCommandBufferAllocateInfo
+{
+	pub sType: VkStructureType, pub pNext: *const c_void,
+	pub commandPool: VkCommandPool, pub level: VkCommandBufferLevel,
+	pub commandBufferCount: u32
+}
+#[repr(C)] pub struct VkCommandBufferInheritanceInfo
+{
+	pub sType: VkStructureType, pub pNext: *const c_void,
+	pub renderPass: VkRenderPass, pub subpass: u32,
+	pub framebuffer: VkFramebuffer, pub occlusionQueryEnable: VkBool32,
+	pub queryflags: VkQueryControlFlags, pub pipelineStatistics: VkQueryPipelineStatisticFlags
+}
+#[repr(C)] pub struct VkCommandBufferBeginInfo
+{
+	pub sType: VkStructureType, pub pNext: *const c_void,
+	pub flags: VkCommandBufferUsageFlags, pub pInheritanceInfo: *const VkCommandBufferInheritanceInfo
+}
+#[repr(C)] pub struct VkShaderModuleCreateInfo
+{
+	pub sType: VkStructureType, pub pNext: *const c_void,
+	pub flags: VkShaderModuleCreateFlags,
+	pub codeSize: size_t, pub pCode: *const u32
+}
+#[repr(C)] pub struct VkPipelineCacheCreateInfo
+{
+	pub sType: VkStructureType, pub pNext: *const c_void,
+	pub flags: VkPipelineCacheCreateFlags,
+	pub initialDataSize: size_t, pub pInitialData: *const c_void
+}
+#[repr(C)] pub struct VkSpecializationMapEntry(pub u32, pub u32, pub size_t);		// id, offset, size
+#[repr(C)] pub struct VkSpecializationInfo
+{
+	pub mapEntryCount: u32, pub pMapEntries: *const VkSpecializationMapEntry,
+	pub dataSize: size_t, pub pData: *const c_void
+}
+#[repr(C)] pub struct VkPipelineShaderStageCreateInfo
+{
+	pub sType: VkStructureType, pub pNext: *const c_void,
+	pub flags: VkPipelineShaderStageCreateFlags,
+	pub stage: VkShaderStageFlagBits,
+	pub module: VkShaderModule, pub pName: *const c_char,
+	pub pSpecializationInfo: *const VkSpecializationInfo
+}
+/// Binding, Stride, InputRate
+#[repr(C)] pub struct VkVertexInputBindingDescription(pub u32, pub u32, pub VkVertexInputRate);
+/// Location, Binding, Format, Offset
+#[repr(C)] pub struct VkVertexInputAttributeDescription(pub u32, pub u32, pub VkFormat, pub u32);
+#[repr(C)] pub struct VkPipelineVertexInputStateCreateInfo
+{
+	pub sType: VkStructureType, pub pNext: *const c_void,
+	pub flags: VkPipelineVertexInputStateCreateFlags,
+	pub vertexBindingDescriptionCount: u32,
+	pub pVertexBindingDescriptions: *const VkVertexInputBindingDescription,
+	pub vertexAttributeDescriptionCount: u32,
+	pub pVertexAttributeDescriptions: *const VkVertexInputAttributeDescription
+}
+#[repr(C)] pub struct VkPipelineInputAssemblyStateCreateInfo
+{
+	pub sType: VkStructureType, pub pNext: *const c_void,
+	pub flags: VkPipelineInputAssemblyStateCreateFlags,
+	pub topology: VkPrimitiveTopology,
+	pub primitiveRestartEnable: VkBool32
+}
+#[repr(C)] pub struct VkPipelineTessellationStateCreateInfo
+{
+	pub sType: VkStructureType, pub pNext: *const c_void,
+	pub flags: VkPipelineTessellationStateCreateFlags,
+	pub patchControlPoints: u32
+}
+#[repr(C)] pub struct VkPipelineViewportStateCreateInfo
+{
+	pub sType: VkStructureType, pub pNext: *const c_void,
+	pub flags: VkPipelineViewportStateCreateFlags,
+	pub viewportCount: u32, pub pViewports: *const VkViewport,
+	pub scissorCount: u32, pub pScissors: *const VkRect2D
+}
+#[repr(C)] pub struct VkPipelineRasterizationStateCreateInfo
+{
+	pub sType: VkStructureType, pub pNext: *const c_void,
+	pub flags: VkPipelineRasterizationStateCreateFlags,
+	pub depthClampEnable: VkBool32, pub rasterizerDiscardEnable: VkBool32,
+	pub polygonMode: VkPolygonMode, pub cullMode: VkCullModeFlags,
+	pub frontFace: VkFrontFace, pub depthBiasEnable: VkBool32,
+	pub depthBiasConstantFactor: f32, pub depthBiasClamp: f32,
+	pub depthBiasSlopeFactor: f32, pub lineWidth: f32
+}
+#[repr(C)] pub struct VkPipelineMultisampleStateCreateInfo
+{
+	pub sType: VkStructureType, pub pNext: *const c_void,
+	pub flags: VkPipelineMultisampleStateCreateFlags,
+	pub rasterizationSamples: VkSampleCountFlagBits,
+	pub sampleShadingEnable: VkBool32,
+	pub minSampleShading: f32, pub pSampleMask: *const VkSampleMask,
+	pub alphaToCoverageEnable: VkBool32,
+	pub alphaToOneEnable: VkBool32
+}
+#[repr(C)] pub struct VkStencilOpState
+{
+	pub failOp: VkStencilOp, pub passOp: VkStencilOp,
+	pub depthFailOp: VkStencilOp, pub compareop: VkCompareOp,
+	pub compareMask: u32, pub writeMask: u32, pub reference: u32
+}
+#[repr(C)] pub struct VkPipelineDepthStencilStateCreateInfo
+{
+	pub sType: VkStructureType, pub pNext: *const c_void,
+	pub flags: VkPipelineDepthStencilStateCreateFlags,
+	pub depthTestEnable: VkBool32, pub depthWriteEnable: VkBool32,
+	pub depthCompareOp: VkCompareOp, pub depthBoundsTestEnable: VkBool32,
+	pub stencilTestEnable: VkBool32, pub front: VkStencilOpState, pub back: VkStencilOpState,
+	pub minDepthBounds: f32, pub maxDepthBounds: f32
+}
+#[repr(C)] pub struct VkPipelineColorBlendAttachmentState
+{
+	pub blendEnable: VkBool32,
+	pub srcColorBlendFactor: VkBlendFactor, pub dstColorBlendFactor: VkBlendFactor,
+	pub colorBlendOp: VkBlendOp,
+	pub srcAlphaBlendFactor: VkBlendFactor, pub dstAlphaBlendFactor: VkBlendFactor,
+	pub alphaBlendOp: VkBlendOp, pub colorWriteMask: VkColorComponentFlags
+}
+#[repr(C)] pub struct VkPipelineColorBlendStateCreateInfo
+{
+	pub sType: VkStructureType, pub pNext: *const c_void,
+	pub flags: VkPipelineColorBlendStateCreateFlags,
+	pub logicOpEnable: VkBool32, pub logicOp: VkLogicOp,
+	pub attachmentCount: u32,
+	pub pAttachments: *const VkPipelineColorBlendAttachmentState,
+	pub blendConstants: [f32; 4]
+}
+#[repr(C)] pub struct VkPipelineDynamicStateCreateInfo
+{
+	pub sType: VkStructureType, pub pNext: *const c_void,
+	pub flags: VkPipelineDynamicStateCreateFlags,
+	pub dynamicStateCount: u32,
+	pub pDynamicStates: *const VkDynamicState
+}
+#[repr(C)] pub struct VkGraphicsPipelineCreateInfo
+{
+	pub sType: VkStructureType, pub pNext: *const c_void,
+	pub flags: VkPipelineCreateFlags,
+	pub stageCount: u32,
+	pub pStages: *const VkPipelineShaderStageCreateInfo,
+	pub pVertexInputState: *const VkPipelineVertexInputStateCreateInfo,
+	pub pInputAssemblyState: *const VkPipelineInputAssemblyStateCreateInfo,
+	pub pTessellationState: *const VkPipelineTessellationStateCreateInfo,
+	pub pViewportState: *const VkPipelineViewportStateCreateInfo,
+	pub pRasterizationState: *const VkPipelineRasterizationStateCreateInfo,
+	pub pMultisampleState: *const VkPipelineMultisampleStateCreateInfo,
+	pub pDepthStencilState: *const VkPipelineDepthStencilStateCreateInfo,
+	pub pColorBlendState: *const VkPipelineColorBlendStateCreateInfo,
+	pub pDynamicState: *const VkPipelineDynamicStateCreateInfo,
+	pub layout: VkPipelineLayout, pub renderPass: VkRenderPass, pub subpass: u32,
+	pub basePipelineHandle: VkPipeline, pub basePipelineIndex: u32
+}
+#[repr(C)] pub struct VkPushConstantRange(VkShaderStageFlags, u32, u32);
+#[repr(C)] pub struct VkPipelineLayoutCreateInfo
+{
+	pub sType: VkStructureType, pub pNext: *const c_void,
+	pub flags: VkPipelineLayoutCreateFlags,
+	pub setLayoutCount: u32, pub pSetLayouts: *const VkDescriptorSetLayout,
+	pub pushConstantRangeCount: u32, pub pPushConstantRanges: *const VkPushConstantRange
+}
+#[repr(C)] #[derive(Clone)] pub struct VkMemoryBarrier
+{
+	pub sType: VkStructureType, pub pNext: *const c_void,
+	pub srcAccessMask: VkAccessFlags, pub dstAccessMask: VkAccessFlags
+}
+#[repr(C)] #[derive(Clone)] pub struct VkBufferMemoryBarrier
+{
+	pub sType: VkStructureType, pub pNext: *const c_void,
+	pub srcAccessMask: VkAccessFlags, pub dstAccessMask: VkAccessFlags,
+	pub srcQueueFamilyIndex: u32, pub dstQueueFamilyIndex: u32,
+	pub buffer: VkBuffer, pub offset: VkDeviceSize, pub size: VkDeviceSize
+}
+#[repr(C)] #[derive(Clone)] pub struct VkImageMemoryBarrier
+{
+	pub sType: VkStructureType, pub pNext: *const c_void,
+	pub srcAccessMask: VkAccessFlags, pub dstAccessMask: VkAccessFlags,
+	pub oldLayout: VkImageLayout, pub newLayout: VkImageLayout,
+	pub srcQueueFamilyIndex: u32, pub dstQueueFamilyIndex: u32,
+	pub image: VkImage, pub subresourceRange: VkImageSubresourceRange
+}
+#[repr(C)] pub struct VkRenderPassBeginInfo
+{
+	pub sType: VkStructureType, pub pNext: *const c_void,
+	pub renderPass: VkRenderPass, pub framebuffer: VkFramebuffer,
+	pub renderArea: VkRect2D, pub clearValueCount: u32,
+	pub pClearValues: *const VkClearValue
+}
+#[repr(C)] pub struct VkClearColorValue(pub f32, pub f32, pub f32, pub f32);
+#[repr(C)] pub struct VkClearDepthStencilValue(pub f32, pub u32);
+#[repr(C)] pub struct VkClearValue(pub VkClearColorValue);
+
+#[repr(C)] pub struct VkFenceCreateInfo
+{
+	pub sType: VkStructureType, pub pNext: *const c_void,
+	pub flags: VkFenceCreateFlags
+}
+#[repr(C)] pub struct VkSemaphoreCreateInfo
+{
+	pub sType: VkStructureType, pub pNext: *const c_void,
+	pub flags: VkSemaphoreCreateFlags
+}
+#[repr(C)] pub struct VkSubmitInfo
+{
+	pub sType: VkStructureType, pub pNext: *const c_void,
+	pub waitSemaphoreCount: u32, pub pWaitSemaphores: *const VkSemaphore, pub pWaitDstStageMask: *const VkPipelineStageFlags,
+	pub commandBufferCount: u32, pub pCommandBuffers: *const VkCommandBuffer,
+	pub signalSemaphoreCount: u32, pub pSignalSemaphores: *const VkSemaphore
+}
+#[repr(C)] pub struct VkMemoryAllocateInfo
+{
+	pub sType: VkStructureType, pub pNext: *const c_void,
+	pub allocationSize: VkDeviceSize, pub memoryTypeIndex: u32
+}
+#[repr(C)] pub struct VkMappedMemoryRange
+{
+	pub sType: VkStructureType, pub pNext: *const c_void,
+	pub memory: VkDeviceMemory, pub offset: VkDeviceSize,
+	pub size: VkDeviceSize
+}
+#[repr(C)] pub struct VkMemoryRequirements
+{
+	pub size: VkDeviceSize, pub alignment: VkDeviceSize,
+	pub memoryTypeBits: u32
+}
+
+#[repr(C)] pub struct VkBufferCreateInfo
+{
+	pub sType: VkStructureType, pub pNext: *const c_void,
+	pub flags: VkBufferCreateFlags, pub size: VkDeviceSize,
+	pub usage: VkBufferUsageFlags, pub sharingMode: VkSharingMode,
+	pub queueFamilyIndexCount: u32, pub pQueueFamilyIndices: *const u32
+}
 
 #[repr(C)]
 pub struct VkXcbSurfaceCreateInfoKHR
 {
-	pub sType: VkStructureType, pub pNext: *const c_void,
-	pub flags: VkXcbSurfaceCreateFlagsKHR, pub connection: *mut xcb_connection_t,
-	pub window: xcb_window_t
+	pub sType: VkStructureType, pub pNext: *const c_void, pub flags: VkXlibSurfaceCreateFlagsKHR,
+	pub connection: *mut xcb::ffi::xcb_connection_t, pub window: xcb::ffi::xcb_window_t
 }
 #[repr(C)]
 pub struct VkSurfaceCapabilitiesKHR
