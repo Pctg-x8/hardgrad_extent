@@ -232,13 +232,12 @@ impl Device
 		let mut obj: VkShaderModule = std::ptr::null_mut();
 		unsafe { vkCreateShaderModule(self.obj, &info, std::ptr::null(), &mut obj) }.to_result().map(|()| ShaderModule { device_ref: self, obj: obj })
 	}
-	pub fn create_pipeline_layout(&self, descriptor_set_layouts: &[DescriptorSetLayout], push_constants: &[VkPushConstantRange]) -> Result<PipelineLayout, VkResult>
+	pub fn create_pipeline_layout(&self, descriptor_set_layouts: &[VkDescriptorSetLayout], push_constants: &[VkPushConstantRange]) -> Result<PipelineLayout, VkResult>
 	{
-		let dsl_pointers = descriptor_set_layouts.into_iter().map(|x| x.get()).collect::<Vec<_>>();
 		let info = VkPipelineLayoutCreateInfo
 		{
 			sType: VkStructureType::PipelineLayoutCreateInfo, pNext: std::ptr::null(), flags: 0,
-			setLayoutCount: dsl_pointers.len() as u32, pSetLayouts: dsl_pointers.as_ptr(),
+			setLayoutCount: descriptor_set_layouts.len() as u32, pSetLayouts: descriptor_set_layouts.as_ptr(),
 			pushConstantRangeCount: push_constants.len() as u32, pPushConstantRanges: push_constants.as_ptr()
 		};
 		let mut obj: VkPipelineLayout = std::ptr::null_mut();
@@ -585,6 +584,12 @@ impl CommandBufferRef
 		unsafe { vkCmdBindPipeline(self.obj, VkPipelineBindPoint::Graphics, pipeline.get()) };
 		self
 	}
+	pub fn bind_descriptor_sets(self, layout: &PipelineLayout, sets: &[VkDescriptorSet], dynamic_offsets: &[u32]) -> Self
+	{
+		unsafe { vkCmdBindDescriptorSets(self.obj, VkPipelineBindPoint::Graphics, layout.get(), 0, sets.len() as u32, sets.as_ptr(),
+			dynamic_offsets.len() as u32, dynamic_offsets.as_ptr()) };
+		self
+	}
 	pub fn bind_vertex_buffers(self, buffers: &[VkBuffer], offsets: &[VkDeviceSize]) -> Self
 	{
 		unsafe { vkCmdBindVertexBuffers(self.obj, 0, buffers.len() as u32, buffers.as_ptr(), offsets.as_ptr()) };
@@ -613,5 +618,5 @@ pub struct DescriptorSets<'p>
 impl <'p> std::ops::Index<usize> for DescriptorSets<'p>
 {
 	type Output = VkDescriptorSet;
-	fn index(&'p self, index: usize) -> &'p VkDescriptorSet { self.objs[i] }
+	fn index<'a>(&'a self, index: usize) -> &'a VkDescriptorSet { &self.objs[index] }
 }

@@ -92,7 +92,7 @@ fn create_swapchain<'d>(adapter: &vk::PhysicalDevice, device_ref: &'d vk::Device
 
 	// making desired parameters //
 	let format = adapter.enumerate_surface_formats(surface).into_iter()
-		.filter(|ref x| x.format == VkFormat::B8G8R8A8_UNORM || x.format == VkFormat::R8G8B8A8_UNORM || x.format == VkFormat::B8G8R8A8_SRGB)
+		.filter(|ref x| x.format == VkFormat::B8G8R8A8_SRGB || x.format == VkFormat::R8G8B8A8_SRGB)
 		.next().expect("Desired format is not found");
 	let present_mode = adapter.enumerate_present_modes(surface).into_iter().filter(|ref x| **x == VkPresentModeKHR::Mailbox || **x == VkPresentModeKHR::FIFO)
 		.next().expect("Desired Present Mode is not found");
@@ -227,7 +227,7 @@ fn main()
 	let final_framebuffers = create_framebuffers(&final_image_views, &simple_pass, sc_extent);
 
 	// Uniform Descriptors //
-	let descriptor_pool = device.create_descriptor_pool(2, &[VkDescriptorPoolSize(VkDescriptorType::UniformBuffer, 1)]).unwrap();
+	let descriptor_pool = device.create_descriptor_pool(1, &[VkDescriptorPoolSize(VkDescriptorType::UniformBuffer, 1)]).unwrap();
 	let dsl_bindings =
 	[
 		VkDescriptorSetLayoutBinding
@@ -246,7 +246,7 @@ fn main()
 	// Ready for Shading
 	let vshader = device.create_shader_module_from_file("shaders/RawOutput.spv").unwrap();
 	let pshader = device.create_shader_module_from_file("shaders/ThroughColor.spv").unwrap();
-	let layout = device.create_pipeline_layout(&[layout_for_projection], &[]).unwrap();
+	let layout = device.create_pipeline_layout(&[layout_for_projection.get()], &[]).unwrap();
 	let cache = device.create_empty_pipeline_cache().unwrap();
 	let shader_entry = std::ffi::CString::new("main").unwrap();
 	let vertex_bindings =
@@ -261,7 +261,10 @@ fn main()
 	let scissors = [render_area];
 	let shader_specialization_map_entries =
 	[
-		ShaderSpecializationEntry::<f32>(10,  0), ShaderSpecializationEntry::<f32>(11,  1), ShaderSpecializationEntry::<f32>(12,  2), ShaderSpecializationEntry::<f32>(13,  3)
+		ShaderSpecializationEntry::<f32>(10, 0),
+		ShaderSpecializationEntry::<f32>(11, 1),
+		ShaderSpecializationEntry::<f32>(12, 2),
+		ShaderSpecializationEntry::<f32>(13, 3)
 	];
 	let shader_specialization_data = [0.25f32, 0.9875f32, 1.5f32, 1.0f32];
 	let shader_const_specialization = VkSpecializationInfo
@@ -352,7 +355,7 @@ fn main()
 	let meshstore = MeshStore::new(&adapter, &device);
 
 	// Projection Matrixes //
-	let projection_matrixes = ProjectionMatrixes::new(&adapter, &device);
+	let projection_matrixes = ProjectionMatrixes::new(&adapter, &device, &descriptor_pool, &layout_for_projection, sc_extent);
 
 	// Ready for command recording //
 	let pool = device.create_command_pool(true).unwrap();
@@ -378,6 +381,7 @@ fn main()
 			.resource_barrier(VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, &[], &[], &[image_barrier])
 			.begin_render_pass(&final_framebuffers[cb_index], &simple_pass, render_area, &clear_values, false)
 			.bind_pipeline(&pipeline)
+			.bind_descriptor_sets(&layout, &[projection_matrixes.uniform_desc_set[0]], &[])
 			.bind_vertex_buffers(&[meshstore.buffer.get()], &[meshstore.unit_cube_vertices_offset])
 			.bind_index_buffer(&meshstore.buffer, meshstore.unit_cube_indices_offset)
 			.draw_indexed(24, 2)

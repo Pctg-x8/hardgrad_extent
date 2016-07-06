@@ -589,7 +589,7 @@ pub struct VkDeviceCreateInfo
 #[repr(C)] pub struct VkWriteDescriptorSet
 {
 	pub sType: VkStructureType, pub pNext: *const c_void, pub dstSet: VkDescriptorSet,
-	pub dstBinding: u32, pub dstArrayElement: u32, pub desriptorCount: u32, pub descriptorType: VkDescriptorType,
+	pub dstBinding: u32, pub dstArrayElement: u32, pub descriptorCount: u32, pub descriptorType: VkDescriptorType,
 	pub pImageInfo: *const VkDescriptorImageInfo, pub pBufferInfo: *const VkDescriptorBufferInfo, pub pTexelBufferView: *const VkBufferView
 }
 #[repr(C)] pub struct VkCopyDescriptorSet
