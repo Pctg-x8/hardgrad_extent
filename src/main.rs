@@ -1,5 +1,6 @@
 extern crate libc;
 extern crate xcb;
+extern crate nalgebra;
 #[macro_use] mod vkffi;
 mod render_vk;
 
@@ -11,10 +12,13 @@ mod vertex_formats;
 use vertex_formats::*;
 mod meshstore;
 use meshstore::MeshStore;
+mod projection_matrixes;
+use projection_matrixes::ProjectionMatrixes;
 
 use vkffi::*;
 use render_vk::wrap as vk;
 use render_vk::wrap::CreationObject;
+use nalgebra::*;
 
 const APP_NAME: &'static str = "HardGrad -> Extent\0";
 const ENGINE_NAME: &'static str = "Hybrid-ML\0";
@@ -186,6 +190,11 @@ fn create_framebuffers<'d>(views: &Vec<vk::ImageView<'d>>, rp: &vk::RenderPass<'
 	}).collect::<Vec<_>>()
 }
 
+fn ShaderSpecializationEntry<T: std::marker::Sized>(id: u32, index_offset: u32) -> VkSpecializationMapEntry
+{
+	VkSpecializationMapEntry(id, std::mem::size_of::<T>() as u32 * index_offset, std::mem::size_of::<T>())
+}
+
 fn main()
 {
 	// init xcb(connection to display)
@@ -217,10 +226,27 @@ fn main()
 	let simple_pass = create_simple_render_pass(&device, sc_format);
 	let final_framebuffers = create_framebuffers(&final_image_views, &simple_pass, sc_extent);
 
+	// Uniform Descriptors //
+	let descriptor_pool = device.create_descriptor_pool(2, &[VkDescriptorPoolSize(VkDescriptorType::UniformBuffer, 1)]).unwrap();
+	let dsl_bindings =
+	[
+		VkDescriptorSetLayoutBinding
+		{
+			binding: 0, descriptorType: VkDescriptorType::UniformBuffer, descriptorCount: 1,
+			stageFlags: VK_SHADER_STAGE_VERTEX_BIT, pImmutableSamplers: std::ptr::null()
+		}
+	];
+	let dsl_info = VkDescriptorSetLayoutCreateInfo
+	{
+		sType: VkStructureType::DescriptorSetLayoutCreateInfo, pNext: std::ptr::null(), flags: 0,
+		bindingCount: dsl_bindings.len() as u32, pBindings: dsl_bindings.as_ptr()
+	};
+	let layout_for_projection = device.create_descriptor_set_layout(&dsl_info).unwrap();
+
 	// Ready for Shading
 	let vshader = device.create_shader_module_from_file("shaders/RawOutput.spv").unwrap();
 	let pshader = device.create_shader_module_from_file("shaders/ThroughColor.spv").unwrap();
-	let layout = device.create_pipeline_layout(&[], &[]).unwrap();
+	let layout = device.create_pipeline_layout(&[layout_for_projection], &[]).unwrap();
 	let cache = device.create_empty_pipeline_cache().unwrap();
 	let shader_entry = std::ffi::CString::new("main").unwrap();
 	let vertex_bindings =
@@ -235,13 +261,9 @@ fn main()
 	let scissors = [render_area];
 	let shader_specialization_map_entries =
 	[
-		VkSpecializationMapEntry(20, std::mem::size_of::<f32>() as u32 * 0, std::mem::size_of::<f32>()),
-		VkSpecializationMapEntry(21, std::mem::size_of::<f32>() as u32 * 1, std::mem::size_of::<f32>()),
-		VkSpecializationMapEntry(22, std::mem::size_of::<f32>() as u32 * 2, std::mem::size_of::<f32>()),
-		VkSpecializationMapEntry(23, std::mem::size_of::<f32>() as u32 * 3, std::mem::size_of::<f32>())
+		ShaderSpecializationEntry::<f32>(10,  0), ShaderSpecializationEntry::<f32>(11,  1), ShaderSpecializationEntry::<f32>(12,  2), ShaderSpecializationEntry::<f32>(13,  3)
 	];
-	// let shader_specialization_data = [0.25f32, 0.9875f32, 1.5f32, 1.0f32];
-	let shader_specialization_data = [1.5f32, 0.9375f32, 0.5f32, 1.0f32];
+	let shader_specialization_data = [0.25f32, 0.9875f32, 1.5f32, 1.0f32];
 	let shader_const_specialization = VkSpecializationInfo
 	{
 		mapEntryCount: shader_specialization_map_entries.len() as u32, pMapEntries: shader_specialization_map_entries.as_ptr(),
@@ -328,6 +350,9 @@ fn main()
 
 	// Rendering Resources //
 	let meshstore = MeshStore::new(&adapter, &device);
+
+	// Projection Matrixes //
+	let projection_matrixes = ProjectionMatrixes::new(&adapter, &device);
 
 	// Ready for command recording //
 	let pool = device.create_command_pool(true).unwrap();

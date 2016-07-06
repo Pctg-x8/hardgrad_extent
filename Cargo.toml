@@ -7,3 +7,4 @@ publish = false
 [dependencies]
 libc = "0.2.12"
 xcb = "0.7.3"
+nalgebra = "0.8.2"

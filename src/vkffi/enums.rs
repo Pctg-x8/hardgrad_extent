@@ -536,6 +536,23 @@ pub const VK_MEMORY_PROPERTY_HOST_COHERENT_BIT: VkFlags		= 0x04;
 pub const VK_MEMORY_PROPERTY_HOST_CACHED_BIT: VkFlags		= 0x08;
 pub const VK_MEMORY_PROPERTY_LAZILY_ALLOCATED_BIT: VkFlags	= 0x10;
 
+pub const VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT: VkFlags	= 0x01;
+
+#[repr(C)] pub enum VkDescriptorType
+{
+	Sampler = 0,
+	CombinedImageSampler = 1,
+	SampledImage = 2,
+	StorageImage = 3,
+	UniformTexelBuffer = 4,
+	StorageTexelBuffer = 5,
+	UniformBuffer = 6,
+	StorageBuffer = 7,
+	UniformBufferDynamic = 8,
+	StorageBufferDynamic = 9,
+	InputAttachment = 10
+}
+
 #[repr(C)] #[derive(Clone)]
 pub enum VkColorSpaceKHR
 {

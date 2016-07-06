@@ -52,6 +52,7 @@ pub type VkShaderStageFlags = VkFlags;
 pub type VkFenceCreateFlags = VkFlags;
 pub type VkSemaphoreCreateFlags = VkFlags;
 pub type VkBufferCreateFlags = VkFlags;
+pub type VkDescriptorSetLayoutCreateFlags = VkFlags;
 
 pub type VkShaderStageFlagBits = VkFlags;
 

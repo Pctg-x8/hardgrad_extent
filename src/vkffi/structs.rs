@@ -561,6 +561,45 @@ pub struct VkDeviceCreateInfo
 	pub queueFamilyIndexCount: u32, pub pQueueFamilyIndices: *const u32
 }
 
+#[repr(C)] pub struct VkDescriptorSetLayoutBinding
+{
+	pub binding: u32, pub descriptorType: VkDescriptorType, pub descriptorCount: u32,
+	pub stageFlags: VkShaderStageFlags, pub pImmutableSamplers: *const VkSampler
+}
+#[repr(C)] pub struct VkDescriptorSetLayoutCreateInfo
+{
+	pub sType: VkStructureType,pub pNext: *const c_void,
+	pub flags: VkDescriptorSetLayoutCreateFlags,
+	pub bindingCount: u32, pub pBindings: *const VkDescriptorSetLayoutBinding
+}
+#[repr(C)] pub struct VkDescriptorPoolSize(pub VkDescriptorType, pub u32);						// type, descriptorCount
+#[repr(C)] pub struct VkDescriptorPoolCreateInfo
+{
+	pub sType: VkStructureType, pub pNext: *const c_void,
+	pub flags: VkDescriptorPoolCreateFlags,
+	pub maxSets: u32, pub poolSizeCount: u32, pub pPoolSizes: *const VkDescriptorPoolSize
+}
+#[repr(C)] pub struct VkDescriptorSetAllocateInfo
+{
+	pub sType: VkStructureType, pub pNext: *const c_void,
+	pub descriptorPool: VkDescriptorPool, pub descriptorSetCount: u32, pub pSetLayouts: *const VkDescriptorSetLayout
+}
+#[repr(C)] pub struct VkDescriptorImageInfo(pub VkSampler, pub VkImageView, pub VkImageLayout);			// sampler, view, layout
+#[repr(C)] pub struct VkDescriptorBufferInfo(pub VkBuffer, pub VkDeviceSize, pub VkDeviceSize);			// buffer, offset, range
+#[repr(C)] pub struct VkWriteDescriptorSet
+{
+	pub sType: VkStructureType, pub pNext: *const c_void, pub dstSet: VkDescriptorSet,
+	pub dstBinding: u32, pub dstArrayElement: u32, pub desriptorCount: u32, pub descriptorType: VkDescriptorType,
+	pub pImageInfo: *const VkDescriptorImageInfo, pub pBufferInfo: *const VkDescriptorBufferInfo, pub pTexelBufferView: *const VkBufferView
+}
+#[repr(C)] pub struct VkCopyDescriptorSet
+{
+	pub sType: VkStructureType, pub pNext: *const c_void,
+	pub srcSet: VkDescriptorSet, pub srcBinding: u32, pub srcArrayElement: u32,
+	pub dstSet: VkDescriptorSet, pub dstBinding: u32, pub dstArrayElement: u32,
+	pub descriptorCount: u32
+}
+
 #[repr(C)]
 pub struct VkXcbSurfaceCreateInfoKHR
 {

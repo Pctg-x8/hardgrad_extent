@@ -288,6 +288,27 @@ impl Device
 		let mut obj: VkDeviceMemory = std::ptr::null_mut();
 		unsafe { vkAllocateMemory(self.obj, info, std::ptr::null(), &mut obj) }.to_result().map(|()| DeviceMemory { device_ref: self, obj: obj })
 	}
+	pub fn create_descriptor_set_layout(&self, info: &VkDescriptorSetLayoutCreateInfo) -> Result<DescriptorSetLayout, VkResult>
+	{
+		let mut obj: VkDescriptorSetLayout = std::ptr::null_mut();
+		unsafe { vkCreateDescriptorSetLayout(self.obj, info, std::ptr::null(), &mut obj) }.to_result().map(|()| DescriptorSetLayout { device_ref: self, obj: obj })
+	}
+	pub fn create_descriptor_pool(&self, max_sets: u32, pool_sizes: &[VkDescriptorPoolSize]) -> Result<DescriptorPool, VkResult>
+	{
+		let mut obj: VkDescriptorPool = std::ptr::null_mut();
+		let info = VkDescriptorPoolCreateInfo
+		{
+			sType: VkStructureType::DescriptorPoolCreateInfo, pNext: std::ptr::null(),
+			flags: 0, maxSets: max_sets,
+			poolSizeCount: pool_sizes.len() as u32, pPoolSizes: pool_sizes.as_ptr()
+		};
+		unsafe { vkCreateDescriptorPool(self.obj, &info, std::ptr::null(), &mut obj) }.to_result().map(|()| DescriptorPool {  device_ref: self, obj: obj})
+	}
+
+	pub fn update_descriptor_sets(&self, write_infos: &[VkWriteDescriptorSet], copy_infos: &[VkCopyDescriptorSet])
+	{
+		unsafe { vkUpdateDescriptorSets(self.obj, write_infos.len() as u32, write_infos.as_ptr(), copy_infos.len() as u32, copy_infos.as_ptr()) };
+	}
 
 	pub fn submit_commands(&self, buffers: &[VkCommandBuffer], device_synchronizer: &[VkSemaphore], event_receiver: Option<&Fence>) -> Result<(), VkResult>
 	{
@@ -420,6 +441,7 @@ SafeObjectDerivedFromDevice!(Fence for VkFence destructed by vkDestroyFence);
 SafeObjectDerivedFromDevice!(Semaphore for VkSemaphore destructed by vkDestroySemaphore);
 SafeObjectDerivedFromDevice!(Buffer for VkBuffer destructed by vkDestroyBuffer);
 SafeObjectDerivedFromDevice!(DeviceMemory for VkDeviceMemory destructed by vkFreeMemory);
+SafeObjectDerivedFromDevice!(DescriptorPool for VkDescriptorPool destructed by vkDestroyDescriptorPool);
 
 impl <'d> CommandPool<'d>
 {
@@ -485,6 +507,19 @@ impl <'b> MemoryMappedRange<'b>
 impl <'b> std::ops::Drop for MemoryMappedRange<'b>
 {
 	fn drop(&mut self) { unsafe { vkUnmapMemory(self.memory_ref.device_ref.obj, self.memory_ref.obj) }; }
+}
+impl <'d> DescriptorPool<'d>
+{
+	pub fn allocate_sets(&self, layouts: &[VkDescriptorSetLayout]) -> Result<DescriptorSets, VkResult>
+	{
+		let mut objs: Vec<VkDescriptorSet> = vec![unsafe { std::mem::uninitialized() }; layouts.len()];
+		let info = VkDescriptorSetAllocateInfo
+		{
+			sType: VkStructureType::DescriptorSetAllocateInfo, pNext: std::ptr::null(),
+			descriptorPool: self.obj, descriptorSetCount: layouts.len() as u32, pSetLayouts: layouts.as_ptr()
+		};
+		unsafe { vkAllocateDescriptorSets(self.device_ref.obj, &info, objs.as_mut_ptr()) }.to_result().map(|()| DescriptorSets { pool_ref: self, objs: objs })
+	}
 }
 
 // Set of Command Buffers and Reference //
@@ -569,4 +604,14 @@ impl CommandBufferRef
 impl std::ops::Drop for CommandBufferRef
 {
 	fn drop(&mut self) { unsafe { vkEndCommandBuffer(self.obj) }.to_result().unwrap() }
+}
+
+pub struct DescriptorSets<'p>
+{
+	pool_ref: &'p DescriptorPool<'p>, objs: Vec<VkDescriptorSet>
+}
+impl <'p> std::ops::Index<usize> for DescriptorSets<'p>
+{
+	type Output = VkDescriptorSet;
+	fn index(&'p self, index: usize) -> &'p VkDescriptorSet { self.objs[i] }
 }
