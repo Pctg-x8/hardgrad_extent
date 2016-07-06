@@ -5,6 +5,48 @@ use traits::*;
 use vkffi::*;
 use render_vk::wrap as vk;
 
+// XCB FFI Porting: size hints
+pub const XCB_ICCCM_SIZE_HINT_US_SIZE: u32 = 1 << 1;
+pub const XCB_ICCCM_SIZE_HINT_P_POSITION: u32 = 1 << 2;
+pub const XCB_ICCCM_SIZE_HINT_P_SIZE: u32 = 1 << 3;
+pub const XCB_ICCCM_SIZE_HINT_P_MIN_SIZE: u32 = 1 << 4;
+pub const XCB_ICCCM_SIZE_HINT_P_MAX_SIZE: u32 = 1 << 5;
+pub const XCB_ICCCM_SIZE_HINT_P_RESIZE_INC: u32 = 1 << 6;
+pub const XCB_ICCCM_SIZE_HINT_P_ASPECT: u32 = 1 << 7;
+pub const XCB_ICCCM_SIZE_HINT_BASE_SIZE: u32 = 1 << 8;
+pub const XCB_ICCCM_SIZE_HINT_P_WIN_GRAVITY: u32 = 1 << 9;
+#[repr(C)]
+pub struct xcb_size_hints_t
+{
+	pub flags: u32, pub x: i32, pub y: i32,
+	pub width: i32, pub height: i32,
+	pub min_width: i32, pub min_height: i32,
+	pub max_width: i32, pub max_height: i32,
+	pub width_inc: i32, pub height_inc: i32,
+	pub min_aspect_num: i32, pub min_aspect_den: i32,
+	pub max_aspect_num: i32, pub max_aspect_den: i32,
+	pub base_width: i32, pub base_height: i32,
+	pub win_gravity: u32
+}
+impl std::default::Default for xcb_size_hints_t
+{
+	fn default() -> xcb_size_hints_t
+	{
+		xcb_size_hints_t
+		{
+			flags: 0, x: 0, y: 0,
+			width: 0, height: 0,
+			min_width: 0, min_height: 0,
+			max_width: 0, max_height: 0,
+			width_inc: 0, height_inc: 0,
+			min_aspect_num: 0, min_aspect_den: 0,
+			max_aspect_num: 0, max_aspect_den: 0,
+			base_width: 0, base_height: 0,
+			win_gravity: 0
+		}
+	}
+}
+
 pub struct XServerConnection
 {
 	con: xcb::Connection, root_screen: xcb::ffi::xcb_window_t, root_visual: xcb::ffi::xcb_visualid_t, root_depth: u8,
@@ -46,7 +88,7 @@ impl XServerConnection
 			con: con, root_screen: root_screen, root_visual: visual_id, root_depth: depth
 		}
 	}
-	pub fn new_window(&self, size: VkExtent2D, title: &str) -> XWindow
+	pub fn new_unresizable_window(&self, size: VkExtent2D, title: &str) -> XWindow
 	{
 		let window_id = self.con.generate_id();
 		let VkExtent2D(width, height) = size;
@@ -57,6 +99,17 @@ impl XServerConnection
 			xcb::xproto::ATOM_WM_NAME, xcb::xproto::ATOM_STRING, 8, title.len() as u32, title.as_ptr() as *const libc::c_void) };
 		unsafe { xcb::ffi::xproto::xcb_change_property(self.con.get_raw_conn(), xcb::ffi::xproto::XCB_PROP_MODE_REPLACE as u8, window_id,
 			self.protocols_atom, 4, 32, 1, std::mem::transmute(&self.delete_window_atom)) };
+
+		let size_hints = xcb_size_hints_t
+		{
+			min_width: width as i32, min_height: height as i32,
+			max_width: width as i32, max_height: height as i32,
+			flags: XCB_ICCCM_SIZE_HINT_P_MAX_SIZE | XCB_ICCCM_SIZE_HINT_P_MIN_SIZE | XCB_ICCCM_SIZE_HINT_P_RESIZE_INC,
+			.. Default::default()
+		};
+		unsafe { xcb::ffi::xproto::xcb_change_property(self.con.get_raw_conn(), xcb::ffi::xproto::XCB_PROP_MODE_REPLACE as u8, window_id,
+			xcb::xproto::ATOM_WM_NORMAL_HINTS, xcb::xproto::ATOM_WM_SIZE_HINTS, 32, 1, std::mem::transmute(&size_hints)) };
+
 		XWindow { con_ref: self, internal: window_id }
 	}
 	pub fn is_vk_presentation_support(&self, adapter: &vk::PhysicalDevice, queue_index: u32) -> bool

@@ -199,7 +199,7 @@ fn main()
 	let device = create_graphics_device(&adapter);
 
 	// init display
-	let window = xcon.new_window(VkExtent2D(640, 480), APP_NAME);
+	let window = xcon.new_unresizable_window(VkExtent2D(640, 480), APP_NAME);
 	window.map();
 	xcon.flush();
 
@@ -240,7 +240,8 @@ fn main()
 		VkSpecializationMapEntry(22, std::mem::size_of::<f32>() as u32 * 2, std::mem::size_of::<f32>()),
 		VkSpecializationMapEntry(23, std::mem::size_of::<f32>() as u32 * 3, std::mem::size_of::<f32>())
 	];
-	let shader_specialization_data = [0.25f32, 0.9875f32, 1.5f32, 1.0f32];
+	// let shader_specialization_data = [0.25f32, 0.9875f32, 1.5f32, 1.0f32];
+	let shader_specialization_data = [1.5f32, 0.9375f32, 0.5f32, 1.0f32];
 	let shader_const_specialization = VkSpecializationInfo
 	{
 		mapEntryCount: shader_specialization_map_entries.len() as u32, pMapEntries: shader_specialization_map_entries.as_ptr(),
@@ -331,7 +332,8 @@ fn main()
 	// Ready for command recording //
 	let pool = device.create_command_pool(true).unwrap();
 	let final_commands = pool.allocate_primary_buffers(final_framebuffers.len()).unwrap();
-	let clear_values = [VkClearValue(VkClearColorValue(0.0f32, 0.0f32, 0.125f32, 1.0f32))];
+	let clear_values = [VkClearValue(VkClearColorValue(0.0f32, 0.0f32, 0.015625f32, 1.0f32))];
+	// let clear_values = [VkClearValue(VkClearColorValue(0.0f32, 0.0f32, 0.0f32, 1.0f32))];
 	for cb_index in 0 .. final_framebuffers.len()
 	{
 		let image_barrier = VkImageMemoryBarrier
