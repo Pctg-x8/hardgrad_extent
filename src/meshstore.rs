@@ -1,5 +1,5 @@
 use render_vk::wrap as vk;
-use render_vk::wrap::MemoryAllocationRequired;
+use render_vk::traits::*;
 use vkffi::*;
 use std;
 use vertex_formats::*;
@@ -18,14 +18,7 @@ impl <'d> MeshStore<'d>
 	{
 		let ucv_size = alignment((std::mem::size_of::<Position>() * 8) as VkDeviceSize, 1);
 		let uci_size = alignment((std::mem::size_of::<u16>() * 24) as VkDeviceSize, 1);
-		let buffer_info = VkBufferCreateInfo
-		{
-			sType: VkStructureType::BufferCreateInfo, pNext: std::ptr::null(),
-			usage: VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, size: ucv_size + uci_size,
-			sharingMode: VkSharingMode::Exclusive,
-			queueFamilyIndexCount: 0, pQueueFamilyIndices: std::ptr::null(), flags: 0
-		};
-		let buf = device.create_buffer(&buffer_info).unwrap();
+		let buf = device.create_buffer(VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, (ucv_size + uci_size) as usize).unwrap();
 		let size_req = buf.get_memory_requirements();
 		let memindex = pdev.get_memory_type_index(VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT).expect("Unable to find mappable memory");
 		let alloc_info = VkMemoryAllocateInfo
@@ -39,7 +32,7 @@ impl <'d> MeshStore<'d>
 		// initial storing //
 		let ucv_offs = 0 as VkDeviceSize; let uci_offs = ucv_size as VkDeviceSize;
 		{
-			let mapped_range = memory.map(0 .. buffer_info.size).unwrap();
+			let mapped_range = memory.map(0 .. (ucv_size + uci_size)).unwrap();
 			let ucv_range = mapped_range.range_mut::<Position>(0, 8);
 			let uci_range = mapped_range.range_mut::<u16>(uci_offs, 24);
 

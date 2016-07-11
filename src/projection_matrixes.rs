@@ -1,8 +1,9 @@
 use nalgebra::*;
 
+use descriptor::*;
 use traits::*;
 use render_vk::wrap as vk;
-use render_vk::wrap::MemoryAllocationRequired;
+use render_vk::traits::*;
 use vkffi::*;
 use std;
 
@@ -14,20 +15,11 @@ pub struct ProjectionMatrixes<'d>
 }
 impl <'d> ProjectionMatrixes<'d>
 {
-	pub fn new(adapter: &vk::PhysicalDevice, device: &'d vk::Device,
-		desc_pool: &'d vk::DescriptorPool<'d>, desc_layout: &'d vk::DescriptorSetLayout<'d>,
-		size: VkExtent2D) -> Self
+	pub fn new(adapter: &vk::PhysicalDevice, device: &'d vk::Device, ub1_pool: &'d UniformBufferDescriptorPool<'d>, size: VkExtent2D) -> Self
 	{
 		let matrix_buffer_size = std::mem::size_of::<[[f32; 4]; 4]>();
 
-		let buffer_info = VkBufferCreateInfo
-		{
-			sType: VkStructureType::BufferCreateInfo, pNext: std::ptr::null(),
-			usage: VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, size: matrix_buffer_size as VkDeviceSize * 2,
-			sharingMode: VkSharingMode::Exclusive,
-			queueFamilyIndexCount: 0, pQueueFamilyIndices: std::ptr::null(), flags: 0
-		};
-		let buffer = device.create_buffer(&buffer_info).unwrap();
+		let buffer = device.create_buffer(VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, matrix_buffer_size * 2).unwrap();
 		let size_req = buffer.get_memory_requirements();
 		let memindex = adapter.get_memory_type_index(VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT).expect("Unable to find host mappable heap");
 		let alloc_info = VkMemoryAllocateInfo
@@ -41,7 +33,7 @@ impl <'d> ProjectionMatrixes<'d>
 		// initial storing //
 		let ortho_offs = 0 as VkDeviceSize; let persp_offs = matrix_buffer_size as VkDeviceSize;
 		{
-			let mapped_range = memory.map(0 .. buffer_info.size).unwrap();
+			let mapped_range = memory.map(0 .. (matrix_buffer_size * 2) as VkDeviceSize).unwrap();
 
 			let VkExtent2D(width, height) = size;
 			let (aspect, scaling) = (height as f32 / width as f32, 28.0f32);
@@ -61,7 +53,7 @@ impl <'d> ProjectionMatrixes<'d>
 		}
 
 		// Descriptor Set //
-		let sets = desc_pool.allocate_sets(&[desc_layout.get()]).unwrap();
+		let sets = ub1_pool.pool.allocate_sets(&[ub1_pool.layout.get()]).unwrap();
 		let ortho_buffer_info = VkDescriptorBufferInfo(buffer.get(), ortho_offs, std::mem::size_of::<[[f32; 4]; 4]>() as VkDeviceSize * 2);
 		let write_sets = [
 			VkWriteDescriptorSet

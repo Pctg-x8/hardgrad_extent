@@ -1,4 +1,5 @@
 // XCB Objective Wrapper
+#![allow(dead_code)]
 
 use xcb; use std; use libc;
 use traits::*;

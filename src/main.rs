@@ -12,13 +12,14 @@ mod vertex_formats;
 use vertex_formats::*;
 mod meshstore;
 use meshstore::MeshStore;
+mod descriptor;
+use descriptor::*;
 mod projection_matrixes;
 use projection_matrixes::ProjectionMatrixes;
 
 use vkffi::*;
 use render_vk::wrap as vk;
-use render_vk::wrap::CreationObject;
-use nalgebra::*;
+use render_vk::traits::*;
 
 const APP_NAME: &'static str = "HardGrad -> Extent\0";
 const ENGINE_NAME: &'static str = "Hybrid-ML\0";
@@ -190,9 +191,51 @@ fn create_framebuffers<'d>(views: &Vec<vk::ImageView<'d>>, rp: &vk::RenderPass<'
 	}).collect::<Vec<_>>()
 }
 
-fn ShaderSpecializationEntry<T: std::marker::Sized>(id: u32, index_offset: u32) -> VkSpecializationMapEntry
+const MAX_ENEMY_COUNTS: usize = 128;
+struct EnemyDataManager<'d>
 {
-	VkSpecializationMapEntry(id, std::mem::size_of::<T>() as u32 * index_offset, std::mem::size_of::<T>())
+	descriptor_set: vk::DescriptorSets<'d>,
+	buffer: vk::Buffer<'d>, #[allow(dead_code)] device_memory: vk::DeviceMemory<'d>,
+	uniform_offset: VkDeviceSize, character_indices_offset: VkDeviceSize
+}
+impl <'d> EnemyDataManager<'d>
+{
+	fn new(device: &'d vk::Device, adapter: &vk::PhysicalDevice, ub1_pool: &'d UniformBufferDescriptorPool<'d>) -> Self
+	{
+		let set = ub1_pool.pool.allocate_sets(&[ub1_pool.layout.get()]).unwrap();
+
+		let ub_size = std::mem::size_of::<[f32; 4]>() * MAX_ENEMY_COUNTS * 2;
+		let ci_size = std::mem::size_of::<u32>() * MAX_ENEMY_COUNTS;
+		let buffer = device.create_buffer(VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, ub_size + ci_size).unwrap();
+		let memory_req = buffer.get_memory_requirements();
+		let memory_index = adapter.get_memory_type_index(vkffi::enums::VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT).unwrap();
+		let alloc_info = VkMemoryAllocateInfo
+		{
+			sType: VkStructureType::MemoryAllocateInfo, pNext: std::ptr::null(),
+			memoryTypeIndex: memory_index as u32, allocationSize: memory_req.size
+		};
+		let device_memory = device.allocate_memory(&alloc_info).unwrap();
+		device_memory.bind_buffer(&buffer, 0).unwrap();
+
+		let buffer_info = VkDescriptorBufferInfo(buffer.get(), 0, ub_size as VkDeviceSize);
+		let write_sets = [
+			VkWriteDescriptorSet
+			{
+				sType: VkStructureType::WriteDescriptorSet, pNext: std::ptr::null(),
+				dstSet: set[0], dstBinding: 0, dstArrayElement: 0,
+				descriptorType: VkDescriptorType::UniformBuffer, descriptorCount: 1,
+				pBufferInfo: &buffer_info, pImageInfo: std::ptr::null(), pTexelBufferView: std::ptr::null()
+			}
+		];
+		device.update_descriptor_sets(&write_sets, &[]);
+
+		EnemyDataManager
+		{
+			descriptor_set: set,
+			buffer: buffer, device_memory: device_memory,
+			uniform_offset: 0, character_indices_offset: ub_size as VkDeviceSize
+		}
+	}
 }
 
 fn main()
@@ -227,44 +270,33 @@ fn main()
 	let final_framebuffers = create_framebuffers(&final_image_views, &simple_pass, sc_extent);
 
 	// Uniform Descriptors //
-	let descriptor_pool = device.create_descriptor_pool(1, &[VkDescriptorPoolSize(VkDescriptorType::UniformBuffer, 1)]).unwrap();
-	let dsl_bindings =
-	[
-		VkDescriptorSetLayoutBinding
-		{
-			binding: 0, descriptorType: VkDescriptorType::UniformBuffer, descriptorCount: 1,
-			stageFlags: VK_SHADER_STAGE_VERTEX_BIT, pImmutableSamplers: std::ptr::null()
-		}
-	];
-	let dsl_info = VkDescriptorSetLayoutCreateInfo
-	{
-		sType: VkStructureType::DescriptorSetLayoutCreateInfo, pNext: std::ptr::null(), flags: 0,
-		bindingCount: dsl_bindings.len() as u32, pBindings: dsl_bindings.as_ptr()
-	};
-	let layout_for_projection = device.create_descriptor_set_layout(&dsl_info).unwrap();
+	let ub1_pool = UniformBufferDescriptorPool::new(&device, 1);
+	let enemy_data_manager = EnemyDataManager::new(&device, &adapter, &ub1_pool);
 
 	// Ready for Shading
-	let vshader = device.create_shader_module_from_file("shaders/RawOutput.spv").unwrap();
+	let vshader = device.create_shader_module_from_file("shaders/EnemyRenderV.spv").unwrap();
 	let pshader = device.create_shader_module_from_file("shaders/ThroughColor.spv").unwrap();
-	let layout = device.create_pipeline_layout(&[layout_for_projection.get()], &[]).unwrap();
+	let layout = device.create_pipeline_layout(&[ub1_pool.layout.get(), ub1_pool.layout.get()], &[]).unwrap();
 	let cache = device.create_empty_pipeline_cache().unwrap();
 	let shader_entry = std::ffi::CString::new("main").unwrap();
 	let vertex_bindings =
 	[
-		VkVertexInputBindingDescription(0, std::mem::size_of::<Position>() as u32, VkVertexInputRate::Vertex)
+		VkVertexInputBindingDescription(0, std::mem::size_of::<Position>() as u32, VkVertexInputRate::Vertex),
+		VkVertexInputBindingDescription(1, std::mem::size_of::<u32>() as u32, VkVertexInputRate::Instance)
 	];
 	let vertex_inputs =
 	[
-		VkVertexInputAttributeDescription(0, 0, VkFormat::R32G32B32A32_SFLOAT, 0)
+		VkVertexInputAttributeDescription(0, 0, VkFormat::R32G32B32A32_SFLOAT, 0),
+		VkVertexInputAttributeDescription(1, 1, VkFormat::R32_UINT, 0)
 	];
 	let viewports = [VkViewport(0.0f32, 0.0f32, sc_width as f32, sc_height as f32, -1.0f32, 1.0f32)];
 	let scissors = [render_area];
 	let shader_specialization_map_entries =
 	[
-		ShaderSpecializationEntry::<f32>(10, 0),
-		ShaderSpecializationEntry::<f32>(11, 1),
-		ShaderSpecializationEntry::<f32>(12, 2),
-		ShaderSpecializationEntry::<f32>(13, 3)
+		VkSpecializationMapEntry(10, 0, std::mem::size_of::<f32>()),
+		VkSpecializationMapEntry(11, (std::mem::size_of::<f32>() * 1) as u32, std::mem::size_of::<f32>()),
+		VkSpecializationMapEntry(12, (std::mem::size_of::<f32>() * 2) as u32, std::mem::size_of::<f32>()),
+		VkSpecializationMapEntry(13, (std::mem::size_of::<f32>() * 3) as u32, std::mem::size_of::<f32>())
 	];
 	let shader_specialization_data = [0.25f32, 0.9875f32, 1.5f32, 1.0f32];
 	let shader_const_specialization = VkSpecializationInfo
@@ -355,7 +387,7 @@ fn main()
 	let meshstore = MeshStore::new(&adapter, &device);
 
 	// Projection Matrixes //
-	let projection_matrixes = ProjectionMatrixes::new(&adapter, &device, &descriptor_pool, &layout_for_projection, sc_extent);
+	let projection_matrixes = ProjectionMatrixes::new(&adapter, &device, &ub1_pool, sc_extent);
 
 	// Ready for command recording //
 	let pool = device.create_command_pool(true).unwrap();
@@ -381,8 +413,8 @@ fn main()
 			.resource_barrier(VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, &[], &[], &[image_barrier])
 			.begin_render_pass(&final_framebuffers[cb_index], &simple_pass, render_area, &clear_values, false)
 			.bind_pipeline(&pipeline)
-			.bind_descriptor_sets(&layout, &[projection_matrixes.uniform_desc_set[0]], &[])
-			.bind_vertex_buffers(&[meshstore.buffer.get()], &[meshstore.unit_cube_vertices_offset])
+			.bind_descriptor_sets(&layout, &[projection_matrixes.uniform_desc_set[0], enemy_data_manager.descriptor_set[0]], &[])
+			.bind_vertex_buffers(&[meshstore.buffer.get(), enemy_data_manager.buffer.get()], &[meshstore.unit_cube_vertices_offset, enemy_data_manager.character_indices_offset])
 			.bind_index_buffer(&meshstore.buffer, meshstore.unit_cube_indices_offset)
 			.draw_indexed(24, 2)
 			.end_render_pass();

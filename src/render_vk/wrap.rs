@@ -7,13 +7,8 @@ use std::ffi::*;
 use std::os::raw::*;
 use libc::size_t;
 use traits::*;
+use render_vk::traits::*;
 
-pub trait CreationObject<StructureT> where Self: std::marker::Sized
-{
-	fn create(info: &StructureT) -> Result<Self, VkResult>;
-}
-
-trait ResultValueToObject where Self: std::marker::Sized { fn to_result(self) -> Result<(), Self>; }
 impl ResultValueToObject for VkResult
 {
 	fn to_result(self) -> Result<(), Self> { return if self == VkResult::Success { Ok(()) } else { Err(self) } }
@@ -277,20 +272,32 @@ impl Device
 		let mut obj: VkSemaphore = std::ptr::null_mut();
 		unsafe { vkCreateSemaphore(self.obj, &info, std::ptr::null(), &mut obj) }.to_result().map(|()| Semaphore { device_ref: self, obj: obj })
 	}
-	pub fn create_buffer(&self, info: &VkBufferCreateInfo) -> Result<Buffer, VkResult>
+	/// Creates Exclusive buffer
+	pub fn create_buffer(&self, usage_bits: VkBufferUsageFlags, size: usize) -> Result<Buffer, VkResult>
 	{
+		let buffer_info = VkBufferCreateInfo
+		{
+			sType: VkStructureType::BufferCreateInfo, pNext: std::ptr::null(), flags: 0,
+			usage: usage_bits, size: size as VkDeviceSize, sharingMode: VkSharingMode::Exclusive,
+			queueFamilyIndexCount: 0, pQueueFamilyIndices: std::ptr::null()
+		};
 		let mut obj: VkBuffer = std::ptr::null_mut();
-		unsafe { vkCreateBuffer(self.obj, info, std::ptr::null(), &mut obj) }.to_result().map(|()| Buffer { device_ref: self, obj: obj })
+		unsafe { vkCreateBuffer(self.obj, &buffer_info, std::ptr::null(), &mut obj) }.to_result().map(|()| Buffer { device_ref: self, obj: obj })
 	}
 	pub fn allocate_memory(&self, info: &VkMemoryAllocateInfo) -> Result<DeviceMemory, VkResult>
 	{
 		let mut obj: VkDeviceMemory = std::ptr::null_mut();
 		unsafe { vkAllocateMemory(self.obj, info, std::ptr::null(), &mut obj) }.to_result().map(|()| DeviceMemory { device_ref: self, obj: obj })
 	}
-	pub fn create_descriptor_set_layout(&self, info: &VkDescriptorSetLayoutCreateInfo) -> Result<DescriptorSetLayout, VkResult>
+	pub fn create_descriptor_set_layout(&self, bindings: &[VkDescriptorSetLayoutBinding]) -> Result<DescriptorSetLayout, VkResult>
 	{
+		let layout_info = VkDescriptorSetLayoutCreateInfo
+		{
+			sType: VkStructureType::DescriptorSetLayoutCreateInfo, pNext: std::ptr::null(), flags: 0,
+			bindingCount: bindings.len() as u32, pBindings: bindings.as_ptr()
+		};
 		let mut obj: VkDescriptorSetLayout = std::ptr::null_mut();
-		unsafe { vkCreateDescriptorSetLayout(self.obj, info, std::ptr::null(), &mut obj) }.to_result().map(|()| DescriptorSetLayout { device_ref: self, obj: obj })
+		unsafe { vkCreateDescriptorSetLayout(self.obj, &layout_info, std::ptr::null(), &mut obj) }.to_result().map(|()| DescriptorSetLayout { device_ref: self, obj: obj })
 	}
 	pub fn create_descriptor_pool(&self, max_sets: u32, pool_sizes: &[VkDescriptorPoolSize]) -> Result<DescriptorPool, VkResult>
 	{
@@ -301,7 +308,7 @@ impl Device
 			flags: 0, maxSets: max_sets,
 			poolSizeCount: pool_sizes.len() as u32, pPoolSizes: pool_sizes.as_ptr()
 		};
-		unsafe { vkCreateDescriptorPool(self.obj, &info, std::ptr::null(), &mut obj) }.to_result().map(|()| DescriptorPool {  device_ref: self, obj: obj})
+		unsafe { vkCreateDescriptorPool(self.obj, &info, std::ptr::null(), &mut obj) }.to_result().map(|()| DescriptorPool { device_ref: self, obj: obj })
 	}
 
 	pub fn update_descriptor_sets(&self, write_infos: &[VkWriteDescriptorSet], copy_infos: &[VkCopyDescriptorSet])
@@ -324,10 +331,6 @@ impl Device
 	pub fn wait_queue_for_idle(&self) -> Result<(), VkResult>
 	{
 		unsafe { vkQueueWaitIdle(self.queue_obj) }.to_result()
-	}
-	pub fn wait_for_idle(&self) -> Result<(), VkResult>
-	{
-		unsafe { vkDeviceWaitIdle(self.obj) }.to_result()
 	}
 }
 
@@ -426,10 +429,6 @@ impl <'a> Swapchain<'a>
 	}
 }
 
-pub trait MemoryAllocationRequired
-{
-	fn get_memory_requirements(&self) -> VkMemoryRequirements;
-}
 SafeObjectDerivedFromDevice!(CommandPool for VkCommandPool destructed by vkDestroyCommandPool);
 SafeObjectDerivedFromDevice!(ShaderModule for VkShaderModule destructed by vkDestroyShaderModule);
 SafeObjectDerivedFromDevice!(PipelineLayout for VkPipelineLayout destructed by vkDestroyPipelineLayout);
@@ -613,7 +612,7 @@ impl std::ops::Drop for CommandBufferRef
 
 pub struct DescriptorSets<'p>
 {
-	pool_ref: &'p DescriptorPool<'p>, objs: Vec<VkDescriptorSet>
+	#[allow(dead_code)] pool_ref: &'p DescriptorPool<'p>, objs: Vec<VkDescriptorSet>
 }
 impl <'p> std::ops::Index<usize> for DescriptorSets<'p>
 {
