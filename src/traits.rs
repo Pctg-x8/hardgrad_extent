@@ -1,5 +1,9 @@
 // Traits
 
+use vkffi::*;
+use render_vk::wrap as vk;
+use device_resources;
+
 // Provides Internal Pointer type(for wrapper objects)
 pub trait InternalProvider<InternalType>
 {
@@ -10,4 +14,14 @@ pub trait HasParent
 {
 	type ParentRefType;
 	fn parent(&self) -> Self::ParentRefType;
+}
+
+pub trait DeviceStore
+{
+	fn device_size() -> VkDeviceSize;
+	fn initial_stage_data(&self, mapped_range: &vk::MemoryMappedRange);
+}
+pub trait HasDescriptor
+{
+	fn write_descriptor_info<'d>(&self, sets: &device_resources::DescriptorSets<'d>) -> VkWriteDescriptorSet;
 }

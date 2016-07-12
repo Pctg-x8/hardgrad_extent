@@ -10,12 +10,8 @@ mod xcbw;
 use xcbw::*;
 mod vertex_formats;
 use vertex_formats::*;
-mod meshstore;
-use meshstore::MeshStore;
-mod descriptor;
-use descriptor::*;
-mod projection_matrixes;
-use projection_matrixes::ProjectionMatrixes;
+mod device_resources;
+mod logical_resources;
 
 use vkffi::*;
 use render_vk::wrap as vk;
@@ -53,7 +49,7 @@ fn create_instance() -> vk::Instance
 
 	vk::Instance::create(&instance_info).expect("Unable to create instance")
 }
-fn create_graphics_device(adapter_ref: &vk::PhysicalDevice) -> vk::Device
+fn create_graphics_device<'a>(adapter_ref: &'a vk::PhysicalDevice) -> vk::Device<'a>
 {
 	let gqf_index = adapter_ref.get_graphics_queue_family_index().expect("unable to find graphics queue on device");
 	println!("-- Queue Index: {}", gqf_index);
@@ -119,7 +115,7 @@ fn create_swapchain<'d>(adapter: &vk::PhysicalDevice, device_ref: &'d vk::Device
 
 	(vk::Swapchain::create(device_ref, &swapchain_info).unwrap(), format.format, sc_extent)
 }
-fn create_image_views<'d, ImageObj: vk::VkImageResource + HasParent<ParentRefType=&'d vk::Device>>(images: &'d Vec<ImageObj>, format: VkFormat) -> Vec<vk::ImageView>
+fn create_image_views<'d, ImageObj: vk::VkImageResource + HasParent<ParentRefType=&'d vk::Device<'d>>>(images: &'d Vec<ImageObj>, format: VkFormat) -> Vec<vk::ImageView>
 {
 	images.into_iter().map(|o|
 	{
@@ -191,53 +187,6 @@ fn create_framebuffers<'d>(views: &Vec<vk::ImageView<'d>>, rp: &vk::RenderPass<'
 	}).collect::<Vec<_>>()
 }
 
-const MAX_ENEMY_COUNTS: usize = 128;
-struct EnemyDataManager<'d>
-{
-	descriptor_set: vk::DescriptorSets<'d>,
-	buffer: vk::Buffer<'d>, #[allow(dead_code)] device_memory: vk::DeviceMemory<'d>,
-	uniform_offset: VkDeviceSize, character_indices_offset: VkDeviceSize
-}
-impl <'d> EnemyDataManager<'d>
-{
-	fn new(device: &'d vk::Device, adapter: &vk::PhysicalDevice, ub1_pool: &'d UniformBufferDescriptorPool<'d>) -> Self
-	{
-		let set = ub1_pool.pool.allocate_sets(&[ub1_pool.layout.get()]).unwrap();
-
-		let ub_size = std::mem::size_of::<[f32; 4]>() * MAX_ENEMY_COUNTS * 2;
-		let ci_size = std::mem::size_of::<u32>() * MAX_ENEMY_COUNTS;
-		let buffer = device.create_buffer(VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, ub_size + ci_size).unwrap();
-		let memory_req = buffer.get_memory_requirements();
-		let memory_index = adapter.get_memory_type_index(vkffi::enums::VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT).unwrap();
-		let alloc_info = VkMemoryAllocateInfo
-		{
-			sType: VkStructureType::MemoryAllocateInfo, pNext: std::ptr::null(),
-			memoryTypeIndex: memory_index as u32, allocationSize: memory_req.size
-		};
-		let device_memory = device.allocate_memory(&alloc_info).unwrap();
-		device_memory.bind_buffer(&buffer, 0).unwrap();
-
-		let buffer_info = VkDescriptorBufferInfo(buffer.get(), 0, ub_size as VkDeviceSize);
-		let write_sets = [
-			VkWriteDescriptorSet
-			{
-				sType: VkStructureType::WriteDescriptorSet, pNext: std::ptr::null(),
-				dstSet: set[0], dstBinding: 0, dstArrayElement: 0,
-				descriptorType: VkDescriptorType::UniformBuffer, descriptorCount: 1,
-				pBufferInfo: &buffer_info, pImageInfo: std::ptr::null(), pTexelBufferView: std::ptr::null()
-			}
-		];
-		device.update_descriptor_sets(&write_sets, &[]);
-
-		EnemyDataManager
-		{
-			descriptor_set: set,
-			buffer: buffer, device_memory: device_memory,
-			uniform_offset: 0, character_indices_offset: ub_size as VkDeviceSize
-		}
-	}
-}
-
 fn main()
 {
 	// init xcb(connection to display)
@@ -269,14 +218,14 @@ fn main()
 	let simple_pass = create_simple_render_pass(&device, sc_format);
 	let final_framebuffers = create_framebuffers(&final_image_views, &simple_pass, sc_extent);
 
-	// Uniform Descriptors //
-	let ub1_pool = UniformBufferDescriptorPool::new(&device, 1);
-	let enemy_data_manager = EnemyDataManager::new(&device, &adapter, &ub1_pool);
+	// Device Resources //
+	let memory_bound_resources = device_resources::MemoryBoundResources::new(&device);
+	let descriptor_sets = device_resources::DescriptorSets::new(&device);
 
 	// Ready for Shading
 	let vshader = device.create_shader_module_from_file("shaders/EnemyRenderV.spv").unwrap();
 	let pshader = device.create_shader_module_from_file("shaders/ThroughColor.spv").unwrap();
-	let layout = device.create_pipeline_layout(&[ub1_pool.layout.get(), ub1_pool.layout.get()], &[]).unwrap();
+	let layout = device.create_pipeline_layout(&[descriptor_sets.set_layout_ub1.get(), descriptor_sets.set_layout_ub1.get()], &[]).unwrap();
 	let cache = device.create_empty_pipeline_cache().unwrap();
 	let shader_entry = std::ffi::CString::new("main").unwrap();
 	let vertex_bindings =
@@ -383,11 +332,28 @@ fn main()
 	};
 	let pipeline = device.create_graphics_pipelines(&cache, &[pipeline_info]).unwrap().into_iter().next().unwrap();
 
-	// Rendering Resources //
-	let meshstore = MeshStore::new(&adapter, &device);
+	// Resource Placements //
+	let meshstore_offset = 0;
+	let projection_matrixes_offset = meshstore_offset + logical_resources::Meshstore::device_size();
+	let enemy_datastore_offset = projection_matrixes_offset + logical_resources::ProjectionMatrixes::device_size();
 
-	// Projection Matrixes //
-	let projection_matrixes = ProjectionMatrixes::new(&adapter, &device, &ub1_pool, sc_extent);
+	// Logical Resources //
+	let meshstore = logical_resources::Meshstore::new(meshstore_offset);
+	let projection_matrixes = logical_resources::ProjectionMatrixes::new(&memory_bound_resources.buffer, projection_matrixes_offset, 0, sc_extent);
+	let enemy_datastore = logical_resources::EnemyDatastore::new(&memory_bound_resources.buffer, enemy_datastore_offset, 1);
+
+	// Setup Descriptors //
+	device.update_descriptor_sets(&[
+		projection_matrixes.write_descriptor_info(&descriptor_sets), enemy_datastore.write_descriptor_info(&descriptor_sets)
+	], &[]);
+
+	// Initial Staging //
+	{
+		let mapped_range = memory_bound_resources.staging_memory.map(0 .. memory_bound_resources.size).unwrap();
+		meshstore.initial_stage_data(&mapped_range);
+		projection_matrixes.initial_stage_data(&mapped_range);
+		enemy_datastore.initial_stage_data(&mapped_range);
+	}
 
 	// Ready for command recording //
 	let pool = device.create_command_pool(true).unwrap();
@@ -413,13 +379,13 @@ fn main()
 			.resource_barrier(VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, &[], &[], &[image_barrier])
 			.begin_render_pass(&final_framebuffers[cb_index], &simple_pass, render_area, &clear_values, false)
 			.bind_pipeline(&pipeline)
-			.bind_descriptor_sets(&layout, &[projection_matrixes.uniform_desc_set[0], enemy_data_manager.descriptor_set[0]], &[])
-			.bind_vertex_buffers(&[meshstore.buffer.get(), enemy_data_manager.buffer.get()], &[meshstore.unit_cube_vertices_offset, enemy_data_manager.character_indices_offset])
-			.bind_index_buffer(&meshstore.buffer, meshstore.unit_cube_indices_offset)
+			.bind_descriptor_sets(&layout, &[descriptor_sets.sets[0], descriptor_sets.sets[1]], &[])
+			.bind_vertex_buffers(&[memory_bound_resources.buffer.get(), memory_bound_resources.buffer.get()], &[meshstore.unit_cube_vertices_offset, enemy_datastore.character_indices_offset])
+			.bind_index_buffer(&memory_bound_resources.buffer, meshstore.unit_cube_indices_offset)
 			.draw_indexed(24, 2)
 			.end_render_pass();
 	}
-	// Initial execution of setup layouts
+	// Initial execution of setup layouts and transfer stagings
 	{
 		let cb = pool.allocate_primary_buffers(1).unwrap();
 		let mut image_barriers: Vec<VkImageMemoryBarrier> = vec![unsafe { std::mem::uninitialized() }; final_images.len()];
@@ -438,8 +404,47 @@ fn main()
 				}
 			};
 		}
-		cb.begin(0).unwrap().resource_barrier(VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
-			&[], &[], image_barriers.as_slice());
+		let buffer_barriers = [
+			VkBufferMemoryBarrier
+			{
+				// Barrier to Transfer Source
+				sType: VkStructureType::BufferMemoryBarrier, pNext: std::ptr::null(),
+				srcAccessMask: 0, dstAccessMask: VK_ACCESS_TRANSFER_READ_BIT,
+				srcQueueFamilyIndex: VK_QUEUE_FAMILY_IGNORED, dstQueueFamilyIndex: VK_QUEUE_FAMILY_IGNORED,
+				buffer: memory_bound_resources.stage_buffer.get(), offset: 0, size: memory_bound_resources.size
+			},
+			VkBufferMemoryBarrier
+			{
+				// Barrier to Transfer Destination
+				sType: VkStructureType::BufferMemoryBarrier, pNext: std::ptr::null(),
+				srcAccessMask: 0, dstAccessMask: VK_ACCESS_TRANSFER_WRITE_BIT,
+				srcQueueFamilyIndex: VK_QUEUE_FAMILY_IGNORED, dstQueueFamilyIndex: VK_QUEUE_FAMILY_IGNORED,
+				buffer: memory_bound_resources.buffer.get(), offset: 0, size: memory_bound_resources.size
+			}
+		];
+		let buffer_barriers_to_use = [
+			VkBufferMemoryBarrier
+			{
+				// Barrier to Generic Read
+				sType: VkStructureType::BufferMemoryBarrier, pNext: std::ptr::null(),
+				srcAccessMask: VK_ACCESS_TRANSFER_WRITE_BIT, dstAccessMask: VK_ACCESS_SHADER_READ_BIT,
+				srcQueueFamilyIndex: VK_QUEUE_FAMILY_IGNORED, dstQueueFamilyIndex: VK_QUEUE_FAMILY_IGNORED,
+				buffer: memory_bound_resources.buffer.get(), offset: 0, size: memory_bound_resources.size
+			},
+			VkBufferMemoryBarrier
+			{
+				// Barrier to Host Write
+				sType: VkStructureType::BufferMemoryBarrier, pNext: std::ptr::null(),
+				srcAccessMask: VK_ACCESS_TRANSFER_READ_BIT, dstAccessMask: VK_ACCESS_HOST_WRITE_BIT,
+				srcQueueFamilyIndex: VK_QUEUE_FAMILY_IGNORED, dstQueueFamilyIndex: VK_QUEUE_FAMILY_IGNORED,
+				buffer: memory_bound_resources.stage_buffer.get(), offset: 0, size: memory_bound_resources.size
+			}
+		];
+		let copy_regions = [VkBufferCopy(0, 0, memory_bound_resources.size)];
+		cb.begin(0).unwrap().resource_barrier(VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+			&[], &buffer_barriers, image_barriers.as_slice())
+			.copy_buffer(&memory_bound_resources.stage_buffer, &memory_bound_resources.buffer, &copy_regions)
+			.resource_barrier(VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, &[], &buffer_barriers_to_use, &[]);
 		device.submit_commands(&[cb[0]], &[], None).unwrap();
 		device.wait_queue_for_idle().unwrap();
 	}

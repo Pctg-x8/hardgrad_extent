@@ -162,7 +162,7 @@ impl PhysicalDevice
 			unsafe { vkGetDeviceQueue(dev, queue_index, 0, &mut q) };
 			Device
 			{
-				obj: dev, queue_family_index: queue_index, queue_obj: q
+				adapter_ref: self, obj: dev, queue_family_index: queue_index, queue_obj: q
 			}
 		})
 	}
@@ -177,12 +177,17 @@ impl InternalProvider<VkPhysicalDevice> for PhysicalDevice
 {
 	fn get(&self) -> VkPhysicalDevice { self.obj }
 }
-pub struct Device { obj: VkDevice, pub queue_family_index: u32, queue_obj: VkQueue }
-impl std::ops::Drop for Device
+pub struct Device<'a> { adapter_ref: &'a PhysicalDevice, obj: VkDevice, pub queue_family_index: u32, queue_obj: VkQueue }
+impl <'a> std::ops::Drop for Device<'a>
 {
 	fn drop(&mut self) { unsafe { vkDestroyDevice(self.obj, std::ptr::null()) }; }
 }
-impl Device
+impl <'a> HasParent for Device<'a>
+{
+	type ParentRefType = &'a PhysicalDevice;
+	fn parent(&self) -> Self::ParentRefType { self.adapter_ref }
+}
+impl <'a> Device<'a>
 {
 	pub fn create_image_view(&self, info: &VkImageViewCreateInfo) -> Result<ImageView, VkResult>
 	{
@@ -273,12 +278,12 @@ impl Device
 		unsafe { vkCreateSemaphore(self.obj, &info, std::ptr::null(), &mut obj) }.to_result().map(|()| Semaphore { device_ref: self, obj: obj })
 	}
 	/// Creates Exclusive buffer
-	pub fn create_buffer(&self, usage_bits: VkBufferUsageFlags, size: usize) -> Result<Buffer, VkResult>
+	pub fn create_buffer(&self, usage_bits: VkBufferUsageFlags, size: VkDeviceSize) -> Result<Buffer, VkResult>
 	{
 		let buffer_info = VkBufferCreateInfo
 		{
 			sType: VkStructureType::BufferCreateInfo, pNext: std::ptr::null(), flags: 0,
-			usage: usage_bits, size: size as VkDeviceSize, sharingMode: VkSharingMode::Exclusive,
+			usage: usage_bits, size: size, sharingMode: VkSharingMode::Exclusive,
 			queueFamilyIndexCount: 0, pQueueFamilyIndices: std::ptr::null()
 		};
 		let mut obj: VkBuffer = std::ptr::null_mut();
@@ -343,8 +348,8 @@ macro_rules! SafeObjectDerivedFromDevice
 	};
 	($name: ident for $t: ident) =>
 	{
-		pub struct $name<'d> { device_ref: &'d Device, obj: $t }
-		impl <'d> HasParent for $name<'d> { type ParentRefType = &'d Device; fn parent(&self) -> &'d Device { self.device_ref } }
+		pub struct $name<'d> { device_ref: &'d Device<'d>, obj: $t }
+		impl <'d> HasParent for $name<'d> { type ParentRefType = &'d Device<'d>; fn parent(&self) -> &'d Device<'d> { self.device_ref } }
 		impl <'d> InternalProvider<$t> for $name<'d> { fn get(&self) -> $t { self.obj } }
 	};
 }
@@ -508,7 +513,7 @@ impl <'b> std::ops::Drop for MemoryMappedRange<'b>
 }
 impl <'d> DescriptorPool<'d>
 {
-	pub fn allocate_sets(&self, layouts: &[VkDescriptorSetLayout]) -> Result<DescriptorSets, VkResult>
+	pub fn allocate_sets(&self, layouts: &[VkDescriptorSetLayout]) -> Result<DescriptorSets<'d>, VkResult>
 	{
 		let mut objs: Vec<VkDescriptorSet> = vec![unsafe { std::mem::uninitialized() }; layouts.len()];
 		let info = VkDescriptorSetAllocateInfo
@@ -516,7 +521,7 @@ impl <'d> DescriptorPool<'d>
 			sType: VkStructureType::DescriptorSetAllocateInfo, pNext: std::ptr::null(),
 			descriptorPool: self.obj, descriptorSetCount: layouts.len() as u32, pSetLayouts: layouts.as_ptr()
 		};
-		unsafe { vkAllocateDescriptorSets(self.device_ref.obj, &info, objs.as_mut_ptr()) }.to_result().map(|()| DescriptorSets { pool_ref: self, objs: objs })
+		unsafe { vkAllocateDescriptorSets(self.device_ref.obj, &info, objs.as_mut_ptr()) }.to_result().map(|()| DescriptorSets { device_ref: self.device_ref, objs: objs })
 	}
 }
 
@@ -604,17 +609,24 @@ impl CommandBufferRef
 		unsafe { vkCmdDrawIndexed(self.obj, vertex_count, instance_count, 0, 0, 0) };
 		self
 	}
+
+	// Copy Commands //
+	pub fn copy_buffer(self, src: &Buffer, dst: &Buffer, regions: &[VkBufferCopy]) -> Self
+	{
+		unsafe { vkCmdCopyBuffer(self.obj, src.get(), dst.get(), regions.len() as u32, regions.as_ptr()) };
+		self
+	}
 }
 impl std::ops::Drop for CommandBufferRef
 {
 	fn drop(&mut self) { unsafe { vkEndCommandBuffer(self.obj) }.to_result().unwrap() }
 }
 
-pub struct DescriptorSets<'p>
+pub struct DescriptorSets<'d>
 {
-	#[allow(dead_code)] pool_ref: &'p DescriptorPool<'p>, objs: Vec<VkDescriptorSet>
+	#[allow(dead_code)] device_ref: &'d Device<'d>, objs: Vec<VkDescriptorSet>
 }
-impl <'p> std::ops::Index<usize> for DescriptorSets<'p>
+impl <'d> std::ops::Index<usize> for DescriptorSets<'d>
 {
 	type Output = VkDescriptorSet;
 	fn index<'a>(&'a self, index: usize) -> &'a VkDescriptorSet { &self.objs[index] }

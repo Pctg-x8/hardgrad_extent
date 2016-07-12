@@ -599,6 +599,7 @@ pub struct VkDeviceCreateInfo
 	pub dstSet: VkDescriptorSet, pub dstBinding: u32, pub dstArrayElement: u32,
 	pub descriptorCount: u32
 }
+#[repr(C)] pub struct VkBufferCopy(pub VkDeviceSize, pub VkDeviceSize, pub VkDeviceSize);		// src_offset, dst_offset, size
 
 #[repr(C)]
 pub struct VkXcbSurfaceCreateInfoKHR
