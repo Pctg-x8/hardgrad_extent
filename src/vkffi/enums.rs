@@ -305,13 +305,10 @@ pub enum VkResult
 	Error_InvalidShaderNV = -1000012000
 }
 
-#[repr(C)] pub enum VkQueueFlagBits
-{
-	Graphics = 0x00000001,
-	Compute = 0x00000002,
-	Transfer = 0x00000004,
-	SparseBinding = 0x00000008
-}
+pub const VK_QUEUE_GRAPHICS_BIT: VkFlags		= 0x01;
+pub const VK_QUEUE_COMPUTE_BIT: VkFlags			= 0x02;
+pub const VK_QUEUE_TRANSFER_BIT: VkFlags		= 0x04;
+pub const VK_QUEUE_SPARSE_BINDING_BIT: VkFlags	= 0x08;
 #[repr(C)] pub enum VkPhysicalDeviceType
 {
 	Other = 0,

@@ -78,29 +78,6 @@ fn diagnose_adapter(server_con: &XServerConnection, adapter: &vk::PhysicalDevice
 	// Vulkan and XCB Integration Check //
 	if !server_con.is_vk_presentation_support(adapter, queue_index) { panic!("Unsupported Display Format"); }
 }
-fn create_graphics_device<'a>(adapter_ref: &'a vk::PhysicalDevice) -> vk::Device<'a>
-{
-	let gqf_index = adapter_ref.get_graphics_queue_family_index().expect("unable to find graphics queue on device");
-	println!("-- Queue Index: {}", gqf_index);
-	let q_priorities = [0.0f32];
-	let dev_layers = [DEBUG_LAYER_NAME.as_ptr()];
-	let dev_extensions = [SWAPCHAIN_EXTENSION_NAME.as_ptr()];
-	let queue_info = VkDeviceQueueCreateInfo
-	{
-		sType: VkStructureType::DeviceQueueCreateInfo, pNext: std::ptr::null(), flags: 0,
-		queueCount: 1, queueFamilyIndex: gqf_index, pQueuePriorities: q_priorities.as_ptr()
-	};
-	let device_info = VkDeviceCreateInfo
-	{
-		sType: VkStructureType::DeviceCreateInfo, pNext: std::ptr::null(), flags: 0,
-		queueCreateInfoCount: 1, pQueueCreateInfos: &queue_info,
-		enabledLayerCount: dev_layers.len() as u32, ppEnabledLayerNames: dev_layers.as_ptr() as *const *const i8,
-		enabledExtensionCount: dev_extensions.len() as u32, ppEnabledExtensionNames: dev_extensions.as_ptr() as *const *const i8,
-		pEnabledFeatures: std::ptr::null()
-	};
-
-	adapter_ref.create_device(&device_info, gqf_index).unwrap()
-}
 fn create_surface<'i, 'c>(instance_ref: &'i vk::Instance, window: &XWindow<'c>) -> vk::Surface<'i>
 {
 	let xcb_surface_info = VkXcbSurfaceCreateInfoKHR
@@ -110,17 +87,17 @@ fn create_surface<'i, 'c>(instance_ref: &'i vk::Instance, window: &XWindow<'c>) 
 	};
 	vk::Surface::create(instance_ref, &xcb_surface_info).unwrap()
 }
-fn create_swapchain<'d>(adapter: &vk::PhysicalDevice, device_ref: &'d vk::Device, surface: &vk::Surface) -> (vk::Swapchain<'d>, VkFormat, VkExtent2D)
+fn create_swapchain<'d>(queue: &vk::Queue<'d>, surface: &vk::Surface) -> (vk::Swapchain<'d>, VkFormat, VkExtent2D)
 {
 	// capabilities check //
-	if !adapter.is_surface_support(device_ref.queue_family_index, surface) { panic!("Unsupported Surface"); }
-	let surface_caps = adapter.get_surface_capabilities(surface);
+	if !queue.parent().parent().is_surface_support(queue.family_index, surface) { panic!("Unsupported Surface"); }
+	let surface_caps = queue.parent().parent().get_surface_capabilities(surface);
 
 	// making desired parameters //
-	let format = adapter.enumerate_surface_formats(surface).into_iter()
+	let format = queue.parent().parent().enumerate_surface_formats(surface).into_iter()
 		.filter(|ref x| x.format == VkFormat::B8G8R8A8_SRGB || x.format == VkFormat::R8G8B8A8_SRGB)
 		.next().expect("Desired format is not found");
-	let present_mode = adapter.enumerate_present_modes(surface).into_iter().filter(|ref x| **x == VkPresentModeKHR::Mailbox || **x == VkPresentModeKHR::FIFO)
+	let present_mode = queue.parent().parent().enumerate_present_modes(surface).into_iter().filter(|ref x| **x == VkPresentModeKHR::Mailbox || **x == VkPresentModeKHR::FIFO)
 		.next().expect("Desired Present Mode is not found");
 	let sc_extent = match surface_caps.currentExtent
 	{
@@ -129,7 +106,7 @@ fn create_swapchain<'d>(adapter: &vk::PhysicalDevice, device_ref: &'d vk::Device
 	};
 
 	// set information and create //
-	let queue_family_indices = [device_ref.queue_family_index];
+	let queue_family_indices = [queue.family_index];
 	let swapchain_info = VkSwapchainCreateInfoKHR
 	{
 		sType: VkStructureType::SwapchainCreateInfoKHR, pNext: std::ptr::null(),
@@ -142,7 +119,7 @@ fn create_swapchain<'d>(adapter: &vk::PhysicalDevice, device_ref: &'d vk::Device
 		oldSwapchain: std::ptr::null_mut(), flags: 0, surface: surface.get()
 	};
 
-	(vk::Swapchain::create(device_ref, &swapchain_info).unwrap(), format.format, sc_extent)
+	(vk::Swapchain::create(queue.parent(), &swapchain_info).unwrap(), format.format, sc_extent)
 }
 fn create_image_views<'d, ImageObj: vk::VkImageResource + HasParent<ParentRefType=&'d vk::Device<'d>>>(images: &'d Vec<ImageObj>, format: VkFormat) -> Vec<vk::ImageView>
 {
@@ -236,9 +213,67 @@ fn main()
 	// init vulkan
 	let instance = create_instance();
 	let adapter = vk::PhysicalDevice::wrap(instance.enumerate_adapters().unwrap()[0]);
-	let qf = adapter.get_graphics_queue_family_index().unwrap();
-	diagnose_adapter(&xcon, &adapter, qf);
-	let device = create_graphics_device(&adapter);
+
+	// Create Device and Queues //
+	let queue_indices = adapter.get_queue_family_indices();
+	let mut queue_indices_iter = queue_indices.into_iter().enumerate();
+	let gqf_index = queue_indices_iter.by_ref().filter(|&(_, ref x)| (x.queueFlags & VK_QUEUE_GRAPHICS_BIT) != 0)
+		.map(|(i, _)| i as u32).next().expect("unable to find queue for graphics on device");
+	let tqf_index = queue_indices_iter.by_ref().filter(|&(_, ref x)| (x.queueFlags & VK_QUEUE_TRANSFER_BIT) != 0)
+		.map(|(i, _)| i as u32).next().expect("unable to find queue for transfer on device");
+	diagnose_adapter(&xcon, &adapter, gqf_index);
+
+	let dev_layers = [DEBUG_LAYER_NAME.as_ptr()];
+	let dev_extensions = [SWAPCHAIN_EXTENSION_NAME.as_ptr()];
+	let (device, transfer_queue_index) = if gqf_index == tqf_index
+	{
+		// Use same queue
+		println!("-- Using same queue family: {}", gqf_index);
+		let q_priorities = [0.0f32, 0.0f32];
+		let queue_infos = [VkDeviceQueueCreateInfo
+		{
+			sType: VkStructureType::DeviceQueueCreateInfo, pNext: std::ptr::null(), flags: 0,
+			queueCount: 2, queueFamilyIndex: gqf_index, pQueuePriorities: q_priorities.as_ptr()
+		}];
+		let device_info = VkDeviceCreateInfo
+		{
+			sType: VkStructureType::DeviceCreateInfo, pNext: std::ptr::null(), flags: 0,
+			queueCreateInfoCount: queue_infos.len() as u32, pQueueCreateInfos: queue_infos.as_ptr(),
+			enabledLayerCount: dev_layers.len() as u32, ppEnabledLayerNames: dev_layers.as_ptr() as *const *const i8,
+			enabledExtensionCount: dev_extensions.len() as u32, ppEnabledExtensionNames: dev_extensions.as_ptr() as *const *const i8,
+			pEnabledFeatures: std::ptr::null()
+		};
+		(adapter.create_device(&device_info).unwrap(), 1)
+	}
+	else
+	{
+		// Use different queue
+		println!("-- Using difference queue family: graphics = {} / transfer = {}", gqf_index, tqf_index);
+		let q_priorities = [0.0f32];
+		let queue_infos = [
+			VkDeviceQueueCreateInfo
+			{
+				sType: VkStructureType::DeviceQueueCreateInfo, pNext: std::ptr::null(), flags: 0,
+				queueCount: 1, queueFamilyIndex: gqf_index, pQueuePriorities: q_priorities.as_ptr()
+			},
+			VkDeviceQueueCreateInfo
+			{
+				sType: VkStructureType::DeviceQueueCreateInfo, pNext: std::ptr::null(), flags: 0,
+				queueCount: 1, queueFamilyIndex: tqf_index, pQueuePriorities: q_priorities.as_ptr()
+			}
+		];
+		let device_info = VkDeviceCreateInfo
+		{
+			sType: VkStructureType::DeviceCreateInfo, pNext: std::ptr::null(), flags: 0,
+			queueCreateInfoCount: queue_infos.len() as u32, pQueueCreateInfos: queue_infos.as_ptr(),
+			enabledLayerCount: dev_layers.len() as u32, ppEnabledLayerNames: dev_layers.as_ptr() as *const *const i8,
+			enabledExtensionCount: dev_extensions.len() as u32, ppEnabledExtensionNames: dev_extensions.as_ptr() as *const *const i8,
+			pEnabledFeatures: std::ptr::null()
+		};
+		(adapter.create_device(&device_info).unwrap(), 0)
+	};
+	let graphics_queue = device.get_queue(gqf_index, 0);
+	let transfer_queue = device.get_queue(tqf_index, transfer_queue_index);
 
 	// init display
 	let window = xcon.new_unresizable_window(VkExtent2D(640, 480), APP_NAME);
@@ -251,7 +286,7 @@ fn main()
 
 	// Ready for Rendering
 	let surface = create_surface(&instance, &window);
-	let (swapchain, sc_format, sc_extent) = create_swapchain(&adapter, &device, &surface);
+	let (swapchain, sc_format, sc_extent) = create_swapchain(&graphics_queue, &surface);
 	let render_area = VkRect2D(VkOffset2D(0, 0), sc_extent);
 	let final_images = swapchain.get_images().unwrap();
 	let final_image_views = create_image_views(&final_images, sc_format);
@@ -296,7 +331,8 @@ fn main()
 	}
 
 	// Ready for command recording //
-	let pool = device.create_command_pool(true).unwrap();
+	let pool = device.create_command_pool(&graphics_queue, true).unwrap();
+	let transfer_pool = device.create_command_pool(&transfer_queue, false).unwrap();
 	let final_commands = pool.allocate_primary_buffers(final_framebuffers.len()).unwrap();
 	let clear_values = [VkClearValue(VkClearColorValue(0.0f32, 0.0f32, 0.015625f32, 1.0f32))];
 	// let clear_values = [VkClearValue(VkClearColorValue(0.0f32, 0.0f32, 0.0f32, 1.0f32))];
@@ -331,7 +367,7 @@ fn main()
 	}
 	// Initial execution of setup layouts and transfer stagings
 	{
-		let cb = pool.allocate_primary_buffers(1).unwrap();
+		let tcb = transfer_pool.allocate_primary_buffers(1).unwrap();
 		let image_barriers = final_images.iter().map(|o| VkImageMemoryBarrier
 		{
 			sType: VkStructureType::ImageMemoryBarrier, pNext: std::ptr::null(),
@@ -354,17 +390,17 @@ fn main()
 			buffer_memory_barrier(&memory_bound_resources.stage_buffer, entire_range.clone(), VK_ACCESS_TRANSFER_READ_BIT, VK_ACCESS_HOST_WRITE_BIT)
 		];
 		let copy_regions = [VkBufferCopy(0, 0, memory_preallocator.total_size)];
-		cb.begin(0).unwrap()
+		tcb.begin(0).unwrap()
 			.resource_barrier(VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, &[], &buffer_barriers, image_barriers.as_slice())
 			.copy_buffer(&memory_bound_resources.stage_buffer, &memory_bound_resources.buffer, &copy_regions)
 			.resource_barrier(VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, &[], &buffer_barriers_to_use, &[]);
-		device.submit_commands(&[cb[0]], &[], None).unwrap();
-		device.wait_queue_for_idle().unwrap();
+		transfer_queue.submit_commands(&[tcb[0]], &[], None).unwrap();
+		transfer_queue.wait_for_idle().unwrap();
 	}
 
 	// initial execution(coordinated execution order by semaphore)
 	let mut index_render_to = swapchain.acquire_next_image(&semaphore).unwrap();
-	device.submit_commands(&[final_commands[index_render_to as usize]], &[semaphore.get()], Some(&fence)).unwrap();
+	graphics_queue.submit_commands(&[final_commands[index_render_to as usize]], &[semaphore.get()], Some(&fence)).unwrap();
 
 	// Application Loop
 	while xcon.process_messages()
@@ -373,9 +409,9 @@ fn main()
 		if fence.get_status().is_ok()
 		{
 			fence.reset().unwrap();
-			swapchain.present(index_render_to, &[]).unwrap();
+			swapchain.present(&graphics_queue, index_render_to, &[]).unwrap();
 			index_render_to = swapchain.acquire_next_image(&semaphore).unwrap();
-			device.submit_commands(&[final_commands[index_render_to as usize]], &[semaphore.get()], Some(&fence)).unwrap();
+			graphics_queue.submit_commands(&[final_commands[index_render_to as usize]], &[semaphore.get()], Some(&fence)).unwrap();
 		}
 	}
 	device.wait_for_idle().unwrap();

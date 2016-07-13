@@ -112,13 +112,13 @@ impl PhysicalDevice
 		unsafe { vkGetPhysicalDeviceMemoryProperties(pdev, &mut mem_props) };
 		PhysicalDevice { obj: pdev, memory_properties: mem_props }
 	}
-	pub fn get_graphics_queue_family_index(&self) -> Option<u32>
+	pub fn get_queue_family_indices(&self) -> Vec<VkQueueFamilyProperties>
 	{
 		let mut property_count: u32 = 0;
 		unsafe { vkGetPhysicalDeviceQueueFamilyProperties(self.obj, &mut property_count, std::ptr::null_mut()) };
 		let mut properties: Vec<VkQueueFamilyProperties> = unsafe { vec![std::mem::uninitialized(); property_count as usize] };
 		unsafe { vkGetPhysicalDeviceQueueFamilyProperties(self.obj, &mut property_count, properties.as_mut_ptr()) };
-		properties.into_iter().enumerate().filter(|&(_, ref x)| (x.queueFlags & (VkQueueFlagBits::Graphics as u32)) != 0).map(|(i, _)| i as u32).next()
+		properties
 	}
 	pub fn is_surface_support<'i>(&self, queue_family_index: u32, surface: &Surface<'i>) -> bool
 	{
@@ -165,18 +165,10 @@ impl PhysicalDevice
 		features
 	}
 
-	pub fn create_device(&self, info: &VkDeviceCreateInfo, queue_index: u32) -> Result<Device, VkResult>
+	pub fn create_device(&self, info: &VkDeviceCreateInfo) -> Result<Device, VkResult>
 	{
 		let mut dev: VkDevice = std::ptr::null_mut();
-		unsafe { vkCreateDevice(self.obj, info, std::ptr::null(), &mut dev) }.to_result().map(|()|
-		{
-			let mut q: VkQueue = std::ptr::null_mut();
-			unsafe { vkGetDeviceQueue(dev, queue_index, 0, &mut q) };
-			Device
-			{
-				adapter_ref: self, obj: dev, queue_family_index: queue_index, queue_obj: q
-			}
-		})
+		unsafe { vkCreateDevice(self.obj, info, std::ptr::null(), &mut dev) }.to_result().map(|()| Device { adapter_ref: self, obj: dev })
 	}
 	pub fn get_memory_type_index(&self, desired_property_flags: VkMemoryPropertyFlags) -> Option<usize>
 	{
@@ -189,7 +181,7 @@ impl InternalProvider<VkPhysicalDevice> for PhysicalDevice
 {
 	fn get(&self) -> VkPhysicalDevice { self.obj }
 }
-pub struct Device<'a> { adapter_ref: &'a PhysicalDevice, obj: VkDevice, pub queue_family_index: u32, queue_obj: VkQueue }
+pub struct Device<'a> { adapter_ref: &'a PhysicalDevice, obj: VkDevice }
 impl <'a> std::ops::Drop for Device<'a>
 {
 	fn drop(&mut self) { unsafe { vkDestroyDevice(self.obj, std::ptr::null()) }; }
@@ -201,6 +193,12 @@ impl <'a> HasParent for Device<'a>
 }
 impl <'a> Device<'a>
 {
+	pub fn get_queue(&self, family_index: u32, index: u32) -> Queue
+	{
+		let mut q: VkQueue = std::ptr::null_mut();
+		unsafe { vkGetDeviceQueue(self.obj, family_index, index, &mut q) };
+		Queue { device_ref: self, obj: q, family_index: family_index }
+	}
 	pub fn create_image_view(&self, info: &VkImageViewCreateInfo) -> Result<ImageView, VkResult>
 	{
 		let mut obj: VkImageView = std::ptr::null_mut();
@@ -216,13 +214,13 @@ impl <'a> Device<'a>
 		let mut obj: VkFramebuffer = std::ptr::null_mut();
 		unsafe { vkCreateFramebuffer(self.obj, info, std::ptr::null(), &mut obj) }.to_result().map(|()| Framebuffer { device_ref: self, obj: obj })
 	}
-	pub fn create_command_pool(&self, allow_resetting_per_buffer: bool) -> Result<CommandPool, VkResult>
+	pub fn create_command_pool(&self, queue: &Queue, allow_resetting_per_buffer: bool) -> Result<CommandPool, VkResult>
 	{
 		let info = VkCommandPoolCreateInfo
 		{
 			sType: VkStructureType::CommandPoolCreateInfo, pNext: std::ptr::null(),
 			flags: if allow_resetting_per_buffer { VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT } else { 0 },
-			queueFamilyIndex: self.queue_family_index
+			queueFamilyIndex: queue.family_index
 		};
 		let mut obj: VkCommandPool = std::ptr::null_mut();
 		unsafe { vkCreateCommandPool(self.obj, &info, std::ptr::null(), &mut obj) }.to_result().map(|()| CommandPool { device_ref: self, obj: obj })
@@ -333,6 +331,12 @@ impl <'a> Device<'a>
 		unsafe { vkUpdateDescriptorSets(self.obj, write_infos.len() as u32, write_infos.as_ptr(), copy_infos.len() as u32, copy_infos.as_ptr()) };
 	}
 
+	pub fn wait_for_idle(&self) -> Result<(), VkResult> { unsafe { vkDeviceWaitIdle(self.obj) }.to_result() }
+}
+pub struct Queue<'d> { device_ref: &'d Device<'d>, obj: VkQueue, pub family_index: u32 }
+impl <'d> HasParent for Queue<'d> { type ParentRefType = &'d Device<'d>; fn parent(&self) -> &'d Device<'d> { self.device_ref } }
+impl <'d> Queue<'d>
+{
 	pub fn submit_commands(&self, buffers: &[VkCommandBuffer], device_synchronizer: &[VkSemaphore], event_receiver: Option<&Fence>) -> Result<(), VkResult>
 	{
 		let pipeline_stage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
@@ -343,13 +347,12 @@ impl <'a> Device<'a>
 			commandBufferCount: buffers.len() as u32, pCommandBuffers: buffers.as_ptr(),
 			signalSemaphoreCount: 0, pSignalSemaphores: std::ptr::null()
 		};
-		unsafe { vkQueueSubmit(self.queue_obj, 1, &submit_info, event_receiver.map(|x| x.get()).unwrap_or(std::ptr::null_mut())) }.to_result()
+		unsafe { vkQueueSubmit(self.obj, 1, &submit_info, event_receiver.map(|x| x.get()).unwrap_or(std::ptr::null_mut())) }.to_result()
 	}
-	pub fn wait_queue_for_idle(&self) -> Result<(), VkResult>
+	pub fn wait_for_idle(&self) -> Result<(), VkResult>
 	{
-		unsafe { vkQueueWaitIdle(self.queue_obj) }.to_result()
+		unsafe { vkQueueWaitIdle(self.obj) }.to_result()
 	}
-	pub fn wait_for_idle(&self) -> Result<(), VkResult> { unsafe { vkDeviceWaitIdle(self.obj) }.to_result() }
 }
 
 macro_rules! SafeObjectDerivedFromDevice
@@ -435,7 +438,7 @@ impl <'a> Swapchain<'a>
 		unsafe { vkAcquireNextImageKHR(self.device_ref.obj, self.obj, std::u64::MAX, device_synchronizer.get(), std::ptr::null_mut(), &mut index) }
 			.to_result().map(|()| index)
 	}
-	pub fn present(&self, index: u32, device_synchronizer: &[VkSemaphore]) -> Result<(), VkResult>
+	pub fn present(&self, queue: &Queue, index: u32, device_synchronizer: &[VkSemaphore]) -> Result<(), VkResult>
 	{
 		let present_info = VkPresentInfoKHR
 		{
@@ -443,7 +446,7 @@ impl <'a> Swapchain<'a>
 			swapchainCount: 1, pSwapchains: &self.obj, pImageIndices: &index,
 			waitSemaphoreCount: device_synchronizer.len() as u32, pWaitSemaphores: device_synchronizer.as_ptr(), pResults: std::ptr::null_mut()
 		};
-		unsafe { vkQueuePresentKHR(self.device_ref.queue_obj, &present_info) }.to_result()
+		unsafe { vkQueuePresentKHR(queue.obj, &present_info) }.to_result()
 	}
 }
 
