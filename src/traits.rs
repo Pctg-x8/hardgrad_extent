@@ -4,6 +4,12 @@ use vkffi::*;
 use render_vk::wrap as vk;
 use device_resources;
 
+/// Indicates the object can process message from system
+pub trait MessageHandler
+{
+	fn process_messages(&self) -> bool;
+}
+
 // Provides Internal Pointer type(for wrapper objects)
 pub trait InternalProvider<InternalType>
 {

@@ -125,6 +125,37 @@ impl XServerConnection
 		unsafe { std::mem::transmute::<_, [u32; 5]>((*event_ptr).data)[0] == self.delete_window_atom }
 	}
 }
+impl MessageHandler for XServerConnection
+{
+	fn process_messages(&self) -> bool
+	{
+		fn recursive_process(this: &XServerConnection) -> bool
+		{
+			match this.poll_event()
+			{
+				Some(ev) =>
+				{
+					match unsafe { (*ev.ptr).response_type & 0x7f }
+					{
+						xcb::ffi::xproto::XCB_CLIENT_MESSAGE =>
+						{
+							let event_ptr = unsafe { std::mem::transmute::<_, *mut xcb::ffi::xproto::xcb_client_message_event_t>(ev.ptr) };
+							if this.is_delete_window_message(event_ptr) { false } else { recursive_process(this) }
+						},
+						_ =>
+						{
+							println!("xcb event response: {}", unsafe { (*ev.ptr).response_type });
+							recursive_process(this)
+						}
+					}
+				},
+				None => true
+			}
+		}
+
+		recursive_process(self)
+	}
+}
 pub struct XWindow<'c>
 {
 	con_ref: &'c XServerConnection, internal: xcb::ffi::xcb_window_t

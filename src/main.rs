@@ -367,28 +367,8 @@ fn main()
 	device.submit_commands(&[final_commands[index_render_to as usize]], &[semaphore.get()], Some(&fence)).unwrap();
 
 	// Application Loop
-	'app_loop: loop
+	while xcon.process_messages()
 	{
-		'event_loop: loop
-		{
-			match xcon.poll_event()
-			{
-				Some(ev) =>
-				{
-					match unsafe { (*ev.ptr).response_type & 0x7f }
-					{
-						xcb::ffi::xproto::XCB_CLIENT_MESSAGE =>
-						{
-							let event_ptr = unsafe { std::mem::transmute::<_, *mut xcb::ffi::xproto::xcb_client_message_event_t>(ev.ptr) };
-							if xcon.is_delete_window_message(event_ptr) { break 'app_loop; }
-						},
-						_ => println!("xcb event response: {}", unsafe { (*ev.ptr).response_type })
-					}
-				},
-				None => break 'event_loop
-			}
-		}
-
 		// Present -> Render //
 		if fence.get_status().is_ok()
 		{
