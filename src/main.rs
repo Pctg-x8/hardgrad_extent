@@ -4,6 +4,8 @@ extern crate nalgebra;
 #[macro_use] mod vkffi;
 mod render_vk;
 
+mod constants;
+use constants::*;
 mod traits;
 use traits::*;
 mod xcbw;
@@ -12,18 +14,11 @@ mod vertex_formats;
 use vertex_formats::*;
 mod device_resources;
 mod logical_resources;
+use nalgebra::*;
 
 use vkffi::*;
 use render_vk::wrap as vk;
 use render_vk::traits::*;
-
-const APP_NAME: &'static str = "HardGrad -> Extent\0";
-const ENGINE_NAME: &'static str = "Hybrid-ML\0";
-const DEBUG_LAYER_NAME: &'static str = "VK_LAYER_LUNARG_standard_validation\0";
-const SURFACE_EXTENSION_NAME: &'static str = "VK_KHR_surface\0";
-const PSURFACE_EXTENSION_NAME: &'static str = "VK_KHR_xcb_surface\0";
-const DEBUG_EXTENSION_NAME: &'static str = "VK_EXT_debug_report\0";
-const SWAPCHAIN_EXTENSION_NAME: &'static str = "VK_KHR_swapchain\0";
 
 // Application Dependent Factories
 fn create_instance() -> vk::Instance
@@ -48,6 +43,11 @@ fn create_instance() -> vk::Instance
 	};
 
 	vk::Instance::create(&instance_info).expect("Unable to create instance")
+}
+fn diagnose_adapter(adapter_ref: &vk::PhysicalDevice)
+{
+	let features = adapter_ref.get_features();
+	if features.depthClamp == false as VkBool32 { panic!("DepthClamp Feature is required in device"); }
 }
 fn create_graphics_device<'a>(adapter_ref: &'a vk::PhysicalDevice) -> vk::Device<'a>
 {
@@ -187,6 +187,18 @@ fn create_framebuffers<'d>(views: &Vec<vk::ImageView<'d>>, rp: &vk::RenderPass<'
 	}).collect::<Vec<_>>()
 }
 
+// barrier buffer memory without transitioning ownership
+fn buffer_memory_barrier(buffer: &vk::Buffer, view_range: std::ops::Range<VkDeviceSize>, src_access_mask: VkAccessFlags, dst_access_mask: VkAccessFlags) -> VkBufferMemoryBarrier
+{
+	VkBufferMemoryBarrier
+	{
+		sType: VkStructureType::BufferMemoryBarrier, pNext: std::ptr::null(),
+		srcAccessMask: src_access_mask, dstAccessMask: dst_access_mask,
+		srcQueueFamilyIndex: VK_QUEUE_FAMILY_IGNORED, dstQueueFamilyIndex: VK_QUEUE_FAMILY_IGNORED,
+		buffer: buffer.get(), offset: view_range.start, size: view_range.end - view_range.start
+	}
+}
+
 fn main()
 {
 	// init xcb(connection to display)
@@ -195,6 +207,7 @@ fn main()
 	// init vulkan
 	let instance = create_instance();
 	let adapter = vk::PhysicalDevice::wrap(instance.enumerate_adapters().unwrap()[0]);
+	diagnose_adapter(&adapter);
 	let qf = adapter.get_graphics_queue_family_index().unwrap();
 	if !xcon.is_vk_presentation_support(&adapter, qf) { panic!("Unsupported Display Format"); }
 	let device = create_graphics_device(&adapter);
@@ -219,13 +232,15 @@ fn main()
 	let final_framebuffers = create_framebuffers(&final_image_views, &simple_pass, sc_extent);
 
 	// Device Resources //
-	let memory_bound_resources = device_resources::MemoryBoundResources::new(&device);
+	let memory_preallocator = device_resources::MemoryPreallocator::new(&adapter);
+	let memory_bound_resources = device_resources::MemoryBoundResources::new(&device, &memory_preallocator);
 	let descriptor_sets = device_resources::DescriptorSets::new(&device);
 
 	// Ready for Shading
 	let vshader = device.create_shader_module_from_file("shaders/EnemyRenderV.spv").unwrap();
 	let pshader = device.create_shader_module_from_file("shaders/ThroughColor.spv").unwrap();
-	let layout = device.create_pipeline_layout(&[descriptor_sets.set_layout_ub1.get(), descriptor_sets.set_layout_ub1.get()], &[]).unwrap();
+	let layout = device.create_pipeline_layout(&[descriptor_sets.set_layout_ub1.get(), descriptor_sets.set_layout_ub1.get()],
+		&[VkPushConstantRange(VK_SHADER_STAGE_VERTEX_BIT, 0, std::mem::size_of::<u32>() as u32)]).unwrap();
 	let cache = device.create_empty_pipeline_cache().unwrap();
 	let shader_entry = std::ffi::CString::new("main").unwrap();
 	let vertex_bindings =
@@ -238,7 +253,7 @@ fn main()
 		VkVertexInputAttributeDescription(0, 0, VkFormat::R32G32B32A32_SFLOAT, 0),
 		VkVertexInputAttributeDescription(1, 1, VkFormat::R32_UINT, 0)
 	];
-	let viewports = [VkViewport(0.0f32, 0.0f32, sc_width as f32, sc_height as f32, -1.0f32, 1.0f32)];
+	let viewports = [VkViewport(0.0f32, 0.0f32, sc_width as f32, sc_height as f32, 0.0f32, 1.0f32)];
 	let scissors = [render_area];
 	let shader_specialization_map_entries =
 	[
@@ -288,7 +303,7 @@ fn main()
 	{
 		sType: VkStructureType::Pipeline_RasterizationStateCreateInfo, pNext: std::ptr::null(), flags: 0,
 		polygonMode: VkPolygonMode::Fill, cullMode: VK_CULL_MODE_NONE, frontFace: VkFrontFace::CounterClockwise,
-		rasterizerDiscardEnable: false as VkBool32, depthClampEnable: false as VkBool32, depthBiasEnable: false as VkBool32,
+		rasterizerDiscardEnable: false as VkBool32, depthClampEnable: true as VkBool32, depthBiasEnable: false as VkBool32,
 		lineWidth: 1.0f32, depthBiasConstantFactor: 0.0f32, depthBiasClamp: 0.0f32, depthBiasSlopeFactor: 0.0f32
 	};
 	let multisample_state = VkPipelineMultisampleStateCreateInfo
@@ -332,15 +347,10 @@ fn main()
 	};
 	let pipeline = device.create_graphics_pipelines(&cache, &[pipeline_info]).unwrap().into_iter().next().unwrap();
 
-	// Resource Placements //
-	let meshstore_offset = 0;
-	let projection_matrixes_offset = meshstore_offset + logical_resources::Meshstore::device_size();
-	let enemy_datastore_offset = projection_matrixes_offset + logical_resources::ProjectionMatrixes::device_size();
-
 	// Logical Resources //
-	let meshstore = logical_resources::Meshstore::new(meshstore_offset);
-	let projection_matrixes = logical_resources::ProjectionMatrixes::new(&memory_bound_resources.buffer, projection_matrixes_offset, 0, sc_extent);
-	let enemy_datastore = logical_resources::EnemyDatastore::new(&memory_bound_resources.buffer, enemy_datastore_offset, 1);
+	let meshstore = logical_resources::Meshstore::new(memory_preallocator.meshstore_range.start);
+	let projection_matrixes = logical_resources::ProjectionMatrixes::new(&memory_bound_resources.buffer, memory_preallocator.projection_matrixes_range.start, 0, sc_extent);
+	let enemy_datastore = logical_resources::EnemyDatastore::new(&memory_bound_resources.buffer, memory_preallocator.enemy_datastore_range.start, 1);
 
 	// Setup Descriptors //
 	device.update_descriptor_sets(&[
@@ -349,10 +359,20 @@ fn main()
 
 	// Initial Staging //
 	{
-		let mapped_range = memory_bound_resources.staging_memory.map(0 .. memory_bound_resources.size).unwrap();
+		let mapped_range = memory_bound_resources.staging_memory.map(0 .. memory_preallocator.total_size).unwrap();
 		meshstore.initial_stage_data(&mapped_range);
 		projection_matrixes.initial_stage_data(&mapped_range);
 		enemy_datastore.initial_stage_data(&mapped_range);
+		enemy_datastore.update_instance_data(&mapped_range, 1,
+			UnitQuaternion::new(Vector3::new(1.0f32, 0.0f32, 1.0f32)).quaternion(), UnitQuaternion::new(Vector3::new(-1.0f32, 0.5f32, -0.75f32)).quaternion(),
+			&Vector4::new(0.0f32, 5.0f32, 0.0f32, 0.0f32));
+		enemy_datastore.update_instance_data(&mapped_range, 2,
+			UnitQuaternion::new(Vector3::new(1.0f32, 0.0f32, 1.0f32) * 2.0f32).quaternion(), UnitQuaternion::new(Vector3::new(-1.0f32, 0.5f32, -0.75f32)).quaternion(),
+			&Vector4::new(10.0f32, 15.0f32, 0.0f32, 0.0f32));
+		
+		// debugging tweak
+		mapped_range.range_mut::<u32>(enemy_datastore.character_indices_offset, 2)[0] = 1;
+		mapped_range.range_mut::<u32>(enemy_datastore.character_indices_offset, 2)[1] = 2;
 	}
 
 	// Ready for command recording //
@@ -375,79 +395,56 @@ fn main()
 			srcQueueFamilyIndex: VK_QUEUE_FAMILY_IGNORED, dstQueueFamilyIndex: VK_QUEUE_FAMILY_IGNORED,
 		};
 
+		let vertex_buffers = [memory_bound_resources.buffer.get(), memory_bound_resources.buffer.get()];
 		final_commands.begin(cb_index).unwrap()
 			.resource_barrier(VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, &[], &[], &[image_barrier])
 			.begin_render_pass(&final_framebuffers[cb_index], &simple_pass, render_area, &clear_values, false)
 			.bind_pipeline(&pipeline)
 			.bind_descriptor_sets(&layout, &[descriptor_sets.sets[0], descriptor_sets.sets[1]], &[])
-			.bind_vertex_buffers(&[memory_bound_resources.buffer.get(), memory_bound_resources.buffer.get()], &[meshstore.unit_cube_vertices_offset, enemy_datastore.character_indices_offset])
+			.bind_vertex_buffers(&vertex_buffers, &[meshstore.unit_cube_vertices_offset, enemy_datastore.character_indices_offset])
 			.bind_index_buffer(&memory_bound_resources.buffer, meshstore.unit_cube_indices_offset)
-			.draw_indexed(24, 2)
+			.push_constants(&layout, VK_SHADER_STAGE_VERTEX_BIT, 0, &[0u32])
+			.draw_indexed(24, MAX_ENEMY_COUNT as u32)
+			.push_constants(&layout, VK_SHADER_STAGE_VERTEX_BIT, 0, &[1u32])
+			.draw_indexed(24, MAX_ENEMY_COUNT as u32)
 			.end_render_pass();
 	}
 	// Initial execution of setup layouts and transfer stagings
 	{
 		let cb = pool.allocate_primary_buffers(1).unwrap();
-		let mut image_barriers: Vec<VkImageMemoryBarrier> = vec![unsafe { std::mem::uninitialized() }; final_images.len()];
-		for i in 0 .. final_images.len()
+		let image_barriers = final_images.iter().map(|o| VkImageMemoryBarrier
 		{
-			image_barriers[i] = VkImageMemoryBarrier
+			sType: VkStructureType::ImageMemoryBarrier, pNext: std::ptr::null(),
+			image: o.get(), oldLayout: VkImageLayout::Undefined, newLayout: VkImageLayout::PresentSrcKHR,
+			srcQueueFamilyIndex: VK_QUEUE_FAMILY_IGNORED, dstQueueFamilyIndex: VK_QUEUE_FAMILY_IGNORED,
+			srcAccessMask: 0, dstAccessMask: VK_ACCESS_MEMORY_READ_BIT,
+			subresourceRange: VkImageSubresourceRange
 			{
-				sType: VkStructureType::ImageMemoryBarrier, pNext: std::ptr::null(),
-				image: final_images[i].get(), oldLayout: VkImageLayout::Undefined, newLayout: VkImageLayout::PresentSrcKHR,
-				srcQueueFamilyIndex: VK_QUEUE_FAMILY_IGNORED, dstQueueFamilyIndex: VK_QUEUE_FAMILY_IGNORED,
-				srcAccessMask: 0, dstAccessMask: VK_ACCESS_MEMORY_READ_BIT,
-				subresourceRange: VkImageSubresourceRange
-				{
-					aspectMask: VK_IMAGE_ASPECT_COLOR_BIT, baseMipLevel: 0, baseArrayLayer: 0,
-					levelCount: 1, layerCount: 1
-				}
-			};
-		}
-		let buffer_barriers = [
-			VkBufferMemoryBarrier
-			{
-				// Barrier to Transfer Source
-				sType: VkStructureType::BufferMemoryBarrier, pNext: std::ptr::null(),
-				srcAccessMask: 0, dstAccessMask: VK_ACCESS_TRANSFER_READ_BIT,
-				srcQueueFamilyIndex: VK_QUEUE_FAMILY_IGNORED, dstQueueFamilyIndex: VK_QUEUE_FAMILY_IGNORED,
-				buffer: memory_bound_resources.stage_buffer.get(), offset: 0, size: memory_bound_resources.size
-			},
-			VkBufferMemoryBarrier
-			{
-				// Barrier to Transfer Destination
-				sType: VkStructureType::BufferMemoryBarrier, pNext: std::ptr::null(),
-				srcAccessMask: 0, dstAccessMask: VK_ACCESS_TRANSFER_WRITE_BIT,
-				srcQueueFamilyIndex: VK_QUEUE_FAMILY_IGNORED, dstQueueFamilyIndex: VK_QUEUE_FAMILY_IGNORED,
-				buffer: memory_bound_resources.buffer.get(), offset: 0, size: memory_bound_resources.size
+				aspectMask: VK_IMAGE_ASPECT_COLOR_BIT, baseMipLevel: 0, baseArrayLayer: 0,
+				levelCount: 1, layerCount: 1
 			}
+		}).collect::<Vec<_>>();
+		let entire_range = 0 .. memory_preallocator.total_size;
+		let buffer_barriers = [
+			buffer_memory_barrier(&memory_bound_resources.stage_buffer, entire_range.clone(), 0, VK_ACCESS_TRANSFER_READ_BIT),
+			buffer_memory_barrier(&memory_bound_resources.buffer, entire_range.clone(), 0, VK_ACCESS_TRANSFER_WRITE_BIT)
 		];
 		let buffer_barriers_to_use = [
-			VkBufferMemoryBarrier
-			{
-				// Barrier to Generic Read
-				sType: VkStructureType::BufferMemoryBarrier, pNext: std::ptr::null(),
-				srcAccessMask: VK_ACCESS_TRANSFER_WRITE_BIT, dstAccessMask: VK_ACCESS_SHADER_READ_BIT,
-				srcQueueFamilyIndex: VK_QUEUE_FAMILY_IGNORED, dstQueueFamilyIndex: VK_QUEUE_FAMILY_IGNORED,
-				buffer: memory_bound_resources.buffer.get(), offset: 0, size: memory_bound_resources.size
-			},
-			VkBufferMemoryBarrier
-			{
-				// Barrier to Host Write
-				sType: VkStructureType::BufferMemoryBarrier, pNext: std::ptr::null(),
-				srcAccessMask: VK_ACCESS_TRANSFER_READ_BIT, dstAccessMask: VK_ACCESS_HOST_WRITE_BIT,
-				srcQueueFamilyIndex: VK_QUEUE_FAMILY_IGNORED, dstQueueFamilyIndex: VK_QUEUE_FAMILY_IGNORED,
-				buffer: memory_bound_resources.stage_buffer.get(), offset: 0, size: memory_bound_resources.size
-			}
+			buffer_memory_barrier(&memory_bound_resources.buffer, entire_range.clone(), VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT),
+			buffer_memory_barrier(&memory_bound_resources.stage_buffer, entire_range.clone(), VK_ACCESS_TRANSFER_READ_BIT, VK_ACCESS_HOST_WRITE_BIT)
 		];
-		let copy_regions = [VkBufferCopy(0, 0, memory_bound_resources.size)];
-		cb.begin(0).unwrap().resource_barrier(VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
-			&[], &buffer_barriers, image_barriers.as_slice())
+		let copy_regions = [VkBufferCopy(0, 0, memory_preallocator.total_size)];
+		cb.begin(0).unwrap()
+			.resource_barrier(VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, &[], &buffer_barriers, image_barriers.as_slice())
 			.copy_buffer(&memory_bound_resources.stage_buffer, &memory_bound_resources.buffer, &copy_regions)
 			.resource_barrier(VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, &[], &buffer_barriers_to_use, &[]);
 		device.submit_commands(&[cb[0]], &[], None).unwrap();
 		device.wait_queue_for_idle().unwrap();
 	}
+
+	// initial execution(coordinated execution order by semaphore)
+	let mut index_render_to = swapchain.acquire_next_image(&semaphore).unwrap();
+	device.submit_commands(&[final_commands[index_render_to as usize]], &[semaphore.get()], Some(&fence)).unwrap();
 
 	// Application Loop
 	'app_loop: loop
@@ -472,11 +469,14 @@ fn main()
 			}
 		}
 
-		// Render //
-		// coordinated execution order by semaphore
-		let index_render_to = swapchain.acquire_next_image(&semaphore).unwrap();
-		device.submit_commands(&[final_commands[index_render_to as usize]], &[semaphore.get()], Some(&fence)).unwrap();
-		fence.wait().unwrap(); fence.reset().unwrap();
-		swapchain.present(index_render_to, &[]).unwrap();
+		// Present -> Render //
+		if fence.get_status().is_ok()
+		{
+			fence.reset().unwrap();
+			swapchain.present(index_render_to, &[]).unwrap();
+			index_render_to = swapchain.acquire_next_image(&semaphore).unwrap();
+			device.submit_commands(&[final_commands[index_render_to as usize]], &[semaphore.get()], Some(&fence)).unwrap();
+		}
 	}
+	device.wait_for_idle().unwrap();
 }

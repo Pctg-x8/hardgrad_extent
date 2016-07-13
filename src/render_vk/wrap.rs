@@ -152,6 +152,18 @@ impl PhysicalDevice
 		for m in &vmodes { println!("- {:?}", m); }
 		vmodes
 	}
+	pub fn get_properties(&self) -> VkPhysicalDeviceProperties
+	{
+		let mut props: VkPhysicalDeviceProperties = unsafe { std::mem::uninitialized() };
+		unsafe { vkGetPhysicalDeviceProperties(self.obj, &mut props) };
+		props
+	}
+	pub fn get_features(&self) -> VkPhysicalDeviceFeatures
+	{
+		let mut features: VkPhysicalDeviceFeatures = unsafe { std::mem::uninitialized() };
+		unsafe { vkGetPhysicalDeviceFeatures(self.obj, &mut features) };
+		features
+	}
 
 	pub fn create_device(&self, info: &VkDeviceCreateInfo, queue_index: u32) -> Result<Device, VkResult>
 	{
@@ -337,6 +349,7 @@ impl <'a> Device<'a>
 	{
 		unsafe { vkQueueWaitIdle(self.queue_obj) }.to_result()
 	}
+	pub fn wait_for_idle(&self) -> Result<(), VkResult> { unsafe { vkDeviceWaitIdle(self.obj) }.to_result() }
 }
 
 macro_rules! SafeObjectDerivedFromDevice
@@ -469,6 +482,10 @@ impl <'d> Fence<'d>
 	pub fn reset(&self) -> Result<(), VkResult>
 	{
 		unsafe { vkResetFences(self.device_ref.obj, 1, &self.obj) }.to_result()
+	}
+	pub fn get_status(&self) -> Result<(), VkResult>
+	{
+		unsafe { vkGetFenceStatus(self.device_ref.obj, self.obj) }.to_result()
 	}
 }
 impl <'d> MemoryAllocationRequired for Buffer<'d>
@@ -607,6 +624,11 @@ impl CommandBufferRef
 	pub fn draw_indexed(self, vertex_count: u32, instance_count: u32) -> Self
 	{
 		unsafe { vkCmdDrawIndexed(self.obj, vertex_count, instance_count, 0, 0, 0) };
+		self
+	}
+	pub fn push_constants<T: std::marker::Sized>(self, layout: &PipelineLayout, stage: VkShaderStageFlags, offset: u32, values: &[T]) -> Self
+	{
+		unsafe { vkCmdPushConstants(self.obj, layout.get(), stage, offset, (std::mem::size_of::<T>() * values.len()) as u32, std::mem::transmute(values.as_ptr())) };
 		self
 	}
 

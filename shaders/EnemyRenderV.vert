@@ -5,7 +5,7 @@
 const uint MAX_ENEMY_COUNTS = 128;
 layout(std140, set = 1, binding = 0) uniform CharacterLocation
 {
-	vec4 rotq[MAX_ENEMY_COUNTS];
+	vec4 rotq[MAX_ENEMY_COUNTS * 2];
 	vec4 center_tf[MAX_ENEMY_COUNTS];
 };
 
@@ -20,6 +20,10 @@ layout(std140, set = 0, binding = 0) uniform ProjectionMatrix
 {
 	mat4 ortho_projection_matrix, persp_projection_matrix;
 };
+layout(push_constant) uniform PushedConstants
+{
+	uint transform_pass;
+} pushed_constants;
 
 layout(location = 0) out vec4 color_out;
 out gl_PerVertex { vec4 gl_Position; };
@@ -37,7 +41,7 @@ vec4 qRot(vec3 in_vec, vec4 rq)
 
 void main()
 {
-	vec4 rq = rotq[character_index];
+	vec4 rq = rotq[character_index + MAX_ENEMY_COUNTS * pushed_constants.transform_pass];
 	vec4 ctf = center_tf[character_index];
 	gl_Position = (vec4(qRot(pos.xyz, rq).xyz, 1.0f) + ctf) * ortho_projection_matrix;
 	color_out = vec4(r, g, b, a);

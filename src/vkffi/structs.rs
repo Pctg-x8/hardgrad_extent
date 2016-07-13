@@ -480,7 +480,7 @@ pub struct VkDeviceCreateInfo
 	pub layout: VkPipelineLayout, pub renderPass: VkRenderPass, pub subpass: u32,
 	pub basePipelineHandle: VkPipeline, pub basePipelineIndex: u32
 }
-#[repr(C)] pub struct VkPushConstantRange(VkShaderStageFlags, u32, u32);
+#[repr(C)] pub struct VkPushConstantRange(pub VkShaderStageFlags, pub u32, pub u32);
 #[repr(C)] pub struct VkPipelineLayoutCreateInfo
 {
 	pub sType: VkStructureType, pub pNext: *const c_void,
