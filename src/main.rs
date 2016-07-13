@@ -11,7 +11,6 @@ use traits::*;
 mod xcbw;
 use xcbw::*;
 mod vertex_formats;
-use vertex_formats::*;
 mod device_resources;
 mod logical_resources;
 use nalgebra::*;
@@ -20,6 +19,33 @@ use vkffi::*;
 use render_vk::wrap as vk;
 use render_vk::traits::*;
 
+impl std::default::Default for VkApplicationInfo
+{
+	fn default() -> Self
+	{
+		VkApplicationInfo
+		{
+			sType: VkStructureType::ApplicationInfo, pNext: std::ptr::null(),
+			apiVersion: VK_API_VERSION_1_0,
+			pApplicationName: std::ptr::null(), pEngineName: std::ptr::null(),
+			applicationVersion: 0, engineVersion: 0
+		}
+	}
+}
+impl std::default::Default for VkInstanceCreateInfo
+{
+	fn default() -> Self
+	{
+		VkInstanceCreateInfo
+		{
+			sType: VkStructureType::InstanceCreateInfo, pNext: std::ptr::null(), flags: 0,
+			pApplicationInfo: std::ptr::null(),
+			enabledLayerCount: 0, enabledExtensionCount: 0,
+			ppEnabledLayerNames: std::ptr::null(), ppEnabledExtensionNames: std::ptr::null()
+		}
+	}
+}
+
 // Application Dependent Factories
 fn create_instance() -> vk::Instance
 {
@@ -27,27 +53,30 @@ fn create_instance() -> vk::Instance
 	let extensions = [SURFACE_EXTENSION_NAME.as_ptr(), PSURFACE_EXTENSION_NAME.as_ptr(), DEBUG_EXTENSION_NAME.as_ptr()];
 	let app_info = VkApplicationInfo
 	{
-		sType: VkStructureType::ApplicationInfo, pNext: std::ptr::null(),
 		pApplicationName: APP_NAME.as_ptr() as *const i8,
 		applicationVersion: VK_MAKE_VERSION!(0, 0, 1),
 		pEngineName: ENGINE_NAME.as_ptr() as *const i8,
 		engineVersion: VK_MAKE_VERSION!(0, 0, 1),
-		apiVersion: VK_API_VERSION_1_0
+		.. Default::default()
 	};
 	let instance_info = VkInstanceCreateInfo
 	{
-		sType: VkStructureType::InstanceCreateInfo, pNext: std::ptr::null(), flags: 0,
 		pApplicationInfo: &app_info,
 		enabledLayerCount: layers.len() as u32, ppEnabledLayerNames: layers.as_ptr() as *const *const i8,
-		enabledExtensionCount: extensions.len() as u32, ppEnabledExtensionNames: extensions.as_ptr() as *const *const i8
+		enabledExtensionCount: extensions.len() as u32, ppEnabledExtensionNames: extensions.as_ptr() as *const *const i8,
+		.. Default::default()
 	};
 
 	vk::Instance::create(&instance_info).expect("Unable to create instance")
 }
-fn diagnose_adapter(adapter_ref: &vk::PhysicalDevice)
+fn diagnose_adapter(server_con: &XServerConnection, adapter: &vk::PhysicalDevice, queue_index: u32)
 {
-	let features = adapter_ref.get_features();
+	// Feature Check //
+	let features = adapter.get_features();
 	if features.depthClamp == false as VkBool32 { panic!("DepthClamp Feature is required in device"); }
+
+	// Vulkan and XCB Integration Check //
+	if !server_con.is_vk_presentation_support(adapter, queue_index) { panic!("Unsupported Display Format"); }
 }
 fn create_graphics_device<'a>(adapter_ref: &'a vk::PhysicalDevice) -> vk::Device<'a>
 {
@@ -207,9 +236,8 @@ fn main()
 	// init vulkan
 	let instance = create_instance();
 	let adapter = vk::PhysicalDevice::wrap(instance.enumerate_adapters().unwrap()[0]);
-	diagnose_adapter(&adapter);
 	let qf = adapter.get_graphics_queue_family_index().unwrap();
-	if !xcon.is_vk_presentation_support(&adapter, qf) { panic!("Unsupported Display Format"); }
+	diagnose_adapter(&xcon, &adapter, qf);
 	let device = create_graphics_device(&adapter);
 
 	// init display
@@ -224,7 +252,6 @@ fn main()
 	// Ready for Rendering
 	let surface = create_surface(&instance, &window);
 	let (swapchain, sc_format, sc_extent) = create_swapchain(&adapter, &device, &surface);
-	let VkExtent2D(sc_width, sc_height) = sc_extent;
 	let render_area = VkRect2D(VkOffset2D(0, 0), sc_extent);
 	let final_images = swapchain.get_images().unwrap();
 	let final_image_views = create_image_views(&final_images, sc_format);
@@ -237,115 +264,8 @@ fn main()
 	let descriptor_sets = device_resources::DescriptorSets::new(&device);
 
 	// Ready for Shading
-	let vshader = device.create_shader_module_from_file("shaders/EnemyRenderV.spv").unwrap();
-	let pshader = device.create_shader_module_from_file("shaders/ThroughColor.spv").unwrap();
-	let layout = device.create_pipeline_layout(&[descriptor_sets.set_layout_ub1.get(), descriptor_sets.set_layout_ub1.get()],
-		&[VkPushConstantRange(VK_SHADER_STAGE_VERTEX_BIT, 0, std::mem::size_of::<u32>() as u32)]).unwrap();
-	let cache = device.create_empty_pipeline_cache().unwrap();
-	let shader_entry = std::ffi::CString::new("main").unwrap();
-	let vertex_bindings =
-	[
-		VkVertexInputBindingDescription(0, std::mem::size_of::<Position>() as u32, VkVertexInputRate::Vertex),
-		VkVertexInputBindingDescription(1, std::mem::size_of::<u32>() as u32, VkVertexInputRate::Instance)
-	];
-	let vertex_inputs =
-	[
-		VkVertexInputAttributeDescription(0, 0, VkFormat::R32G32B32A32_SFLOAT, 0),
-		VkVertexInputAttributeDescription(1, 1, VkFormat::R32_UINT, 0)
-	];
-	let viewports = [VkViewport(0.0f32, 0.0f32, sc_width as f32, sc_height as f32, 0.0f32, 1.0f32)];
-	let scissors = [render_area];
-	let shader_specialization_map_entries =
-	[
-		VkSpecializationMapEntry(10, 0, std::mem::size_of::<f32>()),
-		VkSpecializationMapEntry(11, (std::mem::size_of::<f32>() * 1) as u32, std::mem::size_of::<f32>()),
-		VkSpecializationMapEntry(12, (std::mem::size_of::<f32>() * 2) as u32, std::mem::size_of::<f32>()),
-		VkSpecializationMapEntry(13, (std::mem::size_of::<f32>() * 3) as u32, std::mem::size_of::<f32>())
-	];
-	let shader_specialization_data = [0.25f32, 0.9875f32, 1.5f32, 1.0f32];
-	let shader_const_specialization = VkSpecializationInfo
-	{
-		mapEntryCount: shader_specialization_map_entries.len() as u32, pMapEntries: shader_specialization_map_entries.as_ptr(),
-		dataSize: std::mem::size_of::<[f32; 4]>(), pData: unsafe { std::mem::transmute(shader_specialization_data.as_ptr()) }
-	};
-	let shader_stages =
-	[
-		VkPipelineShaderStageCreateInfo
-		{
-			sType: VkStructureType::Pipeline_ShaderStageCreateInfo, pNext: std::ptr::null(), flags: 0,
-			stage: VK_SHADER_STAGE_VERTEX_BIT, module: vshader.get(), pName: shader_entry.as_ptr(),
-			pSpecializationInfo: &shader_const_specialization
-		}, VkPipelineShaderStageCreateInfo
-		{
-			sType: VkStructureType::Pipeline_ShaderStageCreateInfo, pNext: std::ptr::null(), flags: 0,
-			stage: VK_SHADER_STAGE_FRAGMENT_BIT, module: pshader.get(), pName: shader_entry.as_ptr(),
-			pSpecializationInfo: std::ptr::null()
-		}
-	];
-	let vertex_input_state = VkPipelineVertexInputStateCreateInfo
-	{
-		sType: VkStructureType::Pipeline_VertexInputStateCreateInfo, pNext: std::ptr::null(), flags: 0,
-		vertexBindingDescriptionCount: vertex_bindings.len() as u32, pVertexBindingDescriptions: vertex_bindings.as_ptr(),
-		vertexAttributeDescriptionCount: vertex_inputs.len() as u32, pVertexAttributeDescriptions: vertex_inputs.as_ptr()
-	};
-	let input_assembly_state = VkPipelineInputAssemblyStateCreateInfo
-	{
-		sType: VkStructureType::Pipeline_InputAssemblyStateCreateInfo, pNext: std::ptr::null(), flags: 0,
-		topology: VkPrimitiveTopology::LineList, primitiveRestartEnable: false as VkBool32
-	};
-	let viewport_state = VkPipelineViewportStateCreateInfo
-	{
-		sType: VkStructureType::Pipeline_ViewportStateCreateInfo, pNext: std::ptr::null(), flags: 0,
-		viewportCount: viewports.len() as u32, pViewports: viewports.as_ptr(),
-		scissorCount: scissors.len() as u32, pScissors: scissors.as_ptr()
-	};
-	let rasterization_state = VkPipelineRasterizationStateCreateInfo
-	{
-		sType: VkStructureType::Pipeline_RasterizationStateCreateInfo, pNext: std::ptr::null(), flags: 0,
-		polygonMode: VkPolygonMode::Fill, cullMode: VK_CULL_MODE_NONE, frontFace: VkFrontFace::CounterClockwise,
-		rasterizerDiscardEnable: false as VkBool32, depthClampEnable: true as VkBool32, depthBiasEnable: false as VkBool32,
-		lineWidth: 1.0f32, depthBiasConstantFactor: 0.0f32, depthBiasClamp: 0.0f32, depthBiasSlopeFactor: 0.0f32
-	};
-	let multisample_state = VkPipelineMultisampleStateCreateInfo
-	{
-		sType: VkStructureType::Pipeline_MultisampleStateCreateInfo, pNext: std::ptr::null(), flags: 0,
-		rasterizationSamples: VK_SAMPLE_COUNT_1_BIT, sampleShadingEnable: false as VkBool32,
-		alphaToCoverageEnable: false as VkBool32, alphaToOneEnable: false as VkBool32,
-		pSampleMask: std::ptr::null(), minSampleShading: 0.0f32
-	};
-	let attachment_blend_states =
-	[
-		VkPipelineColorBlendAttachmentState
-		{
-			blendEnable: false as VkBool32,
-			colorWriteMask: VK_COLOR_COMPONENT_A_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_R_BIT,
-			srcColorBlendFactor: VkBlendFactor::One, dstColorBlendFactor: VkBlendFactor::One, colorBlendOp: VkBlendOp::Add,
-			srcAlphaBlendFactor: VkBlendFactor::One, dstAlphaBlendFactor: VkBlendFactor::One, alphaBlendOp: VkBlendOp::Add
-		}
-	];
-	let blend_state = VkPipelineColorBlendStateCreateInfo
-	{
-		sType: VkStructureType::Pipeline_ColorBlendStateCreateInfo, pNext: std::ptr::null(), flags: 0,
-		logicOpEnable: false as VkBool32, logicOp: VkLogicOp::NOP, blendConstants: [0.0f32; 4],
-		attachmentCount: attachment_blend_states.len() as u32, pAttachments: attachment_blend_states.as_ptr()
-	};
-	let pipeline_info = VkGraphicsPipelineCreateInfo
-	{
-		sType: VkStructureType::GraphicsPipelineCreateInfo, pNext: std::ptr::null(), flags: 0,
-		stageCount: shader_stages.len() as u32, pStages: shader_stages.as_ptr(),
-		pVertexInputState: &vertex_input_state,
-		pInputAssemblyState: &input_assembly_state,
-		pTessellationState: std::ptr::null(),
-		pDepthStencilState: std::ptr::null(),
-		pViewportState: &viewport_state,
-		pRasterizationState: &rasterization_state,
-		pMultisampleState: &multisample_state,
-		pColorBlendState: &blend_state,
-		pDynamicState: std::ptr::null(),
-		layout: layout.get(), renderPass: simple_pass.get(), subpass: 0,
-		basePipelineHandle: std::ptr::null_mut(), basePipelineIndex: 0
-	};
-	let pipeline = device.create_graphics_pipelines(&cache, &[pipeline_info]).unwrap().into_iter().next().unwrap();
+	let pp_commons = logical_resources::PipelineCommonStore::new(&device, &descriptor_sets);
+	let enemy_render = logical_resources::EnemyRenderer::new(&pp_commons, &simple_pass, sc_extent);
 
 	// Logical Resources //
 	let meshstore = logical_resources::Meshstore::new(memory_preallocator.meshstore_range.start);
@@ -399,13 +319,13 @@ fn main()
 		final_commands.begin(cb_index).unwrap()
 			.resource_barrier(VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, &[], &[], &[image_barrier])
 			.begin_render_pass(&final_framebuffers[cb_index], &simple_pass, render_area, &clear_values, false)
-			.bind_pipeline(&pipeline)
-			.bind_descriptor_sets(&layout, &[descriptor_sets.sets[0], descriptor_sets.sets[1]], &[])
+			.bind_pipeline(&enemy_render.state)
+			.bind_descriptor_sets(enemy_render.layout_ref, &[descriptor_sets.sets[0], descriptor_sets.sets[1]], &[])
 			.bind_vertex_buffers(&vertex_buffers, &[meshstore.unit_cube_vertices_offset, enemy_datastore.character_indices_offset])
 			.bind_index_buffer(&memory_bound_resources.buffer, meshstore.unit_cube_indices_offset)
-			.push_constants(&layout, VK_SHADER_STAGE_VERTEX_BIT, 0, &[0u32])
+			.push_constants(enemy_render.layout_ref, VK_SHADER_STAGE_VERTEX_BIT, 0, &[0u32])
 			.draw_indexed(24, MAX_ENEMY_COUNT as u32)
-			.push_constants(&layout, VK_SHADER_STAGE_VERTEX_BIT, 0, &[1u32])
+			.push_constants(enemy_render.layout_ref, VK_SHADER_STAGE_VERTEX_BIT, 0, &[1u32])
 			.draw_indexed(24, MAX_ENEMY_COUNT as u32)
 			.end_render_pass();
 	}
