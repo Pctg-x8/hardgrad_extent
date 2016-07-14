@@ -32,8 +32,8 @@ impl DeviceStore for ProjectionMatrixes
 	fn initial_stage_data(&self, mapped_range: &vk::MemoryMappedRange)
 	{
 		let VkExtent2D(width, height) = self.screen_size;
-		let (aspect, scaling) = (height as f32 / width as f32, 35.0f32);
-		let ortho_matrix = OrthographicMatrix3::new(-scaling * aspect, scaling * aspect, 0.0f32, scaling, -100.0f32, 100.0f32);
+		let (aspect, scaling) = (width as f32 / height as f32, 35.0f32);
+		let ortho_matrix = OrthographicMatrix3::new(-scaling, scaling, 0.0f32, scaling * aspect, -200.0f32, 100.0f32);
 		let persp_matrix = PerspectiveMatrix3::new(aspect, 70.0f32, -100.0f32, 100.0f32);
 
 		{

@@ -1,6 +1,8 @@
 extern crate libc;
 extern crate xcb;
 extern crate nalgebra;
+extern crate rand;
+extern crate time;
 #[macro_use] mod vkffi;
 mod render_vk;
 
@@ -14,6 +16,7 @@ mod vertex_formats;
 mod device_resources;
 mod logical_resources;
 use nalgebra::*;
+use rand::distributions::*;
 
 use vkffi::*;
 use render_vk::wrap as vk;
@@ -205,6 +208,43 @@ fn buffer_memory_barrier(buffer: &vk::Buffer, view_range: std::ops::Range<VkDevi
 	}
 }
 
+struct Enemy
+{
+	block_index: u32, left: f32, appear_time: time::PreciseTime
+}
+impl Enemy
+{
+	pub fn new(datastore: &mut logical_resources::EnemyDatastore, mapped_range: &vk::MemoryMappedRange, init_left: f32) -> Self
+	{
+		let index = datastore.allocate_block(mapped_range).expect("Unable to allocate block for enemy");
+		datastore.update_instance_data(mapped_range, index,
+			UnitQuaternion::new(Vector3::new(0.0f32, 0.0f32, 0.0f32)).quaternion(), UnitQuaternion::new(Vector3::new(0.0f32, 0.0f32, 0.0f32)).quaternion(),
+			&Vector4::new(init_left, 0.0f32, 0.0f32, 0.0f32));
+
+		Enemy
+		{
+			block_index: index, left: init_left, appear_time: time::PreciseTime::now()
+		}
+	}
+	pub fn update(&mut self, datastore: &logical_resources::EnemyDatastore, mapped_range: &vk::MemoryMappedRange)
+	{
+		let delta_time = self.appear_time.to(time::PreciseTime::now());
+		let living_seconds = delta_time.num_milliseconds() as f32 / 1000.0f32;
+		let current_y = if living_seconds < 0.875f32
+		{
+			15.0f32 * (1.0f32 - (1.0f32 - living_seconds / 0.875f32).powi(2)) - 3.0f32
+		}
+		else
+		{
+			15.0f32 + (living_seconds - 0.875f32) * 2.5f32 - 3.0f32
+		};
+		datastore.update_instance_data(mapped_range, self.block_index,
+			UnitQuaternion::new(Vector3::new(-1.0f32, 0.0f32, 0.75f32).normalize() * (260.0f32 * living_seconds).to_radians()).quaternion(),
+			UnitQuaternion::new(Vector3::new(1.0f32, -1.0f32, 0.5f32).normalize() * (-260.0f32 * living_seconds + 13.0f32).to_radians()).quaternion(),
+			&Vector4::new(self.left, current_y, 0.0f32, 0.0f32));
+	}
+}
+
 fn main()
 {
 	// init xcb(connection to display)
@@ -281,7 +321,8 @@ fn main()
 	xcon.flush();
 
 	// Device to Device and Resource to Resource Synchronization //
-	let semaphore = device.create_semaphore().unwrap();
+	let render_target_sem = device.create_semaphore().unwrap();
+	let transfer_sem = device.create_semaphore().unwrap();
 	let fence = device.create_fence().unwrap();
 
 	// Ready for Rendering
@@ -305,7 +346,7 @@ fn main()
 	// Logical Resources //
 	let meshstore = logical_resources::Meshstore::new(memory_preallocator.meshstore_range.start);
 	let projection_matrixes = logical_resources::ProjectionMatrixes::new(&memory_bound_resources.buffer, memory_preallocator.projection_matrixes_range.start, 0, sc_extent);
-	let enemy_datastore = logical_resources::EnemyDatastore::new(&memory_bound_resources.buffer, memory_preallocator.enemy_datastore_range.start, 1);
+	let mut enemy_datastore = logical_resources::EnemyDatastore::new(&memory_bound_resources.buffer, memory_preallocator.enemy_datastore_range.start, 1);
 
 	// Setup Descriptors //
 	device.update_descriptor_sets(&[
@@ -313,22 +354,17 @@ fn main()
 	], &[]);
 
 	// Initial Staging //
+	let mut enemy_list = std::collections::LinkedList::<Enemy>::new();
 	{
 		let mapped_range = memory_bound_resources.staging_memory.map(0 .. memory_preallocator.total_size).unwrap();
 		meshstore.initial_stage_data(&mapped_range);
 		projection_matrixes.initial_stage_data(&mapped_range);
 		enemy_datastore.initial_stage_data(&mapped_range);
-		enemy_datastore.update_instance_data(&mapped_range, 1,
-			UnitQuaternion::new(Vector3::new(1.0f32, 0.0f32, 1.0f32)).quaternion(), UnitQuaternion::new(Vector3::new(-1.0f32, 0.5f32, -0.75f32)).quaternion(),
-			&Vector4::new(0.0f32, 5.0f32, 0.0f32, 0.0f32));
-		enemy_datastore.update_instance_data(&mapped_range, 2,
-			UnitQuaternion::new(Vector3::new(1.0f32, 0.0f32, 1.0f32) * 2.0f32).quaternion(), UnitQuaternion::new(Vector3::new(-1.0f32, 0.5f32, -0.75f32)).quaternion(),
-			&Vector4::new(10.0f32, 15.0f32, 0.0f32, 0.0f32));
-		
-		// debugging tweak
-		mapped_range.range_mut::<u32>(enemy_datastore.character_indices_offset, 2)[0] = 1;
-		mapped_range.range_mut::<u32>(enemy_datastore.character_indices_offset, 2)[1] = 2;
 	}
+
+	let mut randomizer = rand::thread_rng();
+	let mut left_range = rand::distributions::Range::new(-25.0f32, 25.0f32);
+	let mut appear_percent_range = rand::distributions::Range::new(0, 40);
 
 	// Ready for command recording //
 	let pool = device.create_command_pool(&graphics_queue, true).unwrap();
@@ -360,10 +396,28 @@ fn main()
 			.bind_vertex_buffers(&vertex_buffers, &[meshstore.unit_cube_vertices_offset, enemy_datastore.character_indices_offset])
 			.bind_index_buffer(&memory_bound_resources.buffer, meshstore.unit_cube_indices_offset)
 			.push_constants(enemy_render.layout_ref, VK_SHADER_STAGE_VERTEX_BIT, 0, &[0u32])
-			.draw_indexed(24, MAX_ENEMY_COUNT as u32)
+			.draw_indexed(24, MAX_ENEMY_COUNT as u32, 0)
 			.push_constants(enemy_render.layout_ref, VK_SHADER_STAGE_VERTEX_BIT, 0, &[1u32])
-			.draw_indexed(24, MAX_ENEMY_COUNT as u32)
+			.draw_indexed(24, MAX_ENEMY_COUNT as u32, 0)
 			.end_render_pass();
+	}
+	let device_buffer_access_mask = VK_ACCESS_INDEX_READ_BIT | VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT | VK_ACCESS_UNIFORM_READ_BIT;
+	let transfer_commands = transfer_pool.allocate_primary_buffers(1).unwrap();
+	{
+		let entire_range = 0 .. memory_preallocator.total_size;
+		let buffer_barriers = [
+			buffer_memory_barrier(&memory_bound_resources.stage_buffer, entire_range.clone(), VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT),
+			buffer_memory_barrier(&memory_bound_resources.buffer, entire_range.clone(), device_buffer_access_mask, VK_ACCESS_TRANSFER_WRITE_BIT)
+		];
+		let buffer_barriers_ret = [
+			buffer_memory_barrier(&memory_bound_resources.stage_buffer, entire_range.clone(), VK_ACCESS_TRANSFER_READ_BIT, VK_ACCESS_HOST_WRITE_BIT),
+			buffer_memory_barrier(&memory_bound_resources.buffer, entire_range, VK_ACCESS_TRANSFER_WRITE_BIT, device_buffer_access_mask)
+		];
+		let copy_regions = [VkBufferCopy(0, 0, memory_preallocator.total_size)];
+		transfer_commands.begin(0).unwrap()
+			.resource_barrier(VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, &[], &buffer_barriers, &[])
+			.copy_buffer(&memory_bound_resources.stage_buffer, &memory_bound_resources.buffer, &copy_regions)
+			.resource_barrier(VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, &[], &buffer_barriers_ret, &[]);
 	}
 	// Initial execution of setup layouts and transfer stagings
 	{
@@ -394,13 +448,13 @@ fn main()
 			.resource_barrier(VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, &[], &buffer_barriers, image_barriers.as_slice())
 			.copy_buffer(&memory_bound_resources.stage_buffer, &memory_bound_resources.buffer, &copy_regions)
 			.resource_barrier(VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, &[], &buffer_barriers_to_use, &[]);
-		transfer_queue.submit_commands(&[tcb[0]], &[], None).unwrap();
+		transfer_queue.submit_commands(&[tcb[0]], &[], &[], None).unwrap();
 		transfer_queue.wait_for_idle().unwrap();
 	}
 
 	// initial execution(coordinated execution order by semaphore)
-	let mut index_render_to = swapchain.acquire_next_image(&semaphore).unwrap();
-	graphics_queue.submit_commands(&[final_commands[index_render_to as usize]], &[semaphore.get()], Some(&fence)).unwrap();
+	let mut index_render_to = swapchain.acquire_next_image(&render_target_sem).unwrap();
+	graphics_queue.submit_commands(&[final_commands[index_render_to as usize]], &[render_target_sem.get()], &[], Some(&fence)).unwrap();
 
 	// Application Loop
 	while xcon.process_messages()
@@ -410,8 +464,19 @@ fn main()
 		{
 			fence.reset().unwrap();
 			swapchain.present(&graphics_queue, index_render_to, &[]).unwrap();
-			index_render_to = swapchain.acquire_next_image(&semaphore).unwrap();
-			graphics_queue.submit_commands(&[final_commands[index_render_to as usize]], &[semaphore.get()], Some(&fence)).unwrap();
+			index_render_to = swapchain.acquire_next_image(&render_target_sem).unwrap();
+			transfer_queue.submit_commands(&[transfer_commands[0]], &[], &[transfer_sem.get()], None).unwrap();
+			graphics_queue.submit_commands(&[final_commands[index_render_to as usize]],
+				&[render_target_sem.get(), transfer_sem.get()], &[], Some(&fence)).unwrap();
+			{
+				// ready for next frame
+				let mapped_range = memory_bound_resources.staging_memory.map(0 .. memory_preallocator.total_size).unwrap();
+				if appear_percent_range.sample(&mut randomizer) == 0
+				{
+					enemy_list.push_back(Enemy::new(&mut enemy_datastore, &mapped_range, left_range.sample(&mut randomizer)));
+				}
+				for e in enemy_list.iter_mut() { e.update(&enemy_datastore, &mapped_range); }
+			}
 		}
 	}
 	device.wait_for_idle().unwrap();

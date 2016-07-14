@@ -2,15 +2,15 @@
 #extension GL_ARB_separate_shader_objects : enable
 #extension GL_ARB_shading_language_420pack : enable
 
-const uint MAX_ENEMY_COUNTS = 128;
+const uint MAX_ENEMY_COUNT = 128;
 layout(std140, set = 1, binding = 0) uniform CharacterLocation
 {
-	vec4 rotq[MAX_ENEMY_COUNTS * 2];
-	vec4 center_tf[MAX_ENEMY_COUNTS];
+	vec4 rotq[(MAX_ENEMY_COUNT + 1) * 2];
+	vec4 center_tf[MAX_ENEMY_COUNT + 1];
 };
 
 layout(location = 0) in vec4 pos;
-layout(location = 1) in uint character_index;
+layout(location = 1) in uint character_index_mult;
 layout(constant_id = 10) const float r = 0.0f;
 layout(constant_id = 11) const float g = 0.0f;
 layout(constant_id = 12) const float b = 0.0f;
@@ -41,8 +41,9 @@ vec4 qRot(vec3 in_vec, vec4 rq)
 
 void main()
 {
-	vec4 rq = rotq[character_index + MAX_ENEMY_COUNTS * pushed_constants.transform_pass];
-	vec4 ctf = center_tf[character_index];
+	uint index = (gl_InstanceIndex + 1) * character_index_mult;
+	vec4 rq = rotq[index + (MAX_ENEMY_COUNT + 1) * pushed_constants.transform_pass];
+	vec4 ctf = center_tf[index];
 	gl_Position = (vec4(qRot(pos.xyz, rq).xyz, 1.0f) + ctf) * ortho_projection_matrix;
 	color_out = vec4(r, g, b, a);
 }

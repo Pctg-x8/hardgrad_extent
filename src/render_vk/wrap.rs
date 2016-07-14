@@ -337,7 +337,7 @@ pub struct Queue<'d> { device_ref: &'d Device<'d>, obj: VkQueue, pub family_inde
 impl <'d> HasParent for Queue<'d> { type ParentRefType = &'d Device<'d>; fn parent(&self) -> &'d Device<'d> { self.device_ref } }
 impl <'d> Queue<'d>
 {
-	pub fn submit_commands(&self, buffers: &[VkCommandBuffer], device_synchronizer: &[VkSemaphore], event_receiver: Option<&Fence>) -> Result<(), VkResult>
+	pub fn submit_commands(&self, buffers: &[VkCommandBuffer], device_synchronizer: &[VkSemaphore], device_signalizer: &[VkSemaphore], event_receiver: Option<&Fence>) -> Result<(), VkResult>
 	{
 		let pipeline_stage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
 		let submit_info = VkSubmitInfo
@@ -345,7 +345,7 @@ impl <'d> Queue<'d>
 			sType: VkStructureType::SubmitInfo, pNext: std::ptr::null(),
 			waitSemaphoreCount: device_synchronizer.len() as u32, pWaitSemaphores: device_synchronizer.as_ptr(), pWaitDstStageMask: &pipeline_stage,
 			commandBufferCount: buffers.len() as u32, pCommandBuffers: buffers.as_ptr(),
-			signalSemaphoreCount: 0, pSignalSemaphores: std::ptr::null()
+			signalSemaphoreCount: device_signalizer.len() as u32, pSignalSemaphores: device_signalizer.as_ptr()
 		};
 		unsafe { vkQueueSubmit(self.obj, 1, &submit_info, event_receiver.map(|x| x.get()).unwrap_or(std::ptr::null_mut())) }.to_result()
 	}
@@ -624,9 +624,9 @@ impl CommandBufferRef
 		unsafe { vkCmdBindIndexBuffer(self.obj, buffer.get(), offset, VkIndexType::U16) };
 		self
 	}
-	pub fn draw_indexed(self, vertex_count: u32, instance_count: u32) -> Self
+	pub fn draw_indexed(self, vertex_count: u32, instance_count: u32, instance_start_index: u32) -> Self
 	{
-		unsafe { vkCmdDrawIndexed(self.obj, vertex_count, instance_count, 0, 0, 0) };
+		unsafe { vkCmdDrawIndexed(self.obj, vertex_count, instance_count, 0, 0, instance_start_index) };
 		self
 	}
 	pub fn push_constants<T: std::marker::Sized>(self, layout: &PipelineLayout, stage: VkShaderStageFlags, offset: u32, values: &[T]) -> Self

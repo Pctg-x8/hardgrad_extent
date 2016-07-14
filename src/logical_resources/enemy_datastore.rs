@@ -7,47 +7,88 @@ use device_resources;
 use constants::*;
 use nalgebra::*;
 
+fn size_vec4() -> VkDeviceSize { std::mem::size_of::<[f32; 4]>() as VkDeviceSize }
+const ENEMY_DATA_COUNT: VkDeviceSize = MAX_ENEMY_COUNT as VkDeviceSize + 1;
+
+type BlockIndexRange = std::ops::Range<u32>;
 pub struct EnemyDatastore
 {
 	#[allow(dead_code)] descriptor_set_index: usize,
 	pub uniform_offset: VkDeviceSize, uniform_center_tf_offset: VkDeviceSize,
 	pub character_indices_offset: VkDeviceSize,
-	descriptor_buffer_info: VkDescriptorBufferInfo
+	descriptor_buffer_info: VkDescriptorBufferInfo,
+	freelist: std::collections::LinkedList<BlockIndexRange>
 }
 impl EnemyDatastore
 {
 	pub fn new<'d>(buffer: &vk::Buffer<'d>, offset: VkDeviceSize, descriptor_set_index: usize) -> Self
 	{
+		let mut fl = std::collections::LinkedList::<BlockIndexRange>::new();
+		fl.push_back(1 .. MAX_ENEMY_COUNT as u32);
+
 		EnemyDatastore
 		{
 			descriptor_set_index: descriptor_set_index,
-			uniform_offset: offset, uniform_center_tf_offset: offset + (std::mem::size_of::<[f32; 4]>() * 2 * MAX_ENEMY_COUNT) as VkDeviceSize,
-			character_indices_offset: offset + (std::mem::size_of::<[f32; 4]>() * 3 * MAX_ENEMY_COUNT) as VkDeviceSize,
-			descriptor_buffer_info: VkDescriptorBufferInfo(buffer.get(), offset, Self::device_size())
+			uniform_offset: offset, uniform_center_tf_offset: offset + size_vec4() * 2 * ENEMY_DATA_COUNT,
+			character_indices_offset: offset + size_vec4() * 3 * ENEMY_DATA_COUNT,
+			descriptor_buffer_info: VkDescriptorBufferInfo(buffer.get(), offset, Self::device_size()),
+			freelist: fl
 		}
 	}
-	pub fn update_instance_data(&self, mapped_range: &vk::MemoryMappedRange, index: usize, qrot1: &Quaternion<f32>, qrot2: &Quaternion<f32>, center: &Vector4<f32>)
+	pub fn update_instance_data(&self, mapped_range: &vk::MemoryMappedRange, index: u32, qrot1: &Quaternion<f32>, qrot2: &Quaternion<f32>, center: &Vector4<f32>)
 	{
 		assert!(index != 0, "Index 0 is reserved for unused");
 
-		let q1_range = mapped_range.range_mut::<f32>(self.uniform_offset + (std::mem::size_of::<[f32; 4]>() * index) as VkDeviceSize, 4);
-		let q2_range = mapped_range.range_mut::<f32>(self.uniform_offset + (std::mem::size_of::<[f32; 4]>() * (MAX_ENEMY_COUNT + index)) as VkDeviceSize, 4);
-		let cv_range = mapped_range.range_mut::<f32>(self.uniform_center_tf_offset + (std::mem::size_of::<[f32; 4]>() * index) as VkDeviceSize, 4);
+		let q1_range = mapped_range.range_mut::<[f32; 4]>(self.uniform_offset + size_vec4() * index as VkDeviceSize, 1);
+		let q2_range = mapped_range.range_mut::<[f32; 4]>(self.uniform_offset + size_vec4() * (ENEMY_DATA_COUNT + index as VkDeviceSize), 1);
+		let cv_range = mapped_range.range_mut::<[f32; 4]>(self.uniform_center_tf_offset + size_vec4() * index as VkDeviceSize, 1);
 
-		q1_range[0] = qrot1.i; q1_range[1] = qrot1.j; q1_range[2] = qrot1.k; q1_range[3] = qrot1.w;
-		q2_range[0] = qrot2.i; q2_range[1] = qrot2.j; q2_range[2] = qrot2.k; q2_range[3] = qrot2.w;
-		cv_range[0] = center.x; cv_range[1] = center.y; cv_range[2] = center.z; cv_range[3] = center.w;
+		q1_range[0] = [qrot1.i, qrot1.j, qrot1.k, qrot1.w];
+		q2_range[0] = [qrot2.i, qrot2.j, qrot2.k, qrot2.w];
+		cv_range[0] = [center.x, center.y, center.z, center.w];
+	}
+	pub fn allocate_block(&mut self, mapped_range: &vk::MemoryMappedRange) -> Option<u32>
+	{
+		if self.freelist.is_empty() { panic!("Unable to allocate block"); }
+		let front_elem = self.freelist.pop_front();
+		match front_elem
+		{
+			Some(v) =>
+			{
+				let head = v.start;
+				if v.start + 1 < v.end { self.freelist.push_front(v.start + 1 .. v.end) };
+				self.enable_instance(mapped_range, head);
+				Some(head)
+			}, None => None
+		}
+	}
+	fn enable_instance(&self, mapped_range: &vk::MemoryMappedRange, index: u32)
+	{
+		mapped_range.range_mut::<u32>(self.character_indices_offset, MAX_ENEMY_COUNT)[(index - 1) as usize] = 1;
+	}
+	fn disable_instance(&self, mapped_range: &vk::MemoryMappedRange, index: u32)
+	{
+		mapped_range.range_mut::<u32>(self.character_indices_offset, MAX_ENEMY_COUNT)[(index - 1) as usize] = 0;
 	}
 }
 impl DeviceStore for EnemyDatastore
 {
 	fn device_size() -> VkDeviceSize
 	{
-		(std::mem::size_of::<[f32; 4]>() * MAX_ENEMY_COUNT * 3 + std::mem::size_of::<u32>() * MAX_ENEMY_COUNT) as VkDeviceSize
+		(std::mem::size_of::<[f32; 4]>() * (MAX_ENEMY_COUNT + 1) * 3 + std::mem::size_of::<u32>() * MAX_ENEMY_COUNT) as VkDeviceSize
 	}
-	fn initial_stage_data(&self, _: &vk::MemoryMappedRange)
+	fn initial_stage_data(&self, mapped_range: &vk::MemoryMappedRange)
 	{
-		// Nothing to do
+		// Setup Invalid Data
+		let first_q_ref = mapped_range.range_mut::<[f32; 4]>(self.uniform_offset, 1);
+		let second_q_ref = mapped_range.range_mut::<[f32; 4]>(self.uniform_offset + size_vec4() * ENEMY_DATA_COUNT, 1);
+		let center_tf_ref = mapped_range.range_mut::<[f32; 4]>(self.uniform_center_tf_offset, 1);
+		let instance_switches_ref = mapped_range.range_mut::<u32>(self.character_indices_offset, MAX_ENEMY_COUNT);
+
+		first_q_ref[0] = [0.0f32; 4];
+		second_q_ref[0] = [0.0f32; 4];
+		center_tf_ref[0] = [0.0f32; 4];
+		for i in 0 .. MAX_ENEMY_COUNT { instance_switches_ref[i] = 0u32; }
 	}
 }
 impl HasDescriptor for EnemyDatastore
