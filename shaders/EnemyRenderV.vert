@@ -18,7 +18,7 @@ layout(constant_id = 13) const float a = 0.0f;
 
 layout(std140, set = 0, binding = 0) uniform ProjectionMatrix
 {
-	mat4 ortho_projection_matrix, persp_projection_matrix;
+	mat4 ortho_projection_matrix, pixel_projection_matrix, persp_projection_matrix;
 };
 layout(push_constant) uniform PushedConstants
 {

@@ -3,6 +3,8 @@ extern crate xcb;
 extern crate nalgebra;
 extern crate rand;
 extern crate time;
+extern crate freetype;
+extern crate unicode_normalization;
 #[macro_use] mod vkffi;
 mod render_vk;
 
@@ -114,7 +116,7 @@ fn create_swapchain<'d>(queue: &vk::Queue<'d>, surface: &vk::Surface) -> (vk::Sw
 	{
 		sType: VkStructureType::SwapchainCreateInfoKHR, pNext: std::ptr::null(),
 		minImageCount: surface_caps.minImageCount + 1, imageFormat: format.format, imageColorSpace: format.colorSpace,
-		imageExtent: sc_extent, imageArrayLayers: 1, imageUsage: VkImageUsageFlagBits::ColorAttachment as u32,
+		imageExtent: sc_extent, imageArrayLayers: 1, imageUsage: VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT as u32,
 		imageSharingMode: VkSharingMode::Exclusive, compositeAlpha: VkCompositeAlphaFlagBitsKHR::Opaque,
 		preTransform: VkSurfaceTransformFlagBitsKHR::Identity,
 		presentMode: present_mode, clipped: 1,
@@ -334,6 +336,11 @@ fn main()
 	let simple_pass = create_simple_render_pass(&device, sc_format);
 	let final_framebuffers = create_framebuffers(&final_image_views, &simple_pass, sc_extent);
 
+	// Command Pools //
+	let pool = device.create_command_pool(&graphics_queue, true, false).unwrap();
+	let transfer_pool = device.create_command_pool(&transfer_queue, false, false).unwrap();
+	let initializer_pool = device.create_command_pool(&transfer_queue, false, true).unwrap();
+
 	// Device Resources //
 	let memory_preallocator = device_resources::MemoryPreallocator::new(&adapter);
 	let memory_bound_resources = device_resources::MemoryBoundResources::new(&device, &memory_preallocator);
@@ -342,15 +349,18 @@ fn main()
 	// Ready for Shading
 	let pp_commons = logical_resources::PipelineCommonStore::new(&device, &descriptor_sets);
 	let enemy_render = logical_resources::EnemyRenderer::new(&pp_commons, &simple_pass, sc_extent);
+	let debug_render = logical_resources::DebugRenderer::new(&pp_commons, &simple_pass, sc_extent);
 
 	// Logical Resources //
 	let meshstore = logical_resources::Meshstore::new(memory_preallocator.meshstore_range.start);
 	let projection_matrixes = logical_resources::ProjectionMatrixes::new(&memory_bound_resources.buffer, memory_preallocator.projection_matrixes_range.start, 0, sc_extent);
 	let mut enemy_datastore = logical_resources::EnemyDatastore::new(&memory_bound_resources.buffer, memory_preallocator.enemy_datastore_range.start, 1);
+	let debug_info_resources = logical_resources::DebugInfoResources::new(&device, &transfer_queue, &initializer_pool, 2);
 
 	// Setup Descriptors //
 	device.update_descriptor_sets(&[
-		projection_matrixes.write_descriptor_info(&descriptor_sets), enemy_datastore.write_descriptor_info(&descriptor_sets)
+		projection_matrixes.write_descriptor_info(&descriptor_sets), enemy_datastore.write_descriptor_info(&descriptor_sets),
+		debug_info_resources.write_descriptor_info(&descriptor_sets)
 	], &[]);
 
 	// Initial Staging //
@@ -362,13 +372,12 @@ fn main()
 		enemy_datastore.initial_stage_data(&mapped_range);
 	}
 
+	// randomizers //
 	let mut randomizer = rand::thread_rng();
 	let mut left_range = rand::distributions::Range::new(-25.0f32, 25.0f32);
 	let mut appear_percent_range = rand::distributions::Range::new(0, 40);
 
 	// Ready for command recording //
-	let pool = device.create_command_pool(&graphics_queue, true).unwrap();
-	let transfer_pool = device.create_command_pool(&transfer_queue, false).unwrap();
 	let final_commands = pool.allocate_primary_buffers(final_framebuffers.len()).unwrap();
 	let clear_values = [VkClearValue(VkClearColorValue(0.0f32, 0.0f32, 0.015625f32, 1.0f32))];
 	// let clear_values = [VkClearValue(VkClearColorValue(0.0f32, 0.0f32, 0.0f32, 1.0f32))];
@@ -399,6 +408,10 @@ fn main()
 			.draw_indexed(24, MAX_ENEMY_COUNT as u32, 0)
 			.push_constants(enemy_render.layout_ref, VK_SHADER_STAGE_VERTEX_BIT, 0, &[1u32])
 			.draw_indexed(24, MAX_ENEMY_COUNT as u32, 0)
+			.bind_pipeline(&debug_render.state)
+			.bind_descriptor_sets(debug_render.layout_ref, &[descriptor_sets.sets[0], descriptor_sets.sets[2]], &[])
+			.bind_vertex_buffers(&[memory_bound_resources.buffer.get()], &[meshstore.debug_texture_vertices_offset])
+			.draw(4, 1)
 			.end_render_pass();
 	}
 	let device_buffer_access_mask = VK_ACCESS_INDEX_READ_BIT | VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT | VK_ACCESS_UNIFORM_READ_BIT;
@@ -421,7 +434,9 @@ fn main()
 	}
 	// Initial execution of setup layouts and transfer stagings
 	{
-		let tcb = transfer_pool.allocate_primary_buffers(1).unwrap();
+		let tcb = initializer_pool.allocate_primary_buffers(1).unwrap();
+		let entire_range = 0 .. memory_preallocator.total_size;
+
 		let image_barriers = final_images.iter().map(|o| VkImageMemoryBarrier
 		{
 			sType: VkStructureType::ImageMemoryBarrier, pNext: std::ptr::null(),
@@ -434,7 +449,6 @@ fn main()
 				levelCount: 1, layerCount: 1
 			}
 		}).collect::<Vec<_>>();
-		let entire_range = 0 .. memory_preallocator.total_size;
 		let buffer_barriers = [
 			buffer_memory_barrier(&memory_bound_resources.stage_buffer, entire_range.clone(), 0, VK_ACCESS_TRANSFER_READ_BIT),
 			buffer_memory_barrier(&memory_bound_resources.buffer, entire_range.clone(), 0, VK_ACCESS_TRANSFER_WRITE_BIT)
@@ -443,6 +457,7 @@ fn main()
 			buffer_memory_barrier(&memory_bound_resources.buffer, entire_range.clone(), VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT),
 			buffer_memory_barrier(&memory_bound_resources.stage_buffer, entire_range.clone(), VK_ACCESS_TRANSFER_READ_BIT, VK_ACCESS_HOST_WRITE_BIT)
 		];
+
 		let copy_regions = [VkBufferCopy(0, 0, memory_preallocator.total_size)];
 		tcb.begin(0).unwrap()
 			.resource_barrier(VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, &[], &buffer_barriers, image_barriers.as_slice())

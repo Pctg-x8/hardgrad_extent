@@ -6,3 +6,5 @@ pub mod projection_matrixes;
 pub use self::projection_matrixes::ProjectionMatrixes;
 pub mod pipelines;
 pub use self::pipelines::*;
+pub mod debug_info;
+pub use self::debug_info::*;

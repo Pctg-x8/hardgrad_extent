@@ -17,8 +17,9 @@ use xcb;
 #[repr(C)] #[derive(Clone, Copy)] pub struct VkOffset2D(pub i32, pub i32);
 #[repr(C)] #[derive(Clone, Copy)] pub struct VkExtent2D(pub u32, pub u32);
 #[repr(C)] #[derive(Clone, Copy)] pub struct VkRect2D(pub VkOffset2D, pub VkExtent2D);
-#[repr(C)] #[derive(Clone)] pub struct VkExtent3D(pub u32, pub u32, pub u32);
-#[repr(C)] pub struct VkViewport(pub f32, pub f32, pub f32, pub f32, pub f32, pub f32);
+#[repr(C)] #[derive(Clone, Copy)] pub struct VkOffset3D(pub i32, pub i32, pub i32);
+#[repr(C)] #[derive(Clone, Copy)] pub struct VkExtent3D(pub u32, pub u32, pub u32);
+#[repr(C)] #[derive(Clone, Copy)] pub struct VkViewport(pub f32, pub f32, pub f32, pub f32, pub f32, pub f32);
 
 #[repr(C)]
 pub struct VkInstanceCreateInfo
@@ -275,7 +276,7 @@ pub struct VkDeviceCreateInfo
 {
 	pub r: VkComponentSwizzle, pub g: VkComponentSwizzle, pub b: VkComponentSwizzle, pub a: VkComponentSwizzle
 }
-#[repr(C)] #[derive(Clone)] pub struct VkImageSubresourceRange
+#[repr(C)] #[derive(Clone, Copy)] pub struct VkImageSubresourceRange
 {
 	pub aspectMask: VkImageAspectFlags,
 	pub baseMipLevel: u32, pub levelCount: u32,
@@ -560,6 +561,17 @@ pub struct VkDeviceCreateInfo
 	pub usage: VkBufferUsageFlags, pub sharingMode: VkSharingMode,
 	pub queueFamilyIndexCount: u32, pub pQueueFamilyIndices: *const u32
 }
+#[repr(C)] pub struct VkImageCreateInfo
+{
+	pub sType: VkStructureType, pub pNext: *const c_void,
+	pub flags: VkImageCreateFlags, pub imageType: VkImageType,
+	pub format: VkFormat, pub extent: VkExtent3D,
+	pub mipLevels: u32, pub arrayLayers: u32,
+	pub samples: VkSampleCountFlagBits, pub tiling: VkImageTiling,
+	pub usage: VkImageUsageFlags, pub sharingMode: VkSharingMode,
+	pub queueFamilyIndexCount: u32, pub pQueueFamilyIndices: *const u32,
+	pub initialLayout: VkImageLayout
+}
 
 #[repr(C)] pub struct VkDescriptorSetLayoutBinding
 {
@@ -599,8 +611,21 @@ pub struct VkDeviceCreateInfo
 	pub dstSet: VkDescriptorSet, pub dstBinding: u32, pub dstArrayElement: u32,
 	pub descriptorCount: u32
 }
+#[repr(C)] pub struct VkImageSubresourceLayers(pub VkImageAspectFlags, pub u32, pub u32, pub u32);		// aspect_mask, mip_level, base_array_layer, layer_count
 #[repr(C)] pub struct VkBufferCopy(pub VkDeviceSize, pub VkDeviceSize, pub VkDeviceSize);		// src_offset, dst_offset, size
+#[repr(C)] pub struct VkImageCopy(pub VkImageSubresourceLayers, pub VkOffset3D, pub VkImageSubresourceLayers, pub VkOffset3D, pub VkExtent3D);		// src_subresource, src_offset, dst_subresource, dst_offset, extent
+#[repr(C)] pub struct VkSamplerCreateInfo
+{
+	pub sType: VkStructureType, pub pNext: *const c_void, pub flags: VkSamplerCreateFlags,
+	pub magFilter: VkFilter, pub minFilter: VkFilter, pub mipmapMode: VkSamplerMipmapMode,
+	pub addressModeU: VkSamplerAddressMode, pub addressModeV: VkSamplerAddressMode, pub addressModeW: VkSamplerAddressMode,
+	pub mipLodBias: f32, pub anisotropyEnable: VkBool32, pub maxAnisotropy: f32,
+	pub compareEnable: VkBool32, pub compareOp: VkCompareOp,
+	pub minLod: f32, pub maxLod: f32, pub borderColor: VkBorderColor,
+	pub unnormalizedCoordinates: VkBool32
+}
 
+// Surface/Swapchain Extensions //
 #[repr(C)]
 pub struct VkXcbSurfaceCreateInfoKHR
 {

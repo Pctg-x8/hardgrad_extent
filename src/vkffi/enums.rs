@@ -372,6 +372,30 @@ pub const VK_SAMPLE_COUNT_16_BIT: VkFlags	= 0x00000010;
 pub const VK_SAMPLE_COUNT_32_BIT: VkFlags	= 0x00000020;
 pub const VK_SAMPLE_COUNT_64_BIT: VkFlags	= 0x00000040;
 
+pub const VK_IMAGE_CREATE_SPARSE_BINDING_BIT: VkFlags	= 0x01;
+pub const VK_IMAGE_CREATE_SPARSE_RESIDENCY_BIT: VkFlags	= 0x02;
+pub const VK_IMAGE_CREATE_SPARSE_ALIASED_BIT: VkFlags	= 0x04;
+pub const VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT: VkFlags	= 0x08;
+pub const VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT: VkFlags	= 0x10;
+
+pub const VK_IMAGE_USAGE_TRANSFER_SRC_BIT: VkFlags				= 0x01;
+pub const VK_IMAGE_USAGE_TRANSFER_DST_BIT: VkFlags				= 0x02;
+pub const VK_IMAGE_USAGE_SAMPLED_BIT: VkFlags					= 0x04;
+pub const VK_IMAGE_USAGE_STORAGE_BIT: VkFlags					= 0x08;
+pub const VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT: VkFlags			= 0x10;
+pub const VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT: VkFlags	= 0x20;
+pub const VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT: VkFlags		= 0x40;
+pub const VK_IMAGE_USAGE_INPUT_ATTACHMENT_BIT: VkFlags			= 0x80;
+
+#[repr(C)] pub enum VkImageTiling
+{
+	Optimal = 0, Linear = 1
+}
+#[repr(C)] pub enum VkImageType
+{
+	Dim1 = 0, Dim2 = 1, Dim3 = 2
+}
+
 #[repr(C)] pub enum VkAttachmentLoadOp
 {
 	Load = 0, Clear = 1, DontCare = 2
@@ -549,6 +573,27 @@ pub const VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT: VkFlags	= 0x01;
 	StorageBufferDynamic = 9,
 	InputAttachment = 10
 }
+#[repr(C)] pub enum VkFilter
+{
+	Nearest = 0, Linear = 1,
+	CubicImg = 1000015000
+}
+#[repr(C)] pub enum VkSamplerMipmapMode
+{
+	Nearest = 0, Linear = 1
+}
+#[repr(C)] pub enum VkSamplerAddressMode
+{
+	Repeat = 0, MirroredRepeat = 1,
+	ClampToEdge = 2, ClampToBorder = 3,
+	MirrorClampToEdge = 4
+}
+#[repr(C)] pub enum VkBorderColor
+{
+	FloatTransparentBlack = 0, IntTransparentBlack = 1,
+	FloatOpaqueBlack = 2, IntOpaqueBlack = 3,
+	FloatOpaqueWhite = 4, IntOpaqueWhite = 5
+}
 
 #[repr(C)] #[derive(Clone)]
 pub enum VkColorSpaceKHR
@@ -583,17 +628,6 @@ pub enum VkCompositeAlphaFlagBitsKHR
 	Premultiplied = 0x00000002,
 	Postmultiplied = 0x00000004,
 	Inherit = 0x00000008
-}
-#[repr(C)] pub enum VkImageUsageFlagBits
-{
-	TransferSrc = 0x00000001,
-	TransferDst = 0x00000002,
-	Sampled = 0x00000004,
-	Storage = 0x00000008,
-	ColorAttachment = 0x00000010,
-	DepthStencilAttachment = 0x00000020,
-	TransientAttachment = 0x00000040,
-	InputAttachment = 0x00000080
 }
 
 #[derive(Debug)]

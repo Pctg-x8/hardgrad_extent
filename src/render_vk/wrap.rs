@@ -214,13 +214,15 @@ impl <'a> Device<'a>
 		let mut obj: VkFramebuffer = std::ptr::null_mut();
 		unsafe { vkCreateFramebuffer(self.obj, info, std::ptr::null(), &mut obj) }.to_result().map(|()| Framebuffer { device_ref: self, obj: obj })
 	}
-	pub fn create_command_pool(&self, queue: &Queue, allow_resetting_per_buffer: bool) -> Result<CommandPool, VkResult>
+	/// Creates command pool
+	pub fn create_command_pool(&self, queue: &Queue, allow_resetting_per_buffer: bool, transient: bool) -> Result<CommandPool, VkResult>
 	{
+		let flags = if allow_resetting_per_buffer { VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT } else { 0 }
+			| if transient { VK_COMMAND_POOL_CREATE_TRANSIENT_BIT } else { 0 };
 		let info = VkCommandPoolCreateInfo
 		{
 			sType: VkStructureType::CommandPoolCreateInfo, pNext: std::ptr::null(),
-			flags: if allow_resetting_per_buffer { VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT } else { 0 },
-			queueFamilyIndex: queue.family_index
+			flags: flags, queueFamilyIndex: queue.family_index
 		};
 		let mut obj: VkCommandPool = std::ptr::null_mut();
 		unsafe { vkCreateCommandPool(self.obj, &info, std::ptr::null(), &mut obj) }.to_result().map(|()| CommandPool { device_ref: self, obj: obj })
@@ -299,10 +301,55 @@ impl <'a> Device<'a>
 		let mut obj: VkBuffer = std::ptr::null_mut();
 		unsafe { vkCreateBuffer(self.obj, &buffer_info, std::ptr::null(), &mut obj) }.to_result().map(|()| Buffer { device_ref: self, obj: obj })
 	}
+	/// Creates an image with info
+	fn create_descripted_image(&self, info: &VkImageCreateInfo) -> Result<Image, VkResult>
+	{
+		let mut obj: VkImage = unsafe { std::mem::uninitialized() };
+		unsafe { vkCreateImage(self.obj, info, std::ptr::null(), &mut obj) }.to_result().map(|()| Image { device_ref: self, obj: obj })
+	}
+	/// Creates Exclusive image
+	pub fn create_image(&self, extent: VkExtent2D, tiling: VkImageTiling, usage_bits: VkImageUsageFlags) -> Result<Image, VkResult>
+	{
+		let VkExtent2D(w, h) = extent;
+		self.create_descripted_image(&VkImageCreateInfo
+		{
+			sType: VkStructureType::ImageCreateInfo, pNext: std::ptr::null(), flags: 0,
+			imageType: VkImageType::Dim2, format: VkFormat::R8G8B8A8_UNORM,
+			extent: VkExtent3D(w, h, 1), mipLevels: 1, arrayLayers: 1,
+			samples: VK_SAMPLE_COUNT_1_BIT, tiling: tiling,
+			usage: usage_bits, sharingMode: VkSharingMode::Exclusive,
+			queueFamilyIndexCount: 0, pQueueFamilyIndices: std::ptr::null(), initialLayout: VkImageLayout::Preinitialized
+		})
+	}
+	pub fn create_single_image(&self, extent: VkExtent2D, tiling: VkImageTiling, usage_bits: VkImageUsageFlags) -> Result<Image, VkResult>
+	{
+		let VkExtent2D(w, h) = extent;
+		self.create_descripted_image(&VkImageCreateInfo
+		{
+			sType: VkStructureType::ImageCreateInfo, pNext: std::ptr::null(), flags: 0,
+			imageType: VkImageType::Dim2, format: VkFormat::R8_UNORM,
+			extent: VkExtent3D(w, h, 1), mipLevels: 1, arrayLayers: 1,
+			samples: VK_SAMPLE_COUNT_1_BIT, tiling: tiling,
+			usage: usage_bits, sharingMode: VkSharingMode::Exclusive,
+			queueFamilyIndexCount: 0, pQueueFamilyIndices: std::ptr::null(), initialLayout: VkImageLayout::Preinitialized
+		})
+	}
 	pub fn allocate_memory(&self, info: &VkMemoryAllocateInfo) -> Result<DeviceMemory, VkResult>
 	{
 		let mut obj: VkDeviceMemory = std::ptr::null_mut();
 		unsafe { vkAllocateMemory(self.obj, info, std::ptr::null(), &mut obj) }.to_result().map(|()| DeviceMemory { device_ref: self, obj: obj })
+	}
+	pub fn allocate_memory_for_image(&self, image: &Image, memory_property_mask: VkMemoryPropertyFlags) -> Result<DeviceMemory, VkResult>
+	{
+		let mut obj: VkDeviceMemory = std::ptr::null_mut();
+		let info = VkMemoryAllocateInfo
+		{
+			sType: VkStructureType::MemoryAllocateInfo, pNext: std::ptr::null(),
+			allocationSize: image.get_memory_requirements().size,
+			memoryTypeIndex: self.adapter_ref.get_memory_type_index(memory_property_mask).unwrap() as u32
+		};
+		println!("-- Image Memory Consuming: {} bytes", info.allocationSize);
+		unsafe { vkAllocateMemory(self.obj, &info, std::ptr::null(), &mut obj) }.to_result().map(|()| DeviceMemory { device_ref: self, obj: obj })
 	}
 	pub fn create_descriptor_set_layout(&self, bindings: &[VkDescriptorSetLayoutBinding]) -> Result<DescriptorSetLayout, VkResult>
 	{
@@ -324,6 +371,11 @@ impl <'a> Device<'a>
 			poolSizeCount: pool_sizes.len() as u32, pPoolSizes: pool_sizes.as_ptr()
 		};
 		unsafe { vkCreateDescriptorPool(self.obj, &info, std::ptr::null(), &mut obj) }.to_result().map(|()| DescriptorPool { device_ref: self, obj: obj })
+	}
+	pub fn create_sampler(&self, info: &VkSamplerCreateInfo) -> Result<Sampler, VkResult>
+	{
+		let mut obj: VkSampler = std::ptr::null_mut();
+		unsafe { vkCreateSampler(self.obj, info, std::ptr::null(), &mut obj) }.to_result().map(|()| Sampler { device_ref: self, obj: obj })
 	}
 
 	pub fn update_descriptor_sets(&self, write_infos: &[VkWriteDescriptorSet], copy_infos: &[VkCopyDescriptorSet])
@@ -375,6 +427,7 @@ pub trait VkImageResource
 	fn get(&self) -> VkImage;
 	fn create_view(&self, info: &VkImageViewCreateInfo) -> Result<ImageView, VkResult>;
 }
+SafeObjectDerivedFromDevice!(Image for VkImage destructed by vkDestroyImage);
 SafeObjectDerivedFromDevice!(ImageRef for VkImage);
 impl <'d> VkImageResource for ImageRef<'d>
 {
@@ -461,6 +514,7 @@ SafeObjectDerivedFromDevice!(Semaphore for VkSemaphore destructed by vkDestroySe
 SafeObjectDerivedFromDevice!(Buffer for VkBuffer destructed by vkDestroyBuffer);
 SafeObjectDerivedFromDevice!(DeviceMemory for VkDeviceMemory destructed by vkFreeMemory);
 SafeObjectDerivedFromDevice!(DescriptorPool for VkDescriptorPool destructed by vkDestroyDescriptorPool);
+SafeObjectDerivedFromDevice!(Sampler for VkSampler destructed by vkDestroySampler);
 
 impl <'d> CommandPool<'d>
 {
@@ -500,6 +554,15 @@ impl <'d> MemoryAllocationRequired for Buffer<'d>
 		memreq
 	}
 }
+impl <'d> MemoryAllocationRequired for Image<'d>
+{
+	fn get_memory_requirements(&self) -> VkMemoryRequirements
+	{
+		let mut memreq: VkMemoryRequirements = unsafe { std::mem::uninitialized() };
+		unsafe { vkGetImageMemoryRequirements(self.device_ref.obj, self.obj, &mut memreq) };
+		memreq
+	}
+}
 pub struct MemoryMappedRange<'b>
 {
 	memory_ref: &'b DeviceMemory<'b>, ptr: *mut c_void
@@ -515,6 +578,10 @@ impl <'d> DeviceMemory<'d>
 	pub fn bind_buffer(&self, buffer: &Buffer, offset: VkDeviceSize) -> Result<(), VkResult>
 	{
 		unsafe { vkBindBufferMemory(self.device_ref.obj, buffer.obj, self.obj, offset) }.to_result()
+	}
+	pub fn bind_image(&self, image: &Image, offset: VkDeviceSize) -> Result<(), VkResult>
+	{
+		unsafe { vkBindImageMemory(self.device_ref.obj, image.obj, self.obj, offset) }.to_result()
 	}
 }
 impl <'b> MemoryMappedRange<'b>
@@ -624,6 +691,11 @@ impl CommandBufferRef
 		unsafe { vkCmdBindIndexBuffer(self.obj, buffer.get(), offset, VkIndexType::U16) };
 		self
 	}
+	pub fn draw(self, vertex_count: u32, instance_count: u32) -> Self
+	{
+		unsafe { vkCmdDraw(self.obj, vertex_count, instance_count, 0, 0) };
+		self
+	}
 	pub fn draw_indexed(self, vertex_count: u32, instance_count: u32, instance_start_index: u32) -> Self
 	{
 		unsafe { vkCmdDrawIndexed(self.obj, vertex_count, instance_count, 0, 0, instance_start_index) };
@@ -639,6 +711,11 @@ impl CommandBufferRef
 	pub fn copy_buffer(self, src: &Buffer, dst: &Buffer, regions: &[VkBufferCopy]) -> Self
 	{
 		unsafe { vkCmdCopyBuffer(self.obj, src.get(), dst.get(), regions.len() as u32, regions.as_ptr()) };
+		self
+	}
+	pub fn copy_image(self, src: &Image, src_layout: VkImageLayout, dst: &Image, dst_layout: VkImageLayout, regions: &[VkImageCopy]) -> Self
+	{
+		unsafe { vkCmdCopyImage(self.obj, src.get(), src_layout, dst.get(), dst_layout, regions.len() as u32, regions.as_ptr()) };
 		self
 	}
 }

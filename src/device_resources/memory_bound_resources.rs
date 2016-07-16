@@ -72,6 +72,9 @@ impl <'d> MemoryBoundResources<'d>
 		memory.bind_buffer(&buffer, 0).unwrap();
 		stage_memory.bind_buffer(&stage_buffer, 0).unwrap();
 
+		println!("-- Memory Consuming Report: Total {}({} + {}) bytes", alloc_info.allocationSize + stage_alloc_info.allocationSize,
+			alloc_info.allocationSize, stage_alloc_info.allocationSize);
+
 		MemoryBoundResources
 		{
 			memory: memory, staging_memory: stage_memory,

@@ -9,7 +9,7 @@ use device_resources;
 pub struct ProjectionMatrixes
 {
 	pub descriptor_set_index: usize,
-	pub ortho_offset: VkDeviceSize, pub persp_offset: VkDeviceSize,
+	pub ortho_offset: VkDeviceSize, pub pixel_offset: VkDeviceSize, pub persp_offset: VkDeviceSize,
 	pub screen_size: VkExtent2D,
 	descriptor_buffer_info: VkDescriptorBufferInfo
 }
@@ -20,7 +20,8 @@ impl ProjectionMatrixes
 		ProjectionMatrixes
 		{
 			descriptor_set_index: descriptor_set_index,
-			ortho_offset: offset, persp_offset: offset + std::mem::size_of::<[[f32; 4]; 4]>() as VkDeviceSize,
+			ortho_offset: offset, pixel_offset: offset + std::mem::size_of::<[[f32; 4]; 4]>() as VkDeviceSize,
+			persp_offset: offset + (std::mem::size_of::<[[f32; 4]; 4]>() * 2) as VkDeviceSize,
 			screen_size: screen_size,
 			descriptor_buffer_info: VkDescriptorBufferInfo(buffer.get(), offset, Self::device_size())
 		}
@@ -28,18 +29,27 @@ impl ProjectionMatrixes
 }
 impl DeviceStore for ProjectionMatrixes
 {
-	fn device_size() -> VkDeviceSize { (std::mem::size_of::<[[f32; 4]; 4]>() * 2) as VkDeviceSize }
+	fn device_size() -> VkDeviceSize { (std::mem::size_of::<[[f32; 4]; 4]>() * 3) as VkDeviceSize }
 	fn initial_stage_data(&self, mapped_range: &vk::MemoryMappedRange)
 	{
 		let VkExtent2D(width, height) = self.screen_size;
 		let (aspect, scaling) = (width as f32 / height as f32, 35.0f32);
 		let ortho_matrix = OrthographicMatrix3::new(-scaling, scaling, 0.0f32, scaling * aspect, -200.0f32, 100.0f32);
+		let pixel_matrix = OrthographicMatrix3::new(0.0f32, width as f32, 0.0f32, height as f32, -1.0f32, 1.0f32);
 		let persp_matrix = PerspectiveMatrix3::new(aspect, 70.0f32, -100.0f32, 100.0f32);
 
 		{
 			let r = mapped_range.range_mut::<f32>(self.ortho_offset, 16);
 			let matr = ortho_matrix.as_matrix();
 			for x in 0 .. 4 { for y in 0 .. 4 { r[x + y * 4] = matr.as_ref()[x][y]; } }
+		}
+		{
+			let r = mapped_range.range_mut::<f32>(self.pixel_offset, 16);
+			let matr = pixel_matrix.as_matrix();
+			for (x, y) in (0 .. 4).flat_map(|x| (0 .. 4).map(move |y| (x, y)))
+			{
+				r[x + y * 4] = matr.as_ref()[x][y];
+			}
 		}
 		{
 			let r = mapped_range.range_mut::<f32>(self.persp_offset, 16);
