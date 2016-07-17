@@ -334,10 +334,17 @@ impl <'a> Device<'a>
 			queueFamilyIndexCount: 0, pQueueFamilyIndices: std::ptr::null(), initialLayout: VkImageLayout::Preinitialized
 		})
 	}
-	pub fn allocate_memory(&self, info: &VkMemoryAllocateInfo) -> Result<DeviceMemory, VkResult>
+	pub fn allocate_memory_for_buffer(&self, buffer: &Buffer, memory_property_mask: VkMemoryPropertyFlags) -> Result<DeviceMemory, VkResult>
 	{
 		let mut obj: VkDeviceMemory = std::ptr::null_mut();
-		unsafe { vkAllocateMemory(self.obj, info, std::ptr::null(), &mut obj) }.to_result().map(|()| DeviceMemory { device_ref: self, obj: obj })
+		let info = VkMemoryAllocateInfo
+		{
+			sType: VkStructureType::MemoryAllocateInfo, pNext: std::ptr::null(),
+			allocationSize: buffer.get_memory_requirements().size,
+			memoryTypeIndex: self.adapter_ref.get_memory_type_index(memory_property_mask).unwrap() as u32
+		};
+		if (memory_property_mask & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) == 0 { println!("-- Buffer Memory Consuming: {} bytes", info.allocationSize); }
+		unsafe { vkAllocateMemory(self.obj, &info, std::ptr::null(), &mut obj) }.to_result().map(|()| DeviceMemory { device_ref: self, obj: obj })
 	}
 	pub fn allocate_memory_for_image(&self, image: &Image, memory_property_mask: VkMemoryPropertyFlags) -> Result<DeviceMemory, VkResult>
 	{
@@ -348,7 +355,7 @@ impl <'a> Device<'a>
 			allocationSize: image.get_memory_requirements().size,
 			memoryTypeIndex: self.adapter_ref.get_memory_type_index(memory_property_mask).unwrap() as u32
 		};
-		println!("-- Image Memory Consuming: {} bytes", info.allocationSize);
+		if (memory_property_mask & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) == 0 { println!("-- Image Memory Consuming: {} bytes", info.allocationSize); }
 		unsafe { vkAllocateMemory(self.obj, &info, std::ptr::null(), &mut obj) }.to_result().map(|()| DeviceMemory { device_ref: self, obj: obj })
 	}
 	pub fn create_descriptor_set_layout(&self, bindings: &[VkDescriptorSetLayoutBinding]) -> Result<DescriptorSetLayout, VkResult>

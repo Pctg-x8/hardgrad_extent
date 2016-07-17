@@ -231,7 +231,7 @@ impl <'d> DebugRenderer<'d>
 		let input_assembly_state = VkPipelineInputAssemblyStateCreateInfo
 		{
 			sType: VkStructureType::Pipeline_InputAssemblyStateCreateInfo, pNext: std::ptr::null(), flags: 0,
-			topology: VkPrimitiveTopology::TriangleStrip, primitiveRestartEnable: false as VkBool32
+			topology: VkPrimitiveTopology::TriangleList, primitiveRestartEnable: false as VkBool32
 		};
 		let viewport_state = VkPipelineViewportStateCreateInfo
 		{

@@ -366,7 +366,7 @@ fn main()
 	// Initial Staging //
 	let mut enemy_list = std::collections::LinkedList::<Enemy>::new();
 	{
-		let mapped_range = memory_bound_resources.staging_memory.map(0 .. memory_preallocator.total_size).unwrap();
+		let mapped_range = memory_bound_resources.stage_buffer.map(0 .. memory_preallocator.total_size).unwrap();
 		meshstore.initial_stage_data(&mapped_range);
 		projection_matrixes.initial_stage_data(&mapped_range);
 		enemy_datastore.initial_stage_data(&mapped_range);
@@ -410,8 +410,11 @@ fn main()
 			.draw_indexed(24, MAX_ENEMY_COUNT as u32, 0)
 			.bind_pipeline(&debug_render.state)
 			.bind_descriptor_sets(debug_render.layout_ref, &[descriptor_sets.sets[0], descriptor_sets.sets[2]], &[])
-			.bind_vertex_buffers(&[memory_bound_resources.buffer.get()], &[meshstore.debug_texture_vertices_offset])
-			.draw(4, 1)
+			// .bind_vertex_buffers(&[memory_bound_resources.buffer.get()], &[meshstore.debug_texture_vertices_offset])
+			// .draw(4, 1)
+			.bind_vertex_buffers(&[debug_info_resources.buffer.get()], &[0])
+			.bind_index_buffer(&debug_info_resources.buffer, debug_info_resources.index_offset)
+			.draw_indexed(12, 1, 0)
 			.end_render_pass();
 	}
 	let device_buffer_access_mask = VK_ACCESS_INDEX_READ_BIT | VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT | VK_ACCESS_UNIFORM_READ_BIT;
@@ -485,7 +488,7 @@ fn main()
 				&[render_target_sem.get(), transfer_sem.get()], &[], Some(&fence)).unwrap();
 			{
 				// ready for next frame
-				let mapped_range = memory_bound_resources.staging_memory.map(0 .. memory_preallocator.total_size).unwrap();
+				let mapped_range = memory_bound_resources.stage_buffer.map(0 .. memory_preallocator.total_size).unwrap();
 				if appear_percent_range.sample(&mut randomizer) == 0
 				{
 					enemy_list.push_back(Enemy::new(&mut enemy_datastore, &mapped_range, left_range.sample(&mut randomizer)));
