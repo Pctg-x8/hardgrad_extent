@@ -131,7 +131,7 @@ impl <'d> EnemyRenderer<'d>
 		};
 		let rasterization_state = VkPipelineRasterizationStateCreateInfo
 		{
-			depthClampEnable: true as VkBool32, .. Default::default()
+			depthClampEnable: false as VkBool32, .. Default::default()
 		};
 		let multisample_state: VkPipelineMultisampleStateCreateInfo = Default::default();
 		let attachment_blend_states =
@@ -276,7 +276,7 @@ impl <'d> DebugRenderer<'d>
 			layout: commons.layout_ub1_s1.get(), renderPass: render_pass.get(), subpass: 0,
 			basePipelineHandle: std::ptr::null_mut(), basePipelineIndex: 0
 		};
-		
+
 		DebugRenderer
 		{
 			layout_ref: &commons.layout_ub1_s1,

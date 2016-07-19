@@ -23,6 +23,7 @@ use rand::distributions::*;
 use vkffi::*;
 use render_vk::wrap as vk;
 use render_vk::traits::*;
+use std::thread; use std::sync::mpsc;
 
 impl std::default::Default for VkApplicationInfo
 {
@@ -77,8 +78,8 @@ fn create_instance() -> vk::Instance
 fn diagnose_adapter(server_con: &XServerConnection, adapter: &vk::PhysicalDevice, queue_index: u32)
 {
 	// Feature Check //
-	let features = adapter.get_features();
-	if features.depthClamp == false as VkBool32 { panic!("DepthClamp Feature is required in device"); }
+	// let features = adapter.get_features();
+	// if features.depthClamp == false as VkBool32 { panic!("DepthClamp Feature is required in device"); }
 
 	// Vulkan and XCB Integration Check //
 	if !server_con.is_vk_presentation_support(adapter, queue_index) { panic!("Unsupported Display Format"); }
@@ -228,7 +229,7 @@ impl Enemy
 			block_index: index, left: init_left, appear_time: time::PreciseTime::now()
 		}
 	}
-	pub fn update(&mut self, datastore: &logical_resources::EnemyDatastore, mapped_range: &vk::MemoryMappedRange)
+	pub fn update(&mut self, datastore: &logical_resources::EnemyDatastore, mapped_range: &vk::MemoryMappedRange) -> bool
 	{
 		let delta_time = self.appear_time.to(time::PreciseTime::now());
 		let living_seconds = delta_time.num_milliseconds() as f32 / 1000.0f32;
@@ -244,6 +245,12 @@ impl Enemy
 			UnitQuaternion::new(Vector3::new(-1.0f32, 0.0f32, 0.75f32).normalize() * (260.0f32 * living_seconds).to_radians()).quaternion(),
 			UnitQuaternion::new(Vector3::new(1.0f32, -1.0f32, 0.5f32).normalize() * (-260.0f32 * living_seconds + 13.0f32).to_radians()).quaternion(),
 			&Vector4::new(self.left, current_y, 0.0f32, 0.0f32));
+
+		current_y >= 50.0f32
+	}
+	pub fn die(&self, datastore: &mut logical_resources::EnemyDatastore, mapped_range: &vk::MemoryMappedRange)
+	{
+		datastore.free_block(self.block_index, mapped_range);
 	}
 }
 
@@ -262,8 +269,15 @@ fn main()
 	let gqf_index = queue_indices_iter.by_ref().filter(|&(_, ref x)| (x.queueFlags & VK_QUEUE_GRAPHICS_BIT) != 0)
 		.map(|(i, _)| i as u32).next().expect("unable to find queue for graphics on device");
 	let tqf_index = queue_indices_iter.by_ref().filter(|&(_, ref x)| (x.queueFlags & VK_QUEUE_TRANSFER_BIT) != 0)
-		.map(|(i, _)| i as u32).next().expect("unable to find queue for transfer on device");
+		.map(|(i, _)| i as u32).next().unwrap_or(gqf_index);
 	diagnose_adapter(&xcon, &adapter, gqf_index);
+	let queue_properties = adapter.enumerate_queue_family_properties();
+	println!("=== Device Queue Family Properties ===");
+	for (i, qp) in queue_properties.iter().enumerate()
+	{
+		println!("-- Queue #{}", i);
+		println!("---- QueueCount: {}", qp.queueCount);
+	}
 
 	let dev_layers = [DEBUG_LAYER_NAME.as_ptr()];
 	let dev_extensions = [SWAPCHAIN_EXTENSION_NAME.as_ptr()];
@@ -272,10 +286,11 @@ fn main()
 		// Use same queue
 		println!("-- Using same queue family: {}", gqf_index);
 		let q_priorities = [0.0f32, 0.0f32];
+		let queue_count = std::cmp::min(2, queue_properties[gqf_index as usize].queueCount);
 		let queue_infos = [VkDeviceQueueCreateInfo
 		{
 			sType: VkStructureType::DeviceQueueCreateInfo, pNext: std::ptr::null(), flags: 0,
-			queueCount: 2, queueFamilyIndex: gqf_index, pQueuePriorities: q_priorities.as_ptr()
+			queueCount: queue_count, queueFamilyIndex: gqf_index, pQueuePriorities: q_priorities.as_ptr()
 		}];
 		let device_info = VkDeviceCreateInfo
 		{
@@ -285,7 +300,7 @@ fn main()
 			enabledExtensionCount: dev_extensions.len() as u32, ppEnabledExtensionNames: dev_extensions.as_ptr() as *const *const i8,
 			pEnabledFeatures: std::ptr::null()
 		};
-		(adapter.create_device(&device_info).unwrap(), 1)
+		(adapter.create_device(&device_info).unwrap(), queue_count - 1)
 	}
 	else
 	{
@@ -326,6 +341,7 @@ fn main()
 	let render_target_sem = device.create_semaphore().unwrap();
 	let transfer_sem = device.create_semaphore().unwrap();
 	let fence = device.create_fence().unwrap();
+	let copy_barrier = device.create_fence().unwrap();
 
 	// Ready for Rendering
 	let surface = create_surface(&instance, &window);
@@ -364,7 +380,6 @@ fn main()
 	], &[]);
 
 	// Initial Staging //
-	let mut enemy_list = std::collections::LinkedList::<Enemy>::new();
 	{
 		let mapped_range = memory_bound_resources.stage_buffer.map(0 .. memory_preallocator.total_size).unwrap();
 		meshstore.initial_stage_data(&mapped_range);
@@ -372,10 +387,12 @@ fn main()
 		enemy_datastore.initial_stage_data(&mapped_range);
 	}
 
-	// randomizers //
-	let mut randomizer = rand::thread_rng();
-	let mut left_range = rand::distributions::Range::new(-25.0f32, 25.0f32);
-	let mut appear_percent_range = rand::distributions::Range::new(0, 40);
+	// Double-buffered object storages //
+	let mut olist_index = 0;
+	let mut enemy_list = [
+		std::collections::LinkedList::<Enemy>::new(),
+		std::collections::LinkedList::new()
+	];
 
 	// Ready for command recording //
 	let final_commands = pool.allocate_primary_buffers(final_framebuffers.len()).unwrap();
@@ -474,7 +491,15 @@ fn main()
 	let mut index_render_to = swapchain.acquire_next_image(&render_target_sem).unwrap();
 	graphics_queue.submit_commands(&[final_commands[index_render_to as usize]], &[render_target_sem.get()], &[], Some(&fence)).unwrap();
 
+	// randomizers //
+	let mut randomizer = rand::thread_rng();
+	let mut left_range = rand::distributions::Range::new(-25.0f32, 25.0f32);
+	let mut appear_percent_range = rand::distributions::Range::new(0, 40);
+
 	// Application Loop
+	let mut prev_frame_time = time::PreciseTime::now();
+	let mapped_range = memory_bound_resources.stage_buffer.map(0 .. memory_preallocator.total_size).unwrap();
+	let mut require_transfer = false;
 	while xcon.process_messages()
 	{
 		// Present -> Render //
@@ -483,18 +508,41 @@ fn main()
 			fence.reset().unwrap();
 			swapchain.present(&graphics_queue, index_render_to, &[]).unwrap();
 			index_render_to = swapchain.acquire_next_image(&render_target_sem).unwrap();
-			transfer_queue.submit_commands(&[transfer_commands[0]], &[], &[transfer_sem.get()], None).unwrap();
-			graphics_queue.submit_commands(&[final_commands[index_render_to as usize]],
-				&[render_target_sem.get(), transfer_sem.get()], &[], Some(&fence)).unwrap();
+			if require_transfer
 			{
-				// ready for next frame
-				let mapped_range = memory_bound_resources.stage_buffer.map(0 .. memory_preallocator.total_size).unwrap();
-				if appear_percent_range.sample(&mut randomizer) == 0
-				{
-					enemy_list.push_back(Enemy::new(&mut enemy_datastore, &mapped_range, left_range.sample(&mut randomizer)));
-				}
-				for e in enemy_list.iter_mut() { e.update(&enemy_datastore, &mapped_range); }
+				transfer_queue.submit_commands(&[transfer_commands[0]], &[], &[transfer_sem.get()], None).unwrap();
+				graphics_queue.submit_commands(&[final_commands[index_render_to as usize]],
+					&[render_target_sem.get(), transfer_sem.get()], &[], Some(&fence)).unwrap();
 			}
+			else
+			{
+				graphics_queue.submit_commands(&[final_commands[index_render_to as usize]],
+					&[render_target_sem.get()], &[], Some(&fence)).unwrap();
+			}
+			require_transfer = false;
+		}
+
+		if prev_frame_time.to(time::PreciseTime::now()) >= time::Duration::milliseconds(16)
+		{
+			if appear_percent_range.sample(&mut randomizer) == 0
+			{
+				enemy_list[olist_index].push_back(Enemy::new(&mut enemy_datastore, &mapped_range, left_range.sample(&mut randomizer)));
+			}
+			let next_index = if olist_index == 0 { 1 } else { 0 };
+			while let Some(mut e) = enemy_list[olist_index].pop_front()
+			{
+				if !e.update(&enemy_datastore, &mapped_range)
+				{
+					enemy_list[next_index].push_front(e);
+				}
+				else
+				{
+					e.die(&mut enemy_datastore, &mapped_range);
+				}
+			}
+			olist_index = next_index;
+			require_transfer = true;
+			prev_frame_time = time::PreciseTime::now();
 		}
 	}
 	device.wait_for_idle().unwrap();

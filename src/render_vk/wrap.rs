@@ -164,6 +164,14 @@ impl PhysicalDevice
 		unsafe { vkGetPhysicalDeviceFeatures(self.obj, &mut features) };
 		features
 	}
+	pub fn enumerate_queue_family_properties(&self) -> Vec<VkQueueFamilyProperties>
+	{
+		let mut count: u32 = 0;
+		unsafe { vkGetPhysicalDeviceQueueFamilyProperties(self.obj, &mut count, std::ptr::null_mut()) };
+		let mut props: Vec<VkQueueFamilyProperties> = vec![unsafe { std::mem::uninitialized() }; count as usize];
+		unsafe { vkGetPhysicalDeviceQueueFamilyProperties(self.obj, &mut count, props.as_mut_ptr()) };
+		props
+	}
 
 	pub fn create_device(&self, info: &VkDeviceCreateInfo) -> Result<Device, VkResult>
 	{

@@ -62,6 +62,65 @@ impl EnemyDatastore
 			}, None => None
 		}
 	}
+	pub fn free_block(&mut self, index: u32, mapped_range: &vk::MemoryMappedRange)
+	{
+		let mut cloned = self.freelist.clone();
+		let mut iter = cloned.iter_mut().enumerate();
+		while let Some((i, mut b)) = iter.next()
+		{
+			if index == b.end + 1
+			{
+				if let Some((_, b_after)) = iter.next()
+				{
+					if index == b_after.start - 1
+					{
+						// concat
+						b.end = b_after.end;
+						let mut frontlist = self.freelist.split_off(i + 1);
+						self.freelist.pop_front().unwrap();
+						frontlist.append(&mut self.freelist);
+						self.freelist = frontlist;
+						self.disable_instance(mapped_range, index);
+						return;
+					}
+					else
+					{
+						// append to back
+						b.end = b.end + 1;
+						self.disable_instance(mapped_range, index);
+						return;
+					}
+				}
+				else
+				{
+					// append to back
+					b.end = b.end + 1;
+					self.disable_instance(mapped_range, index);
+					return;
+				}
+			}
+			else if index == b.start - 1
+			{
+				// append to front
+				b.start = b.start - 1;
+				self.disable_instance(mapped_range, index);
+				return;
+			}
+			else if index < b.start
+			{
+				// new block
+				let mut frontlist = self.freelist.split_off(i + 1);
+				frontlist.push_back(index .. index);
+				frontlist.append(&mut self.freelist);
+				self.freelist = frontlist;
+				self.disable_instance(mapped_range, index);
+				return;
+			}
+		}
+		// append to last
+		self.freelist.push_back(index .. index);
+		self.disable_instance(mapped_range, index);
+	}
 	fn enable_instance(&self, mapped_range: &vk::MemoryMappedRange, index: u32)
 	{
 		mapped_range.range_mut::<u32>(self.character_indices_offset, MAX_ENEMY_COUNT)[(index - 1) as usize] = 1;
