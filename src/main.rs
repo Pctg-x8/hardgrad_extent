@@ -23,7 +23,6 @@ use rand::distributions::*;
 use vkffi::*;
 use render_vk::wrap as vk;
 use render_vk::traits::*;
-use std::thread; use std::sync::mpsc;
 
 impl std::default::Default for VkApplicationInfo
 {
@@ -258,6 +257,8 @@ fn main()
 {
 	// init xcb(connection to display)
 	let xcon = XServerConnection::connect();
+
+	logical_resources::enemy_datastore::memory_management_test();
 
 	// init vulkan
 	let instance = create_instance();
@@ -522,7 +523,7 @@ fn main()
 			require_transfer = false;
 		}
 
-		if prev_frame_time.to(time::PreciseTime::now()) >= time::Duration::milliseconds(16)
+		if prev_frame_time.to(time::PreciseTime::now()) >= time::Duration::milliseconds(8)
 		{
 			if appear_percent_range.sample(&mut randomizer) == 0
 			{

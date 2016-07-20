@@ -6,33 +6,130 @@ use traits::*;
 use device_resources;
 use constants::*;
 use nalgebra::*;
+use rand;
+use rand::Rng;
 
 fn size_vec4() -> VkDeviceSize { std::mem::size_of::<[f32; 4]>() as VkDeviceSize }
 const ENEMY_DATA_COUNT: VkDeviceSize = MAX_ENEMY_COUNT as VkDeviceSize + 1;
 
 type BlockIndexRange = std::ops::Range<u32>;
+enum FreeOperation
+{
+	ConcatenateBlock(usize),
+	AppendBack(usize), AppendFront(usize),
+	InsertNew(usize), AppendNew
+}
+
+pub struct EnemyMemoryBlockManager
+{
+	freelist: std::collections::LinkedList<BlockIndexRange>
+}
+impl EnemyMemoryBlockManager
+{
+	fn new() -> Self
+	{
+		let mut fl = std::collections::LinkedList::<BlockIndexRange>::new();
+		fl.push_back(1 .. MAX_ENEMY_COUNT as u32);
+
+		EnemyMemoryBlockManager { freelist: fl }
+	}
+	fn allocate(&mut self) -> Option<u32>
+	{
+		match self.freelist.pop_front()
+		{
+			Some(v) =>
+			{
+				let head = v.start;
+				if v.start + 1 <= v.end { self.freelist.push_front(v.start + 1 .. v.end) };
+				Some(head)
+			}, None => None
+		}
+	}
+	fn free(&mut self, index: u32)
+	{
+		let search = { self.free_search(index) };
+		match search
+		{
+			FreeOperation::ConcatenateBlock(i) =>
+			{
+				let mut backlist = self.freelist.split_off(i + 1);
+				self.freelist.back_mut().unwrap().end = backlist.pop_front().unwrap().end;
+				self.freelist.append(&mut backlist);
+			},
+			FreeOperation::AppendBack(i) =>
+			{
+				let mut iter = self.freelist.iter_mut();
+				iter.nth(i).unwrap().end += 1;
+			}
+			FreeOperation::AppendFront(i) =>
+			{
+				let mut iter = self.freelist.iter_mut();
+				iter.nth(i).unwrap().start -= 1;
+			}
+			FreeOperation::InsertNew(i) =>
+			{
+				let mut backlist = self.freelist.split_off(i);
+				self.freelist.push_back(index .. index);
+				self.freelist.append(&mut backlist);
+			},
+			FreeOperation::AppendNew => self.freelist.push_back(index .. index)
+		}
+	}
+
+	fn free_search(&self, index: u32) -> FreeOperation
+	{
+		fn recursive<'a, IterT>(mut iter: IterT, target: u32) -> FreeOperation
+			where IterT: std::iter::Iterator<Item = (usize, &'a BlockIndexRange)>
+		{
+			if let Some((i, b)) = iter.next()
+			{
+				if target == b.end + 1
+				{
+					if let Some((_, b2)) = iter.next()
+					{
+						if target == b2.start - 1 { FreeOperation::ConcatenateBlock(i) }
+						else { FreeOperation::AppendBack(i) }
+					}
+					else { FreeOperation::AppendBack(i) }
+				}
+				else if target == b.start - 1 { FreeOperation::AppendFront(i) }
+				else if target < b.start { FreeOperation::InsertNew(i) }
+				else { recursive(iter, target) }
+			}
+			else { FreeOperation::AppendNew }
+		}
+
+		recursive(self.freelist.iter().enumerate(), index)
+	}
+	fn dump_freelist(&self)
+	{
+		println!("== Freelist ==");
+		for r in self.freelist.iter()
+		{
+			println!("-- {} .. {}", r.start, r.end);
+		}
+	}
+}
+
 pub struct EnemyDatastore
 {
 	#[allow(dead_code)] descriptor_set_index: usize,
 	pub uniform_offset: VkDeviceSize, uniform_center_tf_offset: VkDeviceSize,
 	pub character_indices_offset: VkDeviceSize,
 	descriptor_buffer_info: VkDescriptorBufferInfo,
-	freelist: std::collections::LinkedList<BlockIndexRange>
+	memory_block_manager: EnemyMemoryBlockManager
 }
 impl EnemyDatastore
 {
 	pub fn new<'d>(buffer: &vk::Buffer<'d>, offset: VkDeviceSize, descriptor_set_index: usize) -> Self
 	{
-		let mut fl = std::collections::LinkedList::<BlockIndexRange>::new();
-		fl.push_back(1 .. MAX_ENEMY_COUNT as u32);
-
 		EnemyDatastore
 		{
 			descriptor_set_index: descriptor_set_index,
 			uniform_offset: offset, uniform_center_tf_offset: offset + size_vec4() * 2 * ENEMY_DATA_COUNT,
 			character_indices_offset: offset + size_vec4() * 3 * ENEMY_DATA_COUNT,
 			descriptor_buffer_info: VkDescriptorBufferInfo(buffer.get(), offset, Self::device_size()),
-			freelist: fl
+			memory_block_manager: EnemyMemoryBlockManager::new()
 		}
 	}
 	pub fn update_instance_data(&self, mapped_range: &vk::MemoryMappedRange, index: u32, qrot1: &Quaternion<f32>, qrot2: &Quaternion<f32>, center: &Vector4<f32>)
@@ -49,76 +146,13 @@ impl EnemyDatastore
 	}
 	pub fn allocate_block(&mut self, mapped_range: &vk::MemoryMappedRange) -> Option<u32>
 	{
-		if self.freelist.is_empty() { panic!("Unable to allocate block"); }
-		let front_elem = self.freelist.pop_front();
-		match front_elem
-		{
-			Some(v) =>
-			{
-				let head = v.start;
-				if v.start + 1 < v.end { self.freelist.push_front(v.start + 1 .. v.end) };
-				self.enable_instance(mapped_range, head);
-				Some(head)
-			}, None => None
-		}
+		let index = self.memory_block_manager.allocate();
+		if let Some(i) = index { self.enable_instance(mapped_range, i); }
+		index
 	}
 	pub fn free_block(&mut self, index: u32, mapped_range: &vk::MemoryMappedRange)
 	{
-		let mut cloned = self.freelist.clone();
-		let mut iter = cloned.iter_mut().enumerate();
-		while let Some((i, mut b)) = iter.next()
-		{
-			if index == b.end + 1
-			{
-				if let Some((_, b_after)) = iter.next()
-				{
-					if index == b_after.start - 1
-					{
-						// concat
-						b.end = b_after.end;
-						let mut frontlist = self.freelist.split_off(i + 1);
-						self.freelist.pop_front().unwrap();
-						frontlist.append(&mut self.freelist);
-						self.freelist = frontlist;
-						self.disable_instance(mapped_range, index);
-						return;
-					}
-					else
-					{
-						// append to back
-						b.end = b.end + 1;
-						self.disable_instance(mapped_range, index);
-						return;
-					}
-				}
-				else
-				{
-					// append to back
-					b.end = b.end + 1;
-					self.disable_instance(mapped_range, index);
-					return;
-				}
-			}
-			else if index == b.start - 1
-			{
-				// append to front
-				b.start = b.start - 1;
-				self.disable_instance(mapped_range, index);
-				return;
-			}
-			else if index < b.start
-			{
-				// new block
-				let mut frontlist = self.freelist.split_off(i + 1);
-				frontlist.push_back(index .. index);
-				frontlist.append(&mut self.freelist);
-				self.freelist = frontlist;
-				self.disable_instance(mapped_range, index);
-				return;
-			}
-		}
-		// append to last
-		self.freelist.push_back(index .. index);
+		self.memory_block_manager.free(index);
 		self.disable_instance(mapped_range, index);
 	}
 	fn enable_instance(&self, mapped_range: &vk::MemoryMappedRange, index: u32)
@@ -128,6 +162,27 @@ impl EnemyDatastore
 	fn disable_instance(&self, mapped_range: &vk::MemoryMappedRange, index: u32)
 	{
 		mapped_range.range_mut::<u32>(self.character_indices_offset, MAX_ENEMY_COUNT)[(index - 1) as usize] = 0;
+	}
+}
+pub fn memory_management_test()
+{
+	let mut mb = EnemyMemoryBlockManager::new();
+	mb.dump_freelist();
+	let mut list = [0; 16];
+	for i in 0 .. 16
+	{
+		let b1 = mb.allocate().unwrap();
+		println!("Allocated Memory Block: {}", b1);
+		list[i] = b1;
+	};
+	mb.dump_freelist();
+	let mut rng = rand::thread_rng();
+	rng.shuffle(&mut list);
+	for index in &list
+	{
+		println!("Freeing Index {}...", index);
+		mb.free(*index);
+		mb.dump_freelist();
 	}
 }
 impl DeviceStore for EnemyDatastore
