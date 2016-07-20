@@ -17,7 +17,7 @@ pub struct DebugInfoResources<'d>
 	#[allow(dead_code)] memory: vk::DeviceMemory<'d>, pub texture: vk::Image<'d>,
 	pub texture_view: vk::ImageView<'d>, pub sampler: vk::Sampler<'d>,
 	descriptor_index: u32, texture_info: VkDescriptorImageInfo,
-	pub buffer: DeviceBuffer<'d>, pub index_offset: VkDeviceSize,
+	pub buffer: DeviceBuffer<'d>, pub index_offset: VkDeviceSize, pub instance_offset: VkDeviceSize,
 	frame_time_cr: CharacterRenderInfo, enemy_count_cr: CharacterRenderInfo
 }
 impl <'d> DebugInfoResources<'d>
@@ -52,7 +52,12 @@ impl <'d> DebugInfoResources<'d>
 		}).unwrap();
 
 		// Device Buffer and Staging Buffer //
-		let buffer_size = std::mem::size_of::<TexturedPos>() as VkDeviceSize * 8 + std::mem::size_of::<u16>() as VkDeviceSize * 12;
+		let buffer_size =
+			std::mem::size_of::<TexturedPos>() as VkDeviceSize * 8 +
+			std::mem::size_of::<u16>() as VkDeviceSize * 12 +
+			std::mem::size_of::<[f32; 4]>() as VkDeviceSize * 2;
+		let index_offset = std::mem::size_of::<TexturedPos>() as VkDeviceSize * 8;
+		let instance_offset = index_offset + std::mem::size_of::<u16>() as VkDeviceSize * 12;
 		let buffer = DeviceBuffer::new(device, buffer_size, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
 		let stage_buffer = StagingBuffer::new(device, buffer_size);
 
@@ -114,9 +119,10 @@ impl <'d> DebugInfoResources<'d>
 
 		// setup vertex buffer //
 		{
-			let mapped_range = stage_buffer.map(0 .. std::mem::size_of::<TexturedPos>() as VkDeviceSize * 8).unwrap();
+			let mapped_range = stage_buffer.map(0 .. buffer_size).unwrap();
 			let buffer_range = mapped_range.range_mut::<TexturedPos>(0, 8);
-			let index_range = mapped_range.range_mut::<u16>(std::mem::size_of::<TexturedPos>() as VkDeviceSize * 8, 12);
+			let index_range = mapped_range.range_mut::<u16>(index_offset, 12);
+			let instance_range = mapped_range.range_mut::<[f32; 4]>(instance_offset, 2);
 
 			buffer_range[0] = TexturedPos(Position(0.0f32, 0.0f32, 0.0f32, 1.0f32), ftcr.start_uv);
 			buffer_range[1] = TexturedPos(Position(ftsize.0 as f32, 0.0f32, 0.0f32, 1.0f32), TexCoordinate(ftcr.end_uv.0, ftcr.start_uv.1, 0.0f32, 1.0f32));
@@ -130,6 +136,8 @@ impl <'d> DebugInfoResources<'d>
 			index_range[3 ..  6].copy_from_slice(&[2, 1, 3]);
 			index_range[6 ..  9].copy_from_slice(&[4, 5, 6]);
 			index_range[9 .. 12].copy_from_slice(&[6, 5, 7]);
+			instance_range[0] = [1.0f32; 4];
+			instance_range[1] = [0.0f32; 4];
 		}
 
 		// Initial Transferring //
@@ -227,7 +235,7 @@ impl <'d> DebugInfoResources<'d>
 			texture_info: VkDescriptorImageInfo(*sampler, *texture_view, VkImageLayout::ShaderReadOnlyOptimal),
 			memory: memory, texture: texture, texture_view: texture_view, sampler: sampler,
 			descriptor_index: descriptor_index,
-			buffer: buffer, index_offset: std::mem::size_of::<TexturedPos>() as VkDeviceSize * 8,
+			buffer: buffer, index_offset: index_offset, instance_offset: instance_offset,
 			frame_time_cr: ftcr, enemy_count_cr: eccr
 		}
 	}

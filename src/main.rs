@@ -415,7 +415,7 @@ fn main()
 			srcQueueFamilyIndex: VK_QUEUE_FAMILY_IGNORED, dstQueueFamilyIndex: VK_QUEUE_FAMILY_IGNORED,
 		};
 
-		let vertex_buffers = [memory_bound_resources.buffer.get(), memory_bound_resources.buffer.get()];
+		let vertex_buffers = [**memory_bound_resources.buffer, **memory_bound_resources.buffer];
 		final_commands.begin(cb_index).unwrap()
 			.resource_barrier(VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, &[], &[], &[image_barrier])
 			.begin_render_pass(&final_framebuffers[cb_index], &simple_pass, render_area, &clear_values, false)
@@ -431,7 +431,7 @@ fn main()
 			.bind_descriptor_sets(debug_render.layout_ref, &[descriptor_sets.sets[0], descriptor_sets.sets[2]], &[])
 			// .bind_vertex_buffers(&[memory_bound_resources.buffer.get()], &[meshstore.debug_texture_vertices_offset])
 			// .draw(4, 1)
-			.bind_vertex_buffers(&[debug_info_resources.buffer.get()], &[0])
+			.bind_vertex_buffers(&[**debug_info_resources.buffer, **debug_info_resources.buffer], &[0, debug_info_resources.instance_offset])
 			.bind_index_buffer(&debug_info_resources.buffer, debug_info_resources.index_offset)
 			.draw_indexed(12, 1, 0)
 			.end_render_pass();

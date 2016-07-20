@@ -188,11 +188,14 @@ impl <'d> DebugRenderer<'d>
 
 		let shader_entry = std::ffi::CString::new("main").unwrap();
 		let vertex_bindings = [
-			VkVertexInputBindingDescription(0, std::mem::size_of::<TexturedPos>() as u32, VkVertexInputRate::Vertex)
+			VkVertexInputBindingDescription(0, std::mem::size_of::<TexturedPos>() as u32, VkVertexInputRate::Vertex),
+			VkVertexInputBindingDescription(1, std::mem::size_of::<[f32; 4]>() as u32 * 2, VkVertexInputRate::Instance)
 		];
 		let vertex_attributes = [
 			VkVertexInputAttributeDescription(0, 0, VkFormat::R32G32B32A32_SFLOAT, 0),
-			VkVertexInputAttributeDescription(1, 0, VkFormat::R32G32B32A32_SFLOAT, std::mem::size_of::<Position>() as u32)
+			VkVertexInputAttributeDescription(1, 0, VkFormat::R32G32B32A32_SFLOAT, std::mem::size_of::<Position>() as u32),
+			VkVertexInputAttributeDescription(2, 1, VkFormat::R32G32B32A32_SFLOAT, 0),
+			VkVertexInputAttributeDescription(3, 1, VkFormat::R32G32B32A32_SFLOAT, std::mem::size_of::<[f32; 4]> as u32)
 		];
 		let viewports = [VkViewport(0.0f32, 0.0f32, width as f32, height as f32, 0.0f32, 1.0f32)];
 		let scissors = [VkRect2D(VkOffset2D(0, 0), framebuffer_size)];

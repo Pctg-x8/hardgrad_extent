@@ -8,6 +8,7 @@ use constants::*;
 use nalgebra::*;
 use rand;
 use rand::Rng;
+use time;
 
 fn size_vec4() -> VkDeviceSize { std::mem::size_of::<[f32; 4]>() as VkDeviceSize }
 const ENEMY_DATA_COUNT: VkDeviceSize = MAX_ENEMY_COUNT as VkDeviceSize + 1;
@@ -33,6 +34,7 @@ impl EnemyMemoryBlockManager
 
 		EnemyMemoryBlockManager { freelist: fl }
 	}
+	fn free_all(&mut self) { self.freelist.clear(); self.freelist.push_back(1 .. MAX_ENEMY_COUNT as u32); }
 	fn allocate(&mut self) -> Option<u32>
 	{
 		match self.freelist.pop_front()
@@ -110,6 +112,65 @@ impl EnemyMemoryBlockManager
 		}
 	}
 }
+pub fn memory_management_test()
+{
+	let mut mb = EnemyMemoryBlockManager::new();
+	mb.dump_freelist();
+	let mut list = [0; 16];
+	for i in 0 .. 16
+	{
+		let b1 = mb.allocate().unwrap();
+		println!("Allocated Memory Block: {}", b1);
+		list[i] = b1;
+	};
+	mb.dump_freelist();
+	let mut rng = rand::thread_rng();
+	rng.shuffle(&mut list);
+	for index in &list
+	{
+		println!("Freeing Index {}...", index);
+		mb.free(*index);
+		mb.dump_freelist();
+	}
+
+	println!("== Sequential Deallocation Performance ==");
+	let seq_time = 
+	{
+		let mut list = [0; 100];
+		for i in 0 .. 100
+		{
+			list[i] = mb.allocate().unwrap();
+		}
+		let start_time = time::PreciseTime::now();
+		for i in 0 .. 100
+		{
+			mb.free(list[i]);
+		}
+		start_time.to(time::PreciseTime::now()).num_nanoseconds().unwrap()
+	};
+	println!("x100 {}(avg. {}) ns", seq_time, seq_time / 100);
+	mb.free_all();
+	println!("== Random Deallocation Performance ==");
+	let s_rand_time = 
+	{
+		let mut rng = rand::thread_rng();
+		let mut list = [0; 100];
+		let mut dur_total = time::Duration::zero();
+		for _ in 0 .. 10
+		{
+			for i in 0 .. 100
+			{
+				list[i] = mb.allocate().unwrap();
+			}
+			rng.shuffle(&mut list);
+			let start_time = time::PreciseTime::now();
+			for i in 0 .. 100 { mb.free(list[i]); }
+			dur_total = dur_total + start_time.to(time::PreciseTime::now());
+		}
+		dur_total.num_nanoseconds().unwrap()
+	};
+	println!("x1000 {}(avg. {}) ns", s_rand_time, s_rand_time / 1000);
+}
 
 pub struct EnemyDatastore
 {
@@ -162,27 +223,6 @@ impl EnemyDatastore
 	fn disable_instance(&self, mapped_range: &vk::MemoryMappedRange, index: u32)
 	{
 		mapped_range.range_mut::<u32>(self.character_indices_offset, MAX_ENEMY_COUNT)[(index - 1) as usize] = 0;
-	}
-}
-pub fn memory_management_test()
-{
-	let mut mb = EnemyMemoryBlockManager::new();
-	mb.dump_freelist();
-	let mut list = [0; 16];
-	for i in 0 .. 16
-	{
-		let b1 = mb.allocate().unwrap();
-		println!("Allocated Memory Block: {}", b1);
-		list[i] = b1;
-	};
-	mb.dump_freelist();
-	let mut rng = rand::thread_rng();
-	rng.shuffle(&mut list);
-	for index in &list
-	{
-		println!("Freeing Index {}...", index);
-		mb.free(*index);
-		mb.dump_freelist();
 	}
 }
 impl DeviceStore for EnemyDatastore

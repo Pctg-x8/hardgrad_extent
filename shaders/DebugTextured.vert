@@ -4,6 +4,8 @@
 
 layout(location = 0) in vec4 pos;
 layout(location = 1) in vec4 uv;
+layout(location = 2) in vec4 xy_uv_scale;
+layout(location = 3) in vec4 xy_uv_offset;
 
 layout(constant_id = 10) const float r = 0.0f;
 layout(constant_id = 11) const float g = 0.0f;
@@ -20,7 +22,8 @@ out gl_PerVertex { vec4 gl_Position; };
 
 void main()
 {
-	gl_Position = pos * pixel_projection_matrix;
+	vec4 xy_uv = vec4(pos.xy, uv.xy) * xy_uv_scale + xy_uv_offset;
+	gl_Position = vec4(xy_uv.xy, pos.zw) * pixel_projection_matrix;
 	color_out = vec4(r, g, b, 1.0f);
-	uv_out = uv.xy;
+	uv_out = xy_uv.zw;
 }

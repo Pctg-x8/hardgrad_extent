@@ -342,6 +342,11 @@ impl <'a> Device<'a>
 			queueFamilyIndexCount: 0, pQueueFamilyIndices: std::ptr::null(), initialLayout: VkImageLayout::Preinitialized
 		})
 	}
+	pub fn allocate_memory(&self, info: &VkMemoryAllocateInfo) -> Result<DeviceMemory, VkResult>
+	{
+		let mut obj: VkDeviceMemory = std::ptr::null_mut();
+		unsafe { vkAllocateMemory(self.obj, info, std::ptr::null(), &mut obj) }.to_result().map(|()| DeviceMemory { device_ref: self, obj: obj })
+	}
 	pub fn allocate_memory_for_buffer(&self, buffer: &Buffer, memory_property_mask: VkMemoryPropertyFlags) -> Result<DeviceMemory, VkResult>
 	{
 		let mut obj: VkDeviceMemory = std::ptr::null_mut();
