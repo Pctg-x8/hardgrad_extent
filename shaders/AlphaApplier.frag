@@ -13,4 +13,3 @@ void main()
 	target = color;
 	target.a = texture(intex, uv).r;
 }
-

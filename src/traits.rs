@@ -29,5 +29,5 @@ pub trait DeviceStore
 }
 pub trait HasDescriptor
 {
-	fn write_descriptor_info<'d>(&self, sets: &device_resources::DescriptorSets<'d>) -> VkWriteDescriptorSet;
+	fn write_descriptor_info<'d>(&self, sets: &device_resources::DescriptorSets<'d>) -> Vec<VkWriteDescriptorSet>;
 }

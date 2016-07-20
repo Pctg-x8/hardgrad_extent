@@ -60,14 +60,14 @@ impl DeviceStore for ProjectionMatrixes
 }
 impl HasDescriptor for ProjectionMatrixes
 {
-	fn write_descriptor_info<'d>(&self, sets: &device_resources::DescriptorSets<'d>) -> VkWriteDescriptorSet
+	fn write_descriptor_info<'d>(&self, sets: &device_resources::DescriptorSets<'d>) -> Vec<VkWriteDescriptorSet>
 	{
-		VkWriteDescriptorSet
+		vec![VkWriteDescriptorSet
 		{
 			sType: VkStructureType::WriteDescriptorSet, pNext: std::ptr::null(),
 			dstSet: sets.sets[self.descriptor_set_index], dstBinding: 0, dstArrayElement: 0,
 			descriptorType: VkDescriptorType::UniformBuffer, descriptorCount: 1,
 			pBufferInfo: &self.descriptor_buffer_info, pImageInfo: std::ptr::null(), pTexelBufferView: std::ptr::null()
-		}
+		}]
 	}
 }

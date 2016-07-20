@@ -50,10 +50,10 @@ impl <'d> PipelineCommonStore<'d>
 			device_ref: device,
 			cache: device.create_empty_pipeline_cache().unwrap(),
 			layout_ub2_pc1: device.create_pipeline_layout(&[
-				descriptor_sets.set_layout_ub1.get(), descriptor_sets.set_layout_ub1.get()
+				*descriptor_sets.set_layout_ub1, *descriptor_sets.set_layout_ub1
 			], &[VkPushConstantRange(VK_SHADER_STAGE_VERTEX_BIT, 0, std::mem::size_of::<u32>() as u32)]).unwrap(),
 			layout_ub1_s1: device.create_pipeline_layout(&[
-				descriptor_sets.set_layout_ub1.get(), descriptor_sets.set_layout_s1.get()
+				*descriptor_sets.set_layout_ub1, *descriptor_sets.set_layout_s1
 			], &[]).unwrap(),
 			through_color_fs: device.create_shader_module_from_file("shaders/ThroughColor.spv").unwrap(),
 			alpha_applier_fs: device.create_shader_module_from_file("shaders/AlphaApplier.spv").unwrap()
@@ -184,7 +184,7 @@ impl <'d> DebugRenderer<'d>
 	pub fn new(commons: &'d PipelineCommonStore, render_pass: &'d vk::RenderPass, framebuffer_size: VkExtent2D) -> Self
 	{
 		let VkExtent2D(width, height) = framebuffer_size;
-		let vshader = commons.device_ref.create_shader_module_from_file("shaders/Textured.spv").unwrap();
+		let vshader = commons.device_ref.create_shader_module_from_file("shaders/DebugTextured.spv").unwrap();
 
 		let shader_entry = std::ffi::CString::new("main").unwrap();
 		let vertex_bindings = [

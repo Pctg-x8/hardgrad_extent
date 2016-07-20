@@ -216,17 +216,18 @@ struct Enemy
 }
 impl Enemy
 {
-	pub fn new(datastore: &mut logical_resources::EnemyDatastore, mapped_range: &vk::MemoryMappedRange, init_left: f32) -> Self
+	pub fn new(datastore: &mut logical_resources::EnemyDatastore, mapped_range: &vk::MemoryMappedRange, init_left: f32) -> Option<Self>
 	{
-		let index = datastore.allocate_block(mapped_range).expect("Unable to allocate block for enemy");
-		datastore.update_instance_data(mapped_range, index,
-			UnitQuaternion::new(Vector3::new(0.0f32, 0.0f32, 0.0f32)).quaternion(), UnitQuaternion::new(Vector3::new(0.0f32, 0.0f32, 0.0f32)).quaternion(),
-			&Vector4::new(init_left, 0.0f32, 0.0f32, 0.0f32));
-
-		Enemy
+		datastore.allocate_block(mapped_range).map(|index|
 		{
-			block_index: index, left: init_left, appear_time: time::PreciseTime::now()
-		}
+			datastore.update_instance_data(mapped_range, index,
+				UnitQuaternion::new(Vector3::new(0.0f32, 0.0f32, 0.0f32)).quaternion(), UnitQuaternion::new(Vector3::new(0.0f32, 0.0f32, 0.0f32)).quaternion(),
+				&Vector4::new(init_left, 0.0f32, 0.0f32, 0.0f32));
+			Enemy
+			{
+				block_index: index, left: init_left, appear_time: time::PreciseTime::now()
+			}
+		})
 	}
 	pub fn update(&mut self, datastore: &logical_resources::EnemyDatastore, mapped_range: &vk::MemoryMappedRange) -> bool
 	{
@@ -342,7 +343,6 @@ fn main()
 	let render_target_sem = device.create_semaphore().unwrap();
 	let transfer_sem = device.create_semaphore().unwrap();
 	let fence = device.create_fence().unwrap();
-	let copy_barrier = device.create_fence().unwrap();
 
 	// Ready for Rendering
 	let surface = create_surface(&instance, &window);
@@ -375,10 +375,11 @@ fn main()
 	let debug_info_resources = logical_resources::DebugInfoResources::new(&device, &transfer_queue, &initializer_pool, 2);
 
 	// Setup Descriptors //
-	device.update_descriptor_sets(&[
-		projection_matrixes.write_descriptor_info(&descriptor_sets), enemy_datastore.write_descriptor_info(&descriptor_sets),
-		debug_info_resources.write_descriptor_info(&descriptor_sets)
-	], &[]);
+	let descriptor_infos = {
+		let descriptor_providers: [&HasDescriptor; 3] = [&projection_matrixes, &enemy_datastore, &debug_info_resources];
+		descriptor_providers.into_iter().flat_map(|x| x.write_descriptor_info(&descriptor_sets)).collect::<Vec<_>>()
+	};
+	device.update_descriptor_sets(&descriptor_infos, &[]);
 
 	// Initial Staging //
 	{
@@ -509,17 +510,13 @@ fn main()
 			fence.reset().unwrap();
 			swapchain.present(&graphics_queue, index_render_to, &[]).unwrap();
 			index_render_to = swapchain.acquire_next_image(&render_target_sem).unwrap();
+			let mut wait_semaphores = vec![*render_target_sem];
 			if require_transfer
 			{
-				transfer_queue.submit_commands(&[transfer_commands[0]], &[], &[transfer_sem.get()], None).unwrap();
-				graphics_queue.submit_commands(&[final_commands[index_render_to as usize]],
-					&[render_target_sem.get(), transfer_sem.get()], &[], Some(&fence)).unwrap();
+				transfer_queue.submit_commands(&[transfer_commands[0]], &[], &[*transfer_sem], None).unwrap();
+				wait_semaphores.push(*transfer_sem);
 			}
-			else
-			{
-				graphics_queue.submit_commands(&[final_commands[index_render_to as usize]],
-					&[render_target_sem.get()], &[], Some(&fence)).unwrap();
-			}
+			graphics_queue.submit_commands(&[final_commands[index_render_to as usize]], &wait_semaphores, &[], Some(&fence)).unwrap();
 			require_transfer = false;
 		}
 
@@ -527,7 +524,11 @@ fn main()
 		{
 			if appear_percent_range.sample(&mut randomizer) == 0
 			{
-				enemy_list[olist_index].push_back(Enemy::new(&mut enemy_datastore, &mapped_range, left_range.sample(&mut randomizer)));
+				if let Some(enemy) = Enemy::new(&mut enemy_datastore, &mapped_range, left_range.sample(&mut randomizer))
+				{
+					enemy_list[olist_index].push_back(enemy)
+				}
+				else { println!("Warning: Unable to allocate memory block for enemy"); }
 			}
 			let next_index = if olist_index == 0 { 1 } else { 0 };
 			while let Some(mut e) = enemy_list[olist_index].pop_front()

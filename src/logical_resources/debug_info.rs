@@ -224,7 +224,7 @@ impl <'d> DebugInfoResources<'d>
 
 		DebugInfoResources
 		{
-			texture_info: VkDescriptorImageInfo(sampler.get(), texture_view.get(), VkImageLayout::ShaderReadOnlyOptimal),
+			texture_info: VkDescriptorImageInfo(*sampler, *texture_view, VkImageLayout::ShaderReadOnlyOptimal),
 			memory: memory, texture: texture, texture_view: texture_view, sampler: sampler,
 			descriptor_index: descriptor_index,
 			buffer: buffer, index_offset: std::mem::size_of::<TexturedPos>() as VkDeviceSize * 8,
@@ -274,14 +274,14 @@ impl <'d> DebugInfoResources<'d>
 
 impl <'d> HasDescriptor for DebugInfoResources<'d>
 {
-	fn write_descriptor_info(&self, desc_set: &device_resources::DescriptorSets) -> VkWriteDescriptorSet
+	fn write_descriptor_info(&self, desc_set: &device_resources::DescriptorSets) -> Vec<VkWriteDescriptorSet>
 	{
-		VkWriteDescriptorSet
+		vec![VkWriteDescriptorSet
 		{
 			sType: VkStructureType::WriteDescriptorSet, pNext: std::ptr::null(),
 			dstSet: desc_set.sets[self.descriptor_index as usize], dstBinding: 0, dstArrayElement: 0,
 			descriptorType: VkDescriptorType::CombinedImageSampler, descriptorCount: 1,
 			pBufferInfo: std::ptr::null(), pImageInfo: &self.texture_info, pTexelBufferView: std::ptr::null()
-		}
+		}]
 	}
 }

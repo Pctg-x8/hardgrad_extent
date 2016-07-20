@@ -433,6 +433,7 @@ macro_rules! SafeObjectDerivedFromDevice
 	{
 		pub struct $name<'d> { device_ref: &'d Device<'d>, obj: $t }
 		impl <'d> HasParent for $name<'d> { type ParentRefType = &'d Device<'d>; fn parent(&self) -> &'d Device<'d> { self.device_ref } }
+		impl <'d> std::ops::Deref for $name<'d> { type Target = $t; fn deref(&self) -> &$t { &self.obj } }
 		impl <'d> InternalProvider<$t> for $name<'d> { fn get(&self) -> $t { self.obj } }
 	};
 }
