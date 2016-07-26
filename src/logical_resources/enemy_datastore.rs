@@ -134,7 +134,7 @@ pub fn memory_management_test()
 	}
 
 	println!("== Sequential Deallocation Performance ==");
-	let seq_time = 
+	let seq_time =
 	{
 		let mut list = [0; 100];
 		for i in 0 .. 100
@@ -151,7 +151,7 @@ pub fn memory_management_test()
 	println!("x100 {}(avg. {}) ns", seq_time, seq_time / 100);
 	mb.free_all();
 	println!("== Random Deallocation Performance ==");
-	let s_rand_time = 
+	let s_rand_time =
 	{
 		let mut rng = rand::thread_rng();
 		let mut list = [0; 100];
@@ -189,7 +189,7 @@ impl EnemyDatastore
 			descriptor_set_index: descriptor_set_index,
 			uniform_offset: offset, uniform_center_tf_offset: offset + size_vec4() * 2 * ENEMY_DATA_COUNT,
 			character_indices_offset: offset + size_vec4() * 3 * ENEMY_DATA_COUNT,
-			descriptor_buffer_info: VkDescriptorBufferInfo(buffer.get(), offset, Self::device_size()),
+			descriptor_buffer_info: VkDescriptorBufferInfo(buffer.get(), offset, Self::required_sizes().into_iter().fold(0, |x, y| x + y)),
 			memory_block_manager: EnemyMemoryBlockManager::new()
 		}
 	}
@@ -227,9 +227,9 @@ impl EnemyDatastore
 }
 impl DeviceStore for EnemyDatastore
 {
-	fn device_size() -> VkDeviceSize
+	fn required_sizes() -> Vec<VkDeviceSize>
 	{
-		(std::mem::size_of::<[f32; 4]>() * (MAX_ENEMY_COUNT + 1) * 3 + std::mem::size_of::<u32>() * MAX_ENEMY_COUNT) as VkDeviceSize
+		vec![std::mem::size_of::<[f32; 4]>() as VkDeviceSize * ENEMY_DATA_COUNT * 3, std::mem::size_of::<u32>() as VkDeviceSize * MAX_ENEMY_COUNT as VkDeviceSize]
 	}
 	fn initial_stage_data(&self, mapped_range: &vk::MemoryMappedRange)
 	{

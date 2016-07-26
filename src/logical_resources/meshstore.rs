@@ -7,34 +7,38 @@ use traits::*;
 pub struct Meshstore
 {
 	pub unit_cube_vertices_offset: VkDeviceSize, pub unit_cube_indices_offset: VkDeviceSize,
-	pub debug_texture_vertices_offset: VkDeviceSize
+	pub unit_plane_vertices_offset: VkDeviceSize, pub unit_plane_indices_offset: VkDeviceSize
 }
 impl Meshstore
 {
 	pub fn new(offset: VkDeviceSize) -> Self
 	{
+		let mut offsets_sizes = Self::required_sizes().into_iter().scan(offset, |acc, x| { *acc += x; Some(*acc) });
 		Meshstore
 		{
 			unit_cube_vertices_offset: offset,
-			unit_cube_indices_offset: offset + Self::unit_cube_vertices_size(),
-			debug_texture_vertices_offset: offset + Self::unit_cube_vertices_size() + Self::unit_cube_indices_size()
+			unit_cube_indices_offset: offsets_sizes.next().unwrap(),
+			unit_plane_vertices_offset: offsets_sizes.next().unwrap(),
+			unit_plane_indices_offset: offsets_sizes.next().unwrap()
 		}
 	}
-	fn unit_cube_vertices_size() -> VkDeviceSize { (std::mem::size_of::<Position>() * 8) as VkDeviceSize }
-	fn unit_cube_indices_size() -> VkDeviceSize { (std::mem::size_of::<u16>() * 24) as VkDeviceSize }
-	fn debug_texture_vertices_size() -> VkDeviceSize { (std::mem::size_of::<TexturedPos>() * 4) as VkDeviceSize }
 }
 impl DeviceStore for Meshstore
 {
-	fn device_size() -> VkDeviceSize
+	fn required_sizes() -> Vec<VkDeviceSize>
 	{
-		Self::unit_cube_vertices_size() + Self::unit_cube_indices_size() + Self::debug_texture_vertices_size()
+		let (vsize, idxsize) = (std::mem::size_of::<Position>() as VkDeviceSize, std::mem::size_of::<u16>() as VkDeviceSize);
+		vec![
+			vsize * 8, idxsize * 24,
+			vsize * 4, idxsize *  8
+		]
 	}
 	fn initial_stage_data(&self, mapped_range: &vk::MemoryMappedRange)
 	{
 		let ucv_range = mapped_range.range_mut::<Position>(self.unit_cube_vertices_offset, 8);
 		let uci_range = mapped_range.range_mut::<u16>(self.unit_cube_indices_offset, 24);
-		let dtv_range = mapped_range.range_mut::<TexturedPos>(self.debug_texture_vertices_offset, 4);
+		let upv_range = mapped_range.range_mut::<Position>(self.unit_plane_vertices_offset, 4);
+		let upi_range = mapped_range.range_mut::<u16>(self.unit_plane_indices_offset, 8);
 
 		ucv_range[0] = Position(-1.0f32, -1.0f32, -1.0f32, 1.0f32);
 		ucv_range[1] = Position( 1.0f32, -1.0f32, -1.0f32, 1.0f32);
@@ -56,9 +60,13 @@ impl DeviceStore for Meshstore
 		uci_range[ 9 * 2 + 0] = 1; uci_range[ 9 * 2 + 1] = 5;
 		uci_range[10 * 2 + 0] = 2; uci_range[10 * 2 + 1] = 6;
 		uci_range[11 * 2 + 0] = 3; uci_range[11 * 2 + 1] = 7;
-		dtv_range[0] = TexturedPos(Position(0.0f32, 0.0f32, 0.0f32, 1.0f32), TexCoordinate(0.0f32, 0.0f32, 0.0f32, 1.0f32));
-		dtv_range[1] = TexturedPos(Position(128.0f32, 0.0f32, 0.0f32, 1.0f32), TexCoordinate(1.0f32, 0.0f32, 0.0f32, 1.0f32));
-		dtv_range[2] = TexturedPos(Position(0.0f32, 128.0f32, 0.0f32, 1.0f32), TexCoordinate(0.0f32, 1.0f32, 0.0f32, 1.0f32));
-		dtv_range[3] = TexturedPos(Position(128.0f32, 128.0f32, 0.0f32, 1.0f32), TexCoordinate(1.0f32, 1.0f32, 0.0f32, 1.0f32));
+		upv_range[0] = Position(-1.0f32, -1.0f32, 0.0f32, 1.0f32);
+		upv_range[1] = Position( 1.0f32, -1.0f32, 0.0f32, 1.0f32);
+		upv_range[2] = Position( 1.0f32,  1.0f32, 0.0f32, 1.0f32);
+		upv_range[3] = Position(-1.0f32,  1.0f32, 0.0f32, 1.0f32);
+		upi_range[0 * 2 + 0] = 0; upi_range[0 * 2 + 1] = 1;
+		upi_range[1 * 2 + 0] = 1; upi_range[1 * 2 + 1] = 2;
+		upi_range[2 * 2 + 0] = 2; upi_range[2 * 2 + 1] = 3;
+		upi_range[3 * 2 + 0] = 3; upi_range[3 * 2 + 1] = 0;
 	}
 }

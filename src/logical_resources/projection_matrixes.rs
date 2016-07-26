@@ -23,13 +23,16 @@ impl ProjectionMatrixes
 			ortho_offset: offset, pixel_offset: offset + std::mem::size_of::<[[f32; 4]; 4]>() as VkDeviceSize,
 			persp_offset: offset + (std::mem::size_of::<[[f32; 4]; 4]>() * 2) as VkDeviceSize,
 			screen_size: screen_size,
-			descriptor_buffer_info: VkDescriptorBufferInfo(buffer.get(), offset, Self::device_size())
+			descriptor_buffer_info: VkDescriptorBufferInfo(buffer.get(), offset, Self::required_sizes().into_iter().fold(0, |x, y| x + y))
 		}
 	}
 }
 impl DeviceStore for ProjectionMatrixes
 {
-	fn device_size() -> VkDeviceSize { (std::mem::size_of::<[[f32; 4]; 4]>() * 3) as VkDeviceSize }
+	fn required_sizes() -> Vec<VkDeviceSize>
+	{
+		vec![std::mem::size_of::<[[f32; 4]; 4]>() as VkDeviceSize * 3]
+	}
 	fn initial_stage_data(&self, mapped_range: &vk::MemoryMappedRange)
 	{
 		let VkExtent2D(width, height) = self.screen_size;

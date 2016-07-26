@@ -24,7 +24,7 @@ pub trait HasParent
 
 pub trait DeviceStore
 {
-	fn device_size() -> VkDeviceSize;
+	fn required_sizes() -> Vec<VkDeviceSize>;
 	fn initial_stage_data(&self, mapped_range: &vk::MemoryMappedRange);
 }
 pub trait HasDescriptor

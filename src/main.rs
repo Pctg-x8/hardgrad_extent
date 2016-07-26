@@ -369,9 +369,9 @@ fn main()
 	let debug_render = logical_resources::DebugRenderer::new(&pp_commons, &simple_pass, sc_extent);
 
 	// Logical Resources //
-	let meshstore = logical_resources::Meshstore::new(memory_preallocator.meshstore_range.start);
-	let projection_matrixes = logical_resources::ProjectionMatrixes::new(&memory_bound_resources.buffer, memory_preallocator.projection_matrixes_range.start, 0, sc_extent);
-	let mut enemy_datastore = logical_resources::EnemyDatastore::new(&memory_bound_resources.buffer, memory_preallocator.enemy_datastore_range.start, 1);
+	let meshstore = logical_resources::Meshstore::new(memory_preallocator.meshstore_base);
+	let projection_matrixes = logical_resources::ProjectionMatrixes::new(&memory_bound_resources.buffer, memory_preallocator.projection_matrixes_base, 0, sc_extent);
+	let mut enemy_datastore = logical_resources::EnemyDatastore::new(&memory_bound_resources.buffer, memory_preallocator.enemy_datastore_base, 1);
 	let debug_info_resources = logical_resources::DebugInfoResources::new(&device, &transfer_queue, &initializer_pool, &transfer_pool, 2);
 
 	// Setup Descriptors //
