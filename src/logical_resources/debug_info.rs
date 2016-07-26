@@ -7,6 +7,7 @@ use unicode_normalization::*;
 use device_resources;
 use vertex_formats::*;
 use render_vk::memory::*;
+use render_vk::traits::*;
 
 const TEXTURE_SIZE: u32 = 256;
 const MAX_NUMCHAR_COUNT: u32 = 8;
@@ -194,81 +195,26 @@ impl <'d> DebugInfoResources<'d>
 		}
 
 		// Initial Transferring //
+		let buffer_access_flags = VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT | VK_ACCESS_INDEX_READ_BIT | VK_ACCESS_INDIRECT_COMMAND_READ_BIT;
 		{
 			let command_buffer = initializer_pool.allocate_primary_buffers(1).unwrap();
-			let subres_range_color = VkImageSubresourceRange
-			{
-				aspectMask: VK_IMAGE_ASPECT_COLOR_BIT, baseMipLevel: 0, baseArrayLayer: 0,
-				levelCount: 1, layerCount: 1
-			};
 
+			let image_memory_layout = VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_INPUT_ATTACHMENT_READ_BIT | VK_ACCESS_SHADER_READ_BIT;
 			let image_barriers = [
-				VkImageMemoryBarrier
-				{
-					sType: VkStructureType::ImageMemoryBarrier, pNext: std::ptr::null(),
-					srcAccessMask: VK_ACCESS_HOST_WRITE_BIT, dstAccessMask: VK_ACCESS_TRANSFER_READ_BIT,
-					oldLayout: VkImageLayout::Preinitialized, newLayout: VkImageLayout::TransferSrcOptimal,
-					srcQueueFamilyIndex: VK_QUEUE_FAMILY_IGNORED, dstQueueFamilyIndex: VK_QUEUE_FAMILY_IGNORED,
-					image: stage_texture.get(), subresourceRange: subres_range_color
-				},
-				VkImageMemoryBarrier
-				{
-					sType: VkStructureType::ImageMemoryBarrier, pNext: std::ptr::null(),
-					srcAccessMask: VK_ACCESS_HOST_WRITE_BIT, dstAccessMask: VK_ACCESS_TRANSFER_WRITE_BIT,
-					oldLayout: VkImageLayout::Preinitialized, newLayout: VkImageLayout::TransferDestOptimal,
-					srcQueueFamilyIndex: VK_QUEUE_FAMILY_IGNORED, dstQueueFamilyIndex: VK_QUEUE_FAMILY_IGNORED,
-					image: texture.get(), subresourceRange: subres_range_color
-				}
+				stage_texture.memory_barrier(vk::ImageSubresourceRange::default_color(), VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT).layout(VkImageLayout::Preinitialized, VkImageLayout::TransferSrcOptimal),
+				texture.memory_barrier(vk::ImageSubresourceRange::default_color(), VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_TRANSFER_WRITE_BIT).layout(VkImageLayout::Preinitialized, VkImageLayout::TransferDestOptimal)
 			];
 			let image_barriers_to_use = [
-				VkImageMemoryBarrier
-				{
-					sType: VkStructureType::ImageMemoryBarrier, pNext: std::ptr::null(),
-					srcAccessMask: VK_ACCESS_TRANSFER_READ_BIT, dstAccessMask: VK_ACCESS_HOST_WRITE_BIT,
-					oldLayout: VkImageLayout::TransferSrcOptimal, newLayout: VkImageLayout::General,
-					srcQueueFamilyIndex: VK_QUEUE_FAMILY_IGNORED, dstQueueFamilyIndex: VK_QUEUE_FAMILY_IGNORED,
-					image: stage_texture.get(), subresourceRange: subres_range_color
-				},
-				VkImageMemoryBarrier
-				{
-					sType: VkStructureType::ImageMemoryBarrier, pNext: std::ptr::null(),
-					srcAccessMask: VK_ACCESS_TRANSFER_WRITE_BIT, dstAccessMask: VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_INPUT_ATTACHMENT_READ_BIT | VK_ACCESS_SHADER_READ_BIT,
-					oldLayout: VkImageLayout::TransferDestOptimal, newLayout: VkImageLayout::ShaderReadOnlyOptimal,
-					srcQueueFamilyIndex: VK_QUEUE_FAMILY_IGNORED, dstQueueFamilyIndex: VK_QUEUE_FAMILY_IGNORED,
-					image: texture.get(), subresourceRange: subres_range_color
-				}
+				stage_texture.memory_barrier(vk::ImageSubresourceRange::default_color(), VK_ACCESS_TRANSFER_READ_BIT, VK_ACCESS_HOST_WRITE_BIT).layout(VkImageLayout::TransferSrcOptimal, VkImageLayout::General),
+				texture.memory_barrier(vk::ImageSubresourceRange::default_color(), VK_ACCESS_TRANSFER_WRITE_BIT, image_memory_layout).layout(VkImageLayout::TransferDestOptimal, VkImageLayout::ShaderReadOnlyOptimal)
 			];
 			let buffer_barriers = [
-				VkBufferMemoryBarrier
-				{
-					sType: VkStructureType::BufferMemoryBarrier, pNext: std::ptr::null(),
-					srcAccessMask: VK_ACCESS_HOST_WRITE_BIT, dstAccessMask: VK_ACCESS_TRANSFER_READ_BIT,
-					srcQueueFamilyIndex: VK_QUEUE_FAMILY_IGNORED, dstQueueFamilyIndex: VK_QUEUE_FAMILY_IGNORED,
-					buffer: stage_buffer.get(), offset: 0, size: buffer_size
-				},
-				VkBufferMemoryBarrier
-				{
-					sType: VkStructureType::BufferMemoryBarrier, pNext: std::ptr::null(),
-					srcAccessMask: 0, dstAccessMask: VK_ACCESS_TRANSFER_WRITE_BIT,
-					srcQueueFamilyIndex: VK_QUEUE_FAMILY_IGNORED, dstQueueFamilyIndex: VK_QUEUE_FAMILY_IGNORED,
-					buffer: buffer.get(), offset: 0, size: buffer_size
-				}
+				stage_buffer.memory_barrier(0 .. buffer_size, VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT),
+				buffer.memory_barrier(0 .. buffer_size, 0, VK_ACCESS_TRANSFER_WRITE_BIT)
 			];
 			let buffer_barriers_to_use = [
-				VkBufferMemoryBarrier
-				{
-					sType: VkStructureType::BufferMemoryBarrier, pNext: std::ptr::null(),
-					srcAccessMask: VK_ACCESS_TRANSFER_READ_BIT, dstAccessMask: VK_ACCESS_HOST_WRITE_BIT,
-					srcQueueFamilyIndex: VK_QUEUE_FAMILY_IGNORED, dstQueueFamilyIndex: VK_QUEUE_FAMILY_IGNORED,
-					buffer: stage_buffer.get(), offset: 0, size: buffer_size
-				},
-				VkBufferMemoryBarrier
-				{
-					sType: VkStructureType::BufferMemoryBarrier, pNext: std::ptr::null(),
-					srcAccessMask: VK_ACCESS_TRANSFER_WRITE_BIT, dstAccessMask: VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT | VK_ACCESS_INDEX_READ_BIT | VK_ACCESS_INDIRECT_COMMAND_READ_BIT,
-					srcQueueFamilyIndex: VK_QUEUE_FAMILY_IGNORED, dstQueueFamilyIndex: VK_QUEUE_FAMILY_IGNORED,
-					buffer: buffer.get(), offset: 0, size: buffer_size
-				}
+				stage_buffer.memory_barrier(0 .. buffer_size, VK_ACCESS_TRANSFER_READ_BIT, VK_ACCESS_HOST_WRITE_BIT),
+				buffer.memory_barrier(0 .. buffer_size, VK_ACCESS_TRANSFER_WRITE_BIT, buffer_access_flags)
 			];
 
 			let buffer_copy_region = VkBufferCopy(0, 0, buffer_size);
@@ -288,36 +234,12 @@ impl <'d> DebugInfoResources<'d>
 			let command_buffer = transfer_pool.allocate_primary_buffers(1).unwrap();
 
 			let buffer_barriers = [
-				VkBufferMemoryBarrier
-				{
-					sType: VkStructureType::BufferMemoryBarrier, pNext: std::ptr::null(),
-					srcAccessMask: VK_ACCESS_HOST_WRITE_BIT, dstAccessMask: VK_ACCESS_TRANSFER_READ_BIT,
-					srcQueueFamilyIndex: VK_QUEUE_FAMILY_IGNORED, dstQueueFamilyIndex: VK_QUEUE_FAMILY_IGNORED,
-					buffer: stage_buffer.get(), offset: indirect_offset, size: buffer_size - indirect_offset
-				},
-				VkBufferMemoryBarrier
-				{
-					sType: VkStructureType::BufferMemoryBarrier, pNext: std::ptr::null(),
-					srcAccessMask: VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT | VK_ACCESS_INDEX_READ_BIT | VK_ACCESS_INDIRECT_COMMAND_READ_BIT, dstAccessMask: VK_ACCESS_TRANSFER_WRITE_BIT,
-					srcQueueFamilyIndex: VK_QUEUE_FAMILY_IGNORED, dstQueueFamilyIndex: VK_QUEUE_FAMILY_IGNORED,
-					buffer: buffer.get(), offset: indirect_offset, size: buffer_size - indirect_offset
-				}
+				stage_buffer.memory_barrier(indirect_offset .. buffer_size, VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT),
+				buffer.memory_barrier(indirect_offset .. buffer_size, buffer_access_flags, VK_ACCESS_TRANSFER_WRITE_BIT)
 			];
 			let buffer_barriers_to_use = [
-				VkBufferMemoryBarrier
-				{
-					sType: VkStructureType::BufferMemoryBarrier, pNext: std::ptr::null(),
-					srcAccessMask: VK_ACCESS_TRANSFER_READ_BIT, dstAccessMask: VK_ACCESS_HOST_WRITE_BIT,
-					srcQueueFamilyIndex: VK_QUEUE_FAMILY_IGNORED, dstQueueFamilyIndex: VK_QUEUE_FAMILY_IGNORED,
-					buffer: stage_buffer.get(), offset: indirect_offset, size: buffer_size - indirect_offset
-				},
-				VkBufferMemoryBarrier
-				{
-					sType: VkStructureType::BufferMemoryBarrier, pNext: std::ptr::null(),
-					srcAccessMask: VK_ACCESS_TRANSFER_WRITE_BIT, dstAccessMask: VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT | VK_ACCESS_INDEX_READ_BIT | VK_ACCESS_INDIRECT_COMMAND_READ_BIT,
-					srcQueueFamilyIndex: VK_QUEUE_FAMILY_IGNORED, dstQueueFamilyIndex: VK_QUEUE_FAMILY_IGNORED,
-					buffer: buffer.get(), offset: indirect_offset, size: buffer_size - indirect_offset
-				}
+				stage_buffer.memory_barrier(indirect_offset .. buffer_size, VK_ACCESS_TRANSFER_READ_BIT, VK_ACCESS_HOST_WRITE_BIT),
+				buffer.memory_barrier(indirect_offset .. buffer_size, VK_ACCESS_TRANSFER_WRITE_BIT, buffer_access_flags)
 			];
 
 			let buffer_copy_region = VkBufferCopy(indirect_offset, indirect_offset, buffer_size - indirect_offset);

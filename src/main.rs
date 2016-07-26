@@ -403,18 +403,8 @@ fn main()
 	// let clear_values = [VkClearValue(VkClearColorValue(0.0f32, 0.0f32, 0.0f32, 1.0f32))];
 	for cb_index in 0 .. final_framebuffers.len()
 	{
-		let image_barrier = VkImageMemoryBarrier
-		{
-			sType: VkStructureType::ImageMemoryBarrier, pNext: std::ptr::null(),
-			image: final_images[cb_index].get(), subresourceRange: VkImageSubresourceRange
-			{
-				aspectMask: VK_IMAGE_ASPECT_COLOR_BIT, baseMipLevel: 0, baseArrayLayer: 0,
-				levelCount: 1, layerCount: 1
-			},
-			oldLayout: VkImageLayout::PresentSrcKHR, newLayout: VkImageLayout::ColorAttachmentOptimal,
-			srcAccessMask: VK_ACCESS_MEMORY_READ_BIT, dstAccessMask: VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
-			srcQueueFamilyIndex: VK_QUEUE_FAMILY_IGNORED, dstQueueFamilyIndex: VK_QUEUE_FAMILY_IGNORED,
-		};
+		let image_barrier = final_images[cb_index].memory_barrier(vk::ImageSubresourceRange::default_color(), VK_ACCESS_MEMORY_READ_BIT, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT)
+			.layout(VkImageLayout::PresentSrcKHR, VkImageLayout::ColorAttachmentOptimal);
 
 		let vertex_buffers = [**memory_bound_resources.buffer, **memory_bound_resources.buffer];
 		final_commands.begin(cb_index).unwrap()
@@ -430,8 +420,6 @@ fn main()
 			.draw_indexed(24, MAX_ENEMY_COUNT as u32, 0)
 			.bind_pipeline(&debug_render.state)
 			.bind_descriptor_sets(debug_render.layout_ref, &[descriptor_sets.sets[0], descriptor_sets.sets[2]], &[])
-			// .bind_vertex_buffers(&[memory_bound_resources.buffer.get()], &[meshstore.debug_texture_vertices_offset])
-			// .draw(4, 1)
 			.bind_vertex_buffers(&[**debug_info_resources.buffer], &[0])
 			.bind_index_buffer(&debug_info_resources.buffer, debug_info_resources.index_offset)
 			.draw_indexed(12, 1, 0)
@@ -445,12 +433,12 @@ fn main()
 	{
 		let entire_range = 0 .. memory_preallocator.total_size;
 		let buffer_barriers = [
-			buffer_memory_barrier(&memory_bound_resources.stage_buffer, entire_range.clone(), VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT),
-			buffer_memory_barrier(&memory_bound_resources.buffer, entire_range.clone(), device_buffer_access_mask, VK_ACCESS_TRANSFER_WRITE_BIT)
+			memory_bound_resources.stage_buffer.memory_barrier(entire_range.clone(), VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT),
+			memory_bound_resources.buffer.memory_barrier(entire_range.clone(), device_buffer_access_mask, VK_ACCESS_TRANSFER_WRITE_BIT)
 		];
 		let buffer_barriers_ret = [
-			buffer_memory_barrier(&memory_bound_resources.stage_buffer, entire_range.clone(), VK_ACCESS_TRANSFER_READ_BIT, VK_ACCESS_HOST_WRITE_BIT),
-			buffer_memory_barrier(&memory_bound_resources.buffer, entire_range, VK_ACCESS_TRANSFER_WRITE_BIT, device_buffer_access_mask)
+			memory_bound_resources.stage_buffer.memory_barrier(entire_range.clone(), VK_ACCESS_TRANSFER_READ_BIT, VK_ACCESS_HOST_WRITE_BIT),
+			memory_bound_resources.buffer.memory_barrier(entire_range, VK_ACCESS_TRANSFER_WRITE_BIT, device_buffer_access_mask)
 		];
 		let copy_regions = [VkBufferCopy(0, 0, memory_preallocator.total_size)];
 		transfer_commands.begin(0).unwrap()
@@ -463,25 +451,17 @@ fn main()
 		let tcb = initializer_pool.allocate_primary_buffers(1).unwrap();
 		let entire_range = 0 .. memory_preallocator.total_size;
 
-		let image_barriers = final_images.iter().map(|o| VkImageMemoryBarrier
+		let image_barriers = final_images.iter().map(|o|
 		{
-			sType: VkStructureType::ImageMemoryBarrier, pNext: std::ptr::null(),
-			image: o.get(), oldLayout: VkImageLayout::Undefined, newLayout: VkImageLayout::PresentSrcKHR,
-			srcQueueFamilyIndex: VK_QUEUE_FAMILY_IGNORED, dstQueueFamilyIndex: VK_QUEUE_FAMILY_IGNORED,
-			srcAccessMask: 0, dstAccessMask: VK_ACCESS_MEMORY_READ_BIT,
-			subresourceRange: VkImageSubresourceRange
-			{
-				aspectMask: VK_IMAGE_ASPECT_COLOR_BIT, baseMipLevel: 0, baseArrayLayer: 0,
-				levelCount: 1, layerCount: 1
-			}
+			o.memory_barrier(vk::ImageSubresourceRange::default_color(), 0, VK_ACCESS_MEMORY_READ_BIT).layout(VkImageLayout::Undefined, VkImageLayout::PresentSrcKHR)
 		}).collect::<Vec<_>>();
 		let buffer_barriers = [
-			buffer_memory_barrier(&memory_bound_resources.stage_buffer, entire_range.clone(), 0, VK_ACCESS_TRANSFER_READ_BIT),
-			buffer_memory_barrier(&memory_bound_resources.buffer, entire_range.clone(), 0, VK_ACCESS_TRANSFER_WRITE_BIT)
+			memory_bound_resources.stage_buffer.memory_barrier(entire_range.clone(), 0, VK_ACCESS_TRANSFER_READ_BIT),
+			memory_bound_resources.buffer.memory_barrier(entire_range.clone(), 0, VK_ACCESS_TRANSFER_WRITE_BIT)
 		];
 		let buffer_barriers_to_use = [
-			buffer_memory_barrier(&memory_bound_resources.buffer, entire_range.clone(), VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT),
-			buffer_memory_barrier(&memory_bound_resources.stage_buffer, entire_range.clone(), VK_ACCESS_TRANSFER_READ_BIT, VK_ACCESS_HOST_WRITE_BIT)
+			memory_bound_resources.stage_buffer.memory_barrier(entire_range.clone(), VK_ACCESS_TRANSFER_READ_BIT, VK_ACCESS_HOST_WRITE_BIT),
+			memory_bound_resources.buffer.memory_barrier(entire_range.clone(), VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT)
 		];
 
 		let copy_regions = [VkBufferCopy(0, 0, memory_preallocator.total_size)];

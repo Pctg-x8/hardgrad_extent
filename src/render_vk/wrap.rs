@@ -619,6 +619,58 @@ impl <'b> std::ops::Drop for MemoryMappedRange<'b>
 {
 	fn drop(&mut self) { unsafe { vkUnmapMemory(self.memory_ref.device_ref.obj, self.memory_ref.obj) }; }
 }
+impl <'d> OnDeviceMemory for Buffer<'d>
+{
+	type RangeType = std::ops::Range<VkDeviceSize>;
+	type StructureType = VkBufferMemoryBarrier;
+	fn memory_barrier(&self, range: Self::RangeType, src_access_mask: VkAccessFlags, dst_access_mask: VkAccessFlags) -> Self::StructureType
+	{
+		VkBufferMemoryBarrier
+		{
+			sType: VkStructureType::BufferMemoryBarrier, pNext: std::ptr::null(),
+			srcQueueFamilyIndex: VK_QUEUE_FAMILY_IGNORED, dstQueueFamilyIndex: VK_QUEUE_FAMILY_IGNORED,
+			buffer: self.obj, offset: range.start, size: range.end - range.start,
+			srcAccessMask: src_access_mask, dstAccessMask: dst_access_mask
+		}
+	}
+}
+pub struct ImageMemoryBarrierUnlayouted
+{
+	obj: VkImage, range: VkImageSubresourceRange, src_am: VkAccessFlags, dst_am: VkAccessFlags
+}
+impl ImageMemoryBarrierUnlayouted
+{
+	pub fn layout(self, src_layout: VkImageLayout, dst_layout: VkImageLayout) -> VkImageMemoryBarrier
+	{
+		VkImageMemoryBarrier
+		{
+			sType: VkStructureType::ImageMemoryBarrier, pNext: std::ptr::null(),
+			srcAccessMask: self.src_am, dstAccessMask: self.dst_am,
+			oldLayout: src_layout, newLayout: dst_layout,
+			srcQueueFamilyIndex: VK_QUEUE_FAMILY_IGNORED, dstQueueFamilyIndex: VK_QUEUE_FAMILY_IGNORED,
+			image: self.obj, subresourceRange: self.range
+		}
+	}
+}
+impl <'d> OnDeviceMemory for Image<'d>
+{
+	type RangeType = VkImageSubresourceRange;
+	type StructureType = ImageMemoryBarrierUnlayouted;
+	fn memory_barrier(&self, range: Self::RangeType, src_access_mask: VkAccessFlags, dst_access_mask: VkAccessFlags) -> Self::StructureType
+	{
+		ImageMemoryBarrierUnlayouted { obj: self.obj, range: range, src_am: src_access_mask, dst_am: dst_access_mask }
+	}
+}
+impl <'d> OnDeviceMemory for ImageRef<'d>
+{
+	type RangeType = VkImageSubresourceRange;
+	type StructureType = ImageMemoryBarrierUnlayouted;
+	fn memory_barrier(&self, range: Self::RangeType, src_access_mask: VkAccessFlags, dst_access_mask: VkAccessFlags) -> Self::StructureType
+	{
+		ImageMemoryBarrierUnlayouted { obj: self.obj, range: range, src_am: src_access_mask, dst_am: dst_access_mask }
+	}
+}
+
 impl <'d> DescriptorPool<'d>
 {
 	pub fn allocate_sets(&self, layouts: &[VkDescriptorSetLayout]) -> Result<DescriptorSets<'d>, VkResult>
@@ -758,4 +810,17 @@ impl <'d> std::ops::Index<usize> for DescriptorSets<'d>
 {
 	type Output = VkDescriptorSet;
 	fn index<'a>(&'a self, index: usize) -> &'a VkDescriptorSet { &self.objs[index] }
+}
+
+pub enum ImageSubresourceRange {}
+impl ImageSubresourceRange
+{
+	pub fn default_color() -> VkImageSubresourceRange
+	{
+		VkImageSubresourceRange
+		{
+			aspectMask: VK_IMAGE_ASPECT_COLOR_BIT, baseMipLevel: 0, baseArrayLayer: 0,
+			levelCount: 1, layerCount: 1
+		}
+	}
 }

@@ -11,3 +11,9 @@ pub trait MemoryAllocationRequired
 {
 	fn get_memory_requirements(&self) -> VkMemoryRequirements;
 }
+pub trait OnDeviceMemory
+{
+	type RangeType: std::marker::Sized;
+	type StructureType: std::marker::Sized;
+	fn memory_barrier(&self, range: Self::RangeType, src_access_mask: VkAccessFlags, dst_access_mask: VkAccessFlags) -> Self::StructureType;
+}
