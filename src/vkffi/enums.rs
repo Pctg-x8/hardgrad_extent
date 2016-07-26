@@ -18,7 +18,7 @@ pub enum VkInternalAllocationType
 {
 	Executable = 0
 }
-#[repr(C)] #[derive(Clone, PartialEq, Eq)]
+#[repr(C)] #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum VkStructureType
 {
 	ApplicationInfo = 0,

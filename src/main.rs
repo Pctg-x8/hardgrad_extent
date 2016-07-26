@@ -372,7 +372,7 @@ fn main()
 	let meshstore = logical_resources::Meshstore::new(memory_preallocator.meshstore_range.start);
 	let projection_matrixes = logical_resources::ProjectionMatrixes::new(&memory_bound_resources.buffer, memory_preallocator.projection_matrixes_range.start, 0, sc_extent);
 	let mut enemy_datastore = logical_resources::EnemyDatastore::new(&memory_bound_resources.buffer, memory_preallocator.enemy_datastore_range.start, 1);
-	let debug_info_resources = logical_resources::DebugInfoResources::new(&device, &transfer_queue, &initializer_pool, 2);
+	let debug_info_resources = logical_resources::DebugInfoResources::new(&device, &transfer_queue, &initializer_pool, &transfer_pool, 2);
 
 	// Setup Descriptors //
 	let descriptor_infos = {
@@ -395,6 +395,7 @@ fn main()
 		std::collections::LinkedList::<Enemy>::new(),
 		std::collections::LinkedList::new()
 	];
+	let mut enemy_counter = 0;
 
 	// Ready for command recording //
 	let final_commands = pool.allocate_primary_buffers(final_framebuffers.len()).unwrap();
@@ -431,9 +432,12 @@ fn main()
 			.bind_descriptor_sets(debug_render.layout_ref, &[descriptor_sets.sets[0], descriptor_sets.sets[2]], &[])
 			// .bind_vertex_buffers(&[memory_bound_resources.buffer.get()], &[meshstore.debug_texture_vertices_offset])
 			// .draw(4, 1)
-			.bind_vertex_buffers(&[**debug_info_resources.buffer, **debug_info_resources.buffer], &[0, debug_info_resources.instance_offset])
+			.bind_vertex_buffers(&[**debug_info_resources.buffer], &[0])
 			.bind_index_buffer(&debug_info_resources.buffer, debug_info_resources.index_offset)
 			.draw_indexed(12, 1, 0)
+			.bind_pipeline(&debug_render.state_instanced)
+			.bind_vertex_buffers(&[**debug_info_resources.buffer, **debug_info_resources.buffer], &[debug_info_resources.unit_vertices_offset, debug_info_resources.instance_offset])
+			.draw_indexed_indirect(&debug_info_resources.buffer, debug_info_resources.indirect_offset)
 			.end_render_pass();
 	}
 	let device_buffer_access_mask = VK_ACCESS_INDEX_READ_BIT | VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT | VK_ACCESS_UNIFORM_READ_BIT;
@@ -492,6 +496,7 @@ fn main()
 	// initial execution(coordinated execution order by semaphore)
 	let mut index_render_to = swapchain.acquire_next_image(&render_target_sem).unwrap();
 	graphics_queue.submit_commands(&[final_commands[index_render_to as usize]], &[render_target_sem.get()], &[], Some(&fence)).unwrap();
+	let mut render_start_time = time::PreciseTime::now();
 
 	// randomizers //
 	let mut randomizer = rand::thread_rng();
@@ -501,22 +506,25 @@ fn main()
 	// Application Loop
 	let mut prev_frame_time = time::PreciseTime::now();
 	let mapped_range = memory_bound_resources.stage_buffer.map(0 .. memory_preallocator.total_size).unwrap();
+	let dt_mapped_range = debug_info_resources.map_for_instance();
 	let mut require_transfer = false;
 	while xcon.process_messages()
 	{
 		// Present -> Render //
 		if fence.get_status().is_ok()
 		{
+			debug_info_resources.update_text_data(&dt_mapped_range, render_start_time.to(time::PreciseTime::now()).num_microseconds().unwrap() as f32 / 1000.0f32, enemy_counter);
 			fence.reset().unwrap();
 			swapchain.present(&graphics_queue, index_render_to, &[]).unwrap();
 			index_render_to = swapchain.acquire_next_image(&render_target_sem).unwrap();
 			let mut wait_semaphores = vec![*render_target_sem];
-			if require_transfer
-			{
-				transfer_queue.submit_commands(&[transfer_commands[0]], &[], &[*transfer_sem], None).unwrap();
+			// if require_transfer
+			// {
+				transfer_queue.submit_commands(&[transfer_commands[0], debug_info_resources.transfer_commands[0]], &[], &[*transfer_sem], None).unwrap();
 				wait_semaphores.push(*transfer_sem);
-			}
+			// }
 			graphics_queue.submit_commands(&[final_commands[index_render_to as usize]], &wait_semaphores, &[], Some(&fence)).unwrap();
+			render_start_time = time::PreciseTime::now();
 			require_transfer = false;
 		}
 
@@ -526,7 +534,8 @@ fn main()
 			{
 				if let Some(enemy) = Enemy::new(&mut enemy_datastore, &mapped_range, left_range.sample(&mut randomizer))
 				{
-					enemy_list[olist_index].push_back(enemy)
+					enemy_list[olist_index].push_back(enemy);
+					enemy_counter += 1;
 				}
 				else { println!("Warning: Unable to allocate memory block for enemy"); }
 			}
@@ -540,6 +549,7 @@ fn main()
 				else
 				{
 					e.die(&mut enemy_datastore, &mapped_range);
+					enemy_counter -= 1;
 				}
 			}
 			olist_index = next_index;

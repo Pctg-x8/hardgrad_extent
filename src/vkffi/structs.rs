@@ -463,7 +463,7 @@ pub struct VkDeviceCreateInfo
 	pub dynamicStateCount: u32,
 	pub pDynamicStates: *const VkDynamicState
 }
-#[repr(C)] pub struct VkGraphicsPipelineCreateInfo
+#[repr(C)] #[derive(Clone, Copy)] pub struct VkGraphicsPipelineCreateInfo
 {
 	pub sType: VkStructureType, pub pNext: *const c_void,
 	pub flags: VkPipelineCreateFlags,
@@ -624,6 +624,8 @@ pub struct VkDeviceCreateInfo
 	pub minLod: f32, pub maxLod: f32, pub borderColor: VkBorderColor,
 	pub unnormalizedCoordinates: VkBool32
 }
+#[repr(C)] pub struct VkDrawIndirectCommand(pub u32, pub u32, pub u32, pub u32);		// vcount, icount, firstV, firstI
+#[repr(C)] pub struct VkDrawIndexedIndirectCommand(pub u32, pub u32, pub u32, pub i32, pub u32);	// idxcount, icount, firstIdx, voffs, firstI
 
 // Surface/Swapchain Extensions //
 #[repr(C)]

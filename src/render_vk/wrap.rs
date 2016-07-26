@@ -722,6 +722,11 @@ impl CommandBufferRef
 		unsafe { vkCmdDrawIndexed(self.obj, vertex_count, instance_count, 0, 0, instance_start_index) };
 		self
 	}
+	pub fn draw_indexed_indirect(self, buffer: &VkBuffer, offset: VkDeviceSize) -> Self
+	{
+		unsafe { vkCmdDrawIndexedIndirect(self.obj, *buffer, offset, 1, std::mem::size_of::<VkDrawIndexedIndirectCommand>() as u32) };
+		self
+	}
 	pub fn push_constants<T: std::marker::Sized>(self, layout: &PipelineLayout, stage: VkShaderStageFlags, offset: u32, values: &[T]) -> Self
 	{
 		unsafe { vkCmdPushConstants(self.obj, layout.get(), stage, offset, (std::mem::size_of::<T>() * values.len()) as u32, std::mem::transmute(values.as_ptr())) };
