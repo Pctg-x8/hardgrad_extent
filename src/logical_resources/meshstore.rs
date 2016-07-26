@@ -7,7 +7,7 @@ use traits::*;
 pub struct Meshstore
 {
 	pub unit_cube_vertices_offset: VkDeviceSize, pub unit_cube_indices_offset: VkDeviceSize,
-	pub unit_plane_vertices_offset: VkDeviceSize, pub unit_plane_indices_offset: VkDeviceSize
+	pub unit_plane_vertices_offset: VkDeviceSize
 }
 impl Meshstore
 {
@@ -18,8 +18,7 @@ impl Meshstore
 		{
 			unit_cube_vertices_offset: offset,
 			unit_cube_indices_offset: offsets_sizes.next().unwrap(),
-			unit_plane_vertices_offset: offsets_sizes.next().unwrap(),
-			unit_plane_indices_offset: offsets_sizes.next().unwrap()
+			unit_plane_vertices_offset: offsets_sizes.next().unwrap()
 		}
 	}
 }
@@ -30,7 +29,7 @@ impl DeviceStore for Meshstore
 		let (vsize, idxsize) = (std::mem::size_of::<Position>() as VkDeviceSize, std::mem::size_of::<u16>() as VkDeviceSize);
 		vec![
 			vsize * 8, idxsize * 24,
-			vsize * 4, idxsize *  8
+			vsize * 4
 		]
 	}
 	fn initial_stage_data(&self, mapped_range: &vk::MemoryMappedRange)
@@ -38,7 +37,6 @@ impl DeviceStore for Meshstore
 		let ucv_range = mapped_range.range_mut::<Position>(self.unit_cube_vertices_offset, 8);
 		let uci_range = mapped_range.range_mut::<u16>(self.unit_cube_indices_offset, 24);
 		let upv_range = mapped_range.range_mut::<Position>(self.unit_plane_vertices_offset, 4);
-		let upi_range = mapped_range.range_mut::<u16>(self.unit_plane_indices_offset, 8);
 
 		ucv_range[0] = Position(-1.0f32, -1.0f32, -1.0f32, 1.0f32);
 		ucv_range[1] = Position( 1.0f32, -1.0f32, -1.0f32, 1.0f32);
@@ -64,9 +62,5 @@ impl DeviceStore for Meshstore
 		upv_range[1] = Position( 1.0f32, -1.0f32, 0.0f32, 1.0f32);
 		upv_range[2] = Position( 1.0f32,  1.0f32, 0.0f32, 1.0f32);
 		upv_range[3] = Position(-1.0f32,  1.0f32, 0.0f32, 1.0f32);
-		upi_range[0 * 2 + 0] = 0; upi_range[0 * 2 + 1] = 1;
-		upi_range[1 * 2 + 0] = 1; upi_range[1 * 2 + 1] = 2;
-		upi_range[2 * 2 + 0] = 2; upi_range[2 * 2 + 1] = 3;
-		upi_range[3 * 2 + 0] = 3; upi_range[3 * 2 + 1] = 0;
 	}
 }

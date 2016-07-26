@@ -189,7 +189,7 @@ impl EnemyDatastore
 			descriptor_set_index: descriptor_set_index,
 			uniform_offset: offset, uniform_center_tf_offset: offset + size_vec4() * 2 * ENEMY_DATA_COUNT,
 			character_indices_offset: offset + size_vec4() * 3 * ENEMY_DATA_COUNT,
-			descriptor_buffer_info: VkDescriptorBufferInfo(buffer.get(), offset, Self::required_sizes().into_iter().fold(0, |x, y| x + y)),
+			descriptor_buffer_info: VkDescriptorBufferInfo(buffer.get(), offset, Self::required_sizes()[0]),
 			memory_block_manager: EnemyMemoryBlockManager::new()
 		}
 	}

@@ -366,13 +366,16 @@ fn main()
 	// Ready for Shading
 	let pp_commons = logical_resources::PipelineCommonStore::new(&device, &descriptor_sets);
 	let enemy_render = logical_resources::EnemyRenderer::new(&pp_commons, &simple_pass, sc_extent);
+	let background_render = logical_resources::BackgroundRenderer::new(&pp_commons, &simple_pass, sc_extent);
 	let debug_render = logical_resources::DebugRenderer::new(&pp_commons, &simple_pass, sc_extent);
 
 	// Logical Resources //
+	let di_desc = 3;
 	let meshstore = logical_resources::Meshstore::new(memory_preallocator.meshstore_base);
 	let projection_matrixes = logical_resources::ProjectionMatrixes::new(&memory_bound_resources.buffer, memory_preallocator.projection_matrixes_base, 0, sc_extent);
 	let mut enemy_datastore = logical_resources::EnemyDatastore::new(&memory_bound_resources.buffer, memory_preallocator.enemy_datastore_base, 1);
-	let debug_info_resources = logical_resources::DebugInfoResources::new(&device, &transfer_queue, &initializer_pool, &transfer_pool, 2);
+	let background_datastore = logical_resources::BackgroundDatastore::new(&memory_bound_resources.buffer, memory_preallocator.background_datastore_base, 2);
+	let debug_info_resources = logical_resources::DebugInfoResources::new(&device, &transfer_queue, &initializer_pool, &transfer_pool, di_desc);
 
 	// Setup Descriptors //
 	let descriptor_infos = {
@@ -418,8 +421,12 @@ fn main()
 			.draw_indexed(24, MAX_ENEMY_COUNT as u32, 0)
 			.push_constants(enemy_render.layout_ref, VK_SHADER_STAGE_VERTEX_BIT, 0, &[1u32])
 			.draw_indexed(24, MAX_ENEMY_COUNT as u32, 0)
+			.bind_pipeline(&background_render.state)
+			.bind_descriptor_sets(background_render.layout_ref, &[descriptor_sets.sets[0], descriptor_sets.sets[2]], &[])
+			.bind_vertex_buffers(&[**memory_bound_resources.buffer], &[meshstore.unit_plane_vertices_offset])
+			.draw(4, 1)
 			.bind_pipeline(&debug_render.state)
-			.bind_descriptor_sets(debug_render.layout_ref, &[descriptor_sets.sets[0], descriptor_sets.sets[2]], &[])
+			.bind_descriptor_sets(debug_render.layout_ref, &[descriptor_sets.sets[0], descriptor_sets.sets[di_desc as usize]], &[])
 			.bind_vertex_buffers(&[**debug_info_resources.buffer], &[0])
 			.bind_index_buffer(&debug_info_resources.buffer, debug_info_resources.index_offset)
 			.draw_indexed(12, 1, 0)

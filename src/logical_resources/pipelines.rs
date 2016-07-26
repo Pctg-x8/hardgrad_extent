@@ -51,6 +51,15 @@ impl std::default::Default for VkGraphicsPipelineCreateInfo
 enum ShaderStage {}
 impl ShaderStage
 {
+	fn geometry(module: &VkShaderModule, entry: &std::ffi::CString, specialization: Option<&VkSpecializationInfo>) -> VkPipelineShaderStageCreateInfo
+	{
+		VkPipelineShaderStageCreateInfo
+		{
+			sType: VkStructureType::Pipeline_ShaderStageCreateInfo, pNext: std::ptr::null(), flags: 0,
+			stage: VK_SHADER_STAGE_GEOMETRY_BIT, module: *module, pName: entry.as_ptr(),
+			pSpecializationInfo: specialization.map(|x| x as *const VkSpecializationInfo).unwrap_or(std::ptr::null())
+		}
+	}
 	fn fragment(module: &VkShaderModule, entry: &std::ffi::CString, specialization: Option<&VkSpecializationInfo>) -> VkPipelineShaderStageCreateInfo
 	{
 		VkPipelineShaderStageCreateInfo
@@ -203,7 +212,9 @@ pub struct PipelineCommonStore<'d>
 	device_ref: &'d vk::Device<'d>,
 	pub cache: vk::PipelineCache<'d>,
 	pub layout_ub2_pc1: vk::PipelineLayout<'d>,
+	pub layout_ub2: vk::PipelineLayout<'d>,
 	pub layout_ub1_s1: vk::PipelineLayout<'d>,
+	pub layout_ub2_g: vk::PipelineLayout<'d>,
 	default_shader_entry_point: std::ffi::CString,
 	through_color_fs: vk::ShaderModule<'d>,
 	alpha_applier_fs: vk::ShaderModule<'d>
@@ -217,11 +228,13 @@ impl <'d> PipelineCommonStore<'d>
 			device_ref: device,
 			cache: device.create_empty_pipeline_cache().unwrap(),
 			layout_ub2_pc1: device.create_pipeline_layout(&[
-				*descriptor_sets.set_layout_ub1, *descriptor_sets.set_layout_ub1
+				*descriptor_sets.set_layout_ub1_vg, *descriptor_sets.set_layout_ub1
 			], &[VkPushConstantRange(VK_SHADER_STAGE_VERTEX_BIT, 0, std::mem::size_of::<u32>() as u32)]).unwrap(),
+			layout_ub2: device.create_pipeline_layout(&[*descriptor_sets.set_layout_ub1_vg, *descriptor_sets.set_layout_ub1], &[]).unwrap(),
 			layout_ub1_s1: device.create_pipeline_layout(&[
-				*descriptor_sets.set_layout_ub1, *descriptor_sets.set_layout_s1
+				*descriptor_sets.set_layout_ub1_vg, *descriptor_sets.set_layout_s1
 			], &[]).unwrap(),
+			layout_ub2_g: device.create_pipeline_layout(&[*descriptor_sets.set_layout_ub1_vg, *descriptor_sets.set_layout_ub1_g], &[]).unwrap(),
 			default_shader_entry_point: std::ffi::CString::new("main").unwrap(),
 			through_color_fs: device.create_shader_module_from_file("shaders/ThroughColor.spv").unwrap(),
 			alpha_applier_fs: device.create_shader_module_from_file("shaders/AlphaApplier.spv").unwrap()
@@ -281,6 +294,65 @@ impl <'d> EnemyRenderer<'d>
 		EnemyRenderer
 		{
 			layout_ref: &commons.layout_ub2_pc1,
+			state: commons.device_ref.create_graphics_pipelines(&commons.cache, &[pipeline_info]).unwrap().into_iter().next().unwrap()
+		}
+	}
+}
+pub struct BackgroundRenderer<'d>
+{
+	pub layout_ref: &'d vk::PipelineLayout<'d>,
+	pub state: vk::Pipeline<'d>
+}
+impl <'d> BackgroundRenderer<'d>
+{
+	pub fn new(commons: &'d PipelineCommonStore, render_pass: &vk::RenderPass<'d>, framebuffer_size: VkExtent2D) -> Self
+	{
+		let VkExtent2D(fb_width, fb_height) = framebuffer_size;
+		let vshader_form = VertexShaderWithInputForm::new(commons.device_ref, "shaders/RawOutput.spv",
+			Box::new([VertexInputBindingDesc::per_vertex::<Position>(0), VertexInputBindingDesc::per_instance::<u32>(1)]),
+			Box::new([VkVertexInputAttributeDescription(0, 0, VkFormat::R32G32B32A32_SFLOAT, 0), VkVertexInputAttributeDescription(1, 1, VkFormat::R32_UINT, 0)]));
+		let gshader = commons.device_ref.create_shader_module_from_file("shaders/BackLineDuplicator.spv").unwrap();
+
+		let viewports = [VkViewport(0.0f32, 0.0f32, fb_width as f32, fb_height as f32, 0.0f32, 1.0f32)];
+		let scissors = [VkRect2D(VkOffset2D(0, 0), framebuffer_size)];
+		let shader_specialization_map_entries =
+		[
+			VkSpecializationMapEntry(10, 0, std::mem::size_of::<f32>()),
+			VkSpecializationMapEntry(11, (std::mem::size_of::<f32>() * 1) as u32, std::mem::size_of::<f32>()),
+			VkSpecializationMapEntry(12, (std::mem::size_of::<f32>() * 2) as u32, std::mem::size_of::<f32>()),
+			VkSpecializationMapEntry(13, (std::mem::size_of::<f32>() * 3) as u32, std::mem::size_of::<f32>())
+		];
+		let shader_specialization_data = [0.25f32, 0.9875f32, 0.5f32, 1.0f32];
+		let shader_const_specialization = VkSpecializationInfo
+		{
+			mapEntryCount: shader_specialization_map_entries.len() as u32, pMapEntries: shader_specialization_map_entries.as_ptr(),
+			dataSize: std::mem::size_of::<[f32; 4]>(), pData: unsafe { std::mem::transmute(shader_specialization_data.as_ptr()) }
+		};
+		let shader_stages =
+		[
+			vshader_form.as_shader_stage(&commons.default_shader_entry_point, None),
+			ShaderStage::geometry(&gshader, &commons.default_shader_entry_point, Some(&shader_const_specialization)),
+			ShaderStage::fragment(&commons.through_color_fs, &commons.default_shader_entry_point, None)
+		];
+		let vertex_input_state = vshader_form.as_vertex_input_state();
+		let input_assembly_state = InputAssemblyState::new(VkPrimitiveTopology::LineListWithAdjacency, false);
+		let viewport_state = ViewportState::new(Box::new(viewports), Box::new(scissors));
+		let rasterization_state: VkPipelineRasterizationStateCreateInfo = Default::default();
+		let multisample_state: VkPipelineMultisampleStateCreateInfo = Default::default();
+		let blend_state = ColorBlendState::new(Box::new([ColorBlendAttachmentStates::no_blend()]));
+		let pipeline_info = VkGraphicsPipelineCreateInfo
+		{
+			stageCount: shader_stages.len() as u32, pStages: shader_stages.as_ptr(),
+			pVertexInputState: &vertex_input_state, pInputAssemblyState: &input_assembly_state,
+			pViewportState: &*viewport_state, pRasterizationState: &rasterization_state,
+			pMultisampleState: &multisample_state, pColorBlendState: &*blend_state,
+			layout: commons.layout_ub2_g.get(), renderPass: render_pass.get(),
+			.. Default::default()
+		};
+
+		BackgroundRenderer
+		{
+			layout_ref: &commons.layout_ub2_g,
 			state: commons.device_ref.create_graphics_pipelines(&commons.cache, &[pipeline_info]).unwrap().into_iter().next().unwrap()
 		}
 	}

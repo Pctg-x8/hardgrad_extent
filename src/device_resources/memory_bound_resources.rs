@@ -12,6 +12,7 @@ pub struct MemoryPreallocator
 	pub meshstore_base: VkDeviceSize,
 	pub projection_matrixes_base: VkDeviceSize,
 	pub enemy_datastore_base: VkDeviceSize,
+	pub background_datastore_base: VkDeviceSize,
 	pub total_size: VkDeviceSize
 }
 impl MemoryPreallocator
@@ -29,27 +30,22 @@ impl MemoryPreallocator
 		let projection_matrixes_sizes = ProjectionMatrixes::required_sizes();
 		let projection_matrixes_aligned_size = align_for_uniform_buffer(projection_matrixes_sizes.iter().fold(0, |a, x| a + x));
 		let enemy_datastore_sizes = EnemyDatastore::required_sizes();
-		let enemy_datastore_size: VkDeviceSize = enemy_datastore_sizes.iter().fold(0, |a, x| a + x);
+		let enemy_datastore_aligned_size = align_for_uniform_buffer(enemy_datastore_sizes.iter().fold(0, |a, x| a + x));
+		let background_datastore_sizes = BackgroundDatastore::required_sizes();
+		let background_datastore_size = background_datastore_sizes.iter().fold(0, |x, y| x + y);
 		// Preallocations
 		let meshstore_base_offs = 0;
 		let projection_matrixes_base_offs = meshstore_base_offs + meshstore_aligned_size;
 		let enemy_datastore_base_offs = projection_matrixes_base_offs + projection_matrixes_aligned_size;
-
-		println!("-- Preallocator Report:");
-		println!("---- Alignment for UniformBuffer: {}", uniform_buffer_alignment);
-		println!("---- Meshstore Size: {}", meshstore_sizes.iter().fold(0, |x, y| x + y));
-		println!("---- ProjectionMatrixes Size: {}", projection_matrixes_sizes.iter().fold(0, |x, y| x + y));
-		println!("---- EnemyDatastore Size: {}", enemy_datastore_sizes.iter().fold(0, |x, y| x + y));
-		println!("---- Meshstore from {}", meshstore_base_offs);
-		println!("---- ProjectionMatrixes from {}", projection_matrixes_base_offs);
-		println!("---- EnemyDatastore from {}", enemy_datastore_base_offs);
+		let background_datastore_base_offs = enemy_datastore_base_offs + enemy_datastore_aligned_size;
 
 		MemoryPreallocator
 		{
-			total_size: enemy_datastore_base_offs + enemy_datastore_size,
+			total_size: background_datastore_base_offs + background_datastore_size,
 			meshstore_base: meshstore_base_offs,
 			projection_matrixes_base: projection_matrixes_base_offs,
-			enemy_datastore_base: enemy_datastore_base_offs
+			enemy_datastore_base: enemy_datastore_base_offs,
+			background_datastore_base: background_datastore_base_offs
 		}
 	}
 }
