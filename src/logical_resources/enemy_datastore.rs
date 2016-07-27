@@ -171,10 +171,18 @@ pub fn memory_management_test()
 	println!("x1000 {}(avg. {}) ns", s_rand_time, s_rand_time / 1000);
 }
 
+#[repr(C)]
+struct CharacterLocation { qrot: [[f32; 4]; 2], center_tf: [f32; 4] }
+#[repr(C)]
+struct UniformBufferData
+{
+	locations: [CharacterLocation; MAX_ENEMY_COUNT]
+}
+
 pub struct EnemyDatastore
 {
 	#[allow(dead_code)] descriptor_set_index: usize,
-	pub uniform_offset: VkDeviceSize, uniform_center_tf_offset: VkDeviceSize,
+	pub uniform_offset: VkDeviceSize,
 	pub character_indices_offset: VkDeviceSize,
 	descriptor_buffer_info: VkDescriptorBufferInfo,
 	memory_block_manager: EnemyMemoryBlockManager
@@ -186,21 +194,19 @@ impl EnemyDatastore
 		EnemyDatastore
 		{
 			descriptor_set_index: descriptor_set_index,
-			uniform_offset: offset, uniform_center_tf_offset: offset + size_vec4() * 2 * MAX_ENEMY_COUNT as VkDeviceSize,
-			character_indices_offset: offset + size_vec4() * 3 * MAX_ENEMY_COUNT as VkDeviceSize,
+			uniform_offset: offset,
+			character_indices_offset: offset + Self::required_sizes()[0],
 			descriptor_buffer_info: VkDescriptorBufferInfo(buffer.get(), offset, Self::required_sizes()[0]),
 			memory_block_manager: EnemyMemoryBlockManager::new()
 		}
 	}
 	pub fn update_instance_data(&self, mapped_range: &vk::MemoryMappedRange, index: u32, qrot1: &Quaternion<f32>, qrot2: &Quaternion<f32>, center: &Vector4<f32>)
 	{
-		let q1_range = mapped_range.range_mut::<[f32; 4]>(self.uniform_offset + size_vec4() * index as VkDeviceSize, 1);
-		let q2_range = mapped_range.range_mut::<[f32; 4]>(self.uniform_offset + size_vec4() * (MAX_ENEMY_COUNT as VkDeviceSize + index as VkDeviceSize), 1);
-		let cv_range = mapped_range.range_mut::<[f32; 4]>(self.uniform_center_tf_offset + size_vec4() * index as VkDeviceSize, 1);
+		let bufferdata_range = mapped_range.map_mut::<UniformBufferData>(self.uniform_offset);
 
-		q1_range[0] = [qrot1.i, qrot1.j, qrot1.k, qrot1.w];
-		q2_range[0] = [qrot2.i, qrot2.j, qrot2.k, qrot2.w];
-		cv_range[0] = [center.x, center.y, center.z, center.w];
+		bufferdata_range.locations[index as usize].qrot[0] = [qrot1.i, qrot1.j, qrot1.k, qrot1.w];
+		bufferdata_range.locations[index as usize].qrot[1] = [qrot2.i, qrot2.j, qrot2.k, qrot2.w];
+		bufferdata_range.locations[index as usize].center_tf = [center.x, center.y, center.z, center.w];
 	}
 	pub fn allocate_block(&mut self, mapped_range: &vk::MemoryMappedRange) -> Option<u32>
 	{
@@ -226,7 +232,7 @@ impl DeviceStore for EnemyDatastore
 {
 	fn required_sizes() -> Vec<VkDeviceSize>
 	{
-		vec![std::mem::size_of::<[[f32; 4]; MAX_ENEMY_COUNT]>() as VkDeviceSize * 3, std::mem::size_of::<u32>() as VkDeviceSize * MAX_ENEMY_COUNT as VkDeviceSize]
+		vec![std::mem::size_of::<UniformBufferData>() as VkDeviceSize, std::mem::size_of::<u32>() as VkDeviceSize * MAX_ENEMY_COUNT as VkDeviceSize]
 	}
 	fn initial_stage_data(&self, mapped_range: &vk::MemoryMappedRange)
 	{

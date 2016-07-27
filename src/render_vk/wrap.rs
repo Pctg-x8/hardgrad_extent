@@ -614,6 +614,11 @@ impl <'b> MemoryMappedRange<'b>
 			std::slice::from_raw_parts_mut::<T>(std::mem::transmute(std::mem::transmute::<_, VkDeviceSize>(self.ptr) + offset), elements)
 		}
 	}
+	pub fn map_mut<T>(&self, offset: VkDeviceSize) -> &mut T
+	{
+		let r: &mut T = unsafe { std::mem::transmute(std::mem::transmute::<_, VkDeviceSize>(self.ptr) + offset) };
+		r
+	}
 }
 impl <'b> std::ops::Drop for MemoryMappedRange<'b>
 {

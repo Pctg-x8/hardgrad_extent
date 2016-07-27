@@ -6,6 +6,7 @@ use device_resources;
 
 const MAX_BK_COUNT: VkDeviceSize = 64;
 
+#[repr(C)]
 struct UniformBufferData
 {
 	offsets: [[f32; 4]; MAX_BK_COUNT as usize]
@@ -34,16 +35,16 @@ impl DeviceStore for BackgroundDatastore
 {
 	fn required_sizes() -> Vec<VkDeviceSize>
 	{
-		vec![std::mem::size_of::<[f32; 4]>() as VkDeviceSize * MAX_BK_COUNT, std::mem::size_of::<u32>() as VkDeviceSize * MAX_BK_COUNT as VkDeviceSize]
+		vec![std::mem::size_of::<UniformBufferData>() as VkDeviceSize, std::mem::size_of::<u32>() as VkDeviceSize * MAX_BK_COUNT as VkDeviceSize]
 	}
 	fn initial_stage_data(&self, mapped_range: &vk::MemoryMappedRange)
 	{
-		let uniform_range = mapped_range.range_mut::<UniformBufferData>(self.uniform_offset, 1);
-		let index_multipliers_range = mapped_range.range_mut::<u32>(self.index_multipliers_offset, MAX_BK_COUNT as usize);
+		let uniform_range = mapped_range.map_mut::<UniformBufferData>(self.uniform_offset);
+		let index_multipliers_range = mapped_range.map_mut::<[u32; MAX_BK_COUNT as usize]>(self.index_multipliers_offset);
 
-		index_multipliers_range.copy_from_slice(&[0u32; MAX_BK_COUNT as usize]);
+		*index_multipliers_range = [0u32; MAX_BK_COUNT as usize];
 
-		uniform_range[0].offsets[0] = [0.0f32, 0.0f32, 0.0f32, 1.0f32];
+		uniform_range.offsets[0] = [0.0f32, 0.0f32, 0.0f32, 1.0f32];
 		index_multipliers_range[0] = 1;
 	}
 }

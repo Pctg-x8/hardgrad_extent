@@ -17,10 +17,13 @@ layout(std140, set = 0, binding = 0) uniform ProjectionMatrix
 {
 	mat4 ortho_projection_matrix, pixel_projection_matrix, persp_projection_matrix;
 };
-layout(std140, set = 1, binding = 0) uniform CharacterLocation
+struct CharacterLocation
 {
-	vec4 rotq[MAX_ENEMY_COUNT * 2];
-	vec4 center_tf[MAX_ENEMY_COUNT];
+	vec4 rotq[2], center_tf;
+};
+layout(std140, set = 1, binding = 0) uniform CharacterLocations
+{
+	CharacterLocation locations[MAX_ENEMY_COUNT];
 };
 
 vec4 qConjugate(vec4 iq) { return vec4(-iq.xyz, iq.w); }
@@ -35,8 +38,8 @@ vec4 qRot(vec3 in_vec, vec4 rq)
 }
 vec4 vertex_transform(vec4 base, uint instance_index)
 {
-	vec4 q = rotq[instance_index + MAX_ENEMY_COUNT * gl_InvocationID];
-	return (vec4(qRot(base.xyz, q).xyz, 1.0f) + center_tf[instance_index]) * ortho_projection_matrix;
+	vec4 q = locations[instance_index].rotq[gl_InvocationID];
+	return (vec4(qRot(base.xyz, q).xyz, 1.0f) + locations[instance_index].center_tf) * ortho_projection_matrix;
 }
 
 void main()
