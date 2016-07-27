@@ -77,7 +77,21 @@ fn create_instance() -> vk::Instance
 fn diagnose_adapter(server_con: &XServerConnection, adapter: &vk::PhysicalDevice, queue_index: u32)
 {
 	// Feature Check //
-	// let features = adapter.get_features();
+	let features = adapter.get_features();
+	println!("-- adapter features");
+	println!("---- independentBlend: {}", features.independentBlend);
+	println!("---- geometryShader: {}", features.geometryShader);
+	println!("---- multiDrawIndirect: {}", features.multiDrawIndirect);
+	println!("---- drawIndirectFirstInstance: {}", features.drawIndirectFirstInstance);
+	println!("---- shaderTessellationAndGeometryPointSize: {}", features.shaderTessellationAndGeometryPointSize);
+	println!("---- depthClamp: {}", features.depthClamp);
+	println!("---- depthBiasClamp: {}", features.depthBiasClamp);
+	println!("---- wideLines: {}", features.wideLines);
+	println!("---- alphaToOne: {}", features.alphaToOne);
+	println!("---- multiViewport: {}", features.multiViewport);
+	println!("---- shaderCullDistance: {}", features.shaderCullDistance);
+	println!("---- shaderClipDistance: {}", features.shaderClipDistance);
+	println!("---- shaderResourceResidency: {}", features.shaderResourceResidency);
 	// if features.depthClamp == false as VkBool32 { panic!("DepthClamp Feature is required in device"); }
 
 	// Vulkan and XCB Integration Check //
@@ -283,6 +297,64 @@ fn main()
 
 	let dev_layers = [DEBUG_LAYER_NAME.as_ptr()];
 	let dev_extensions = [SWAPCHAIN_EXTENSION_NAME.as_ptr()];
+	let features = VkPhysicalDeviceFeatures
+	{
+		robustBufferAccess: 0,
+		fullDrawIndexUint32: 0,
+		imageCubeArray: 0,
+		independentBlend: 0,
+		geometryShader: 1,
+		tessellationShader: 0,
+		sampleRateShading: 0,
+		dualSrcBlend: 0,
+		logicOp: 0,
+		multiDrawIndirect: 0,
+		drawIndirectFirstInstance: 0,
+		depthClamp: 0,
+		depthBiasClamp: 0,
+		fillModeNonSolid: 0,
+		depthBounds: 0,
+		wideLines: 0,
+		largePoints: 0,
+		alphaToOne: 0,
+		multiViewport: 0,
+		samplerAnisotropy: 0,
+		textureCompressionETC2: 0,
+		textureCompressionASTC_LDR: 0,
+		textureCompressionBC: 0,
+		occlusionQueryPrecise: 0,
+		pipelineStatisticsQuery: 0,
+		vertexPipelineStoresAndAtomics: 0,
+		fragmentStoresAndAtomics: 0,
+		shaderTessellationAndGeometryPointSize: 1,
+		shaderImageGatherExtended: 0,
+		shaderStorageImageExtendedFormats: 0,
+		shaderStorageImageMultisample: 0,
+		shaderStorageImageReadWithoutFormat: 0,
+		shaderStorageImageWriteWithoutFormat: 0,
+		shaderUniformBufferArrayDynamicIndexing: 0,
+		shaderSampledImageArrayDynamicIndexing: 0,
+		shaderStorageBufferArrayDynamicIndexing: 0,
+		shaderStorageImageArrayDynamicIndexing: 0,
+		shaderClipDistance: 1,
+		shaderCullDistance: 1,
+		shaderFloat64: 0,
+		shaderInt64: 0,
+		shaderInt16: 0,
+		shaderResourceResidency: 0,
+		shaderResoruceMinLod: 0,
+		sparseBinding: 0,
+		sparseResidencyBuffer: 0,
+		sparseResidencyImage2D: 0,
+		sparseResidencyImage3D: 0,
+		sparseResidency2Samples: 0,
+		sparseResidency4SAmples: 0,
+		sparseResidency8Samples: 0,
+		sparseResidency16Samples: 0,
+		sparseResidencyAliased: 0,
+		variableMultisampleRate: 0,
+		inheritedQueries: 0
+	};
 	let (device, transfer_queue_index) = if gqf_index == tqf_index
 	{
 		// Use same queue
@@ -300,7 +372,7 @@ fn main()
 			queueCreateInfoCount: queue_infos.len() as u32, pQueueCreateInfos: queue_infos.as_ptr(),
 			enabledLayerCount: dev_layers.len() as u32, ppEnabledLayerNames: dev_layers.as_ptr() as *const *const i8,
 			enabledExtensionCount: dev_extensions.len() as u32, ppEnabledExtensionNames: dev_extensions.as_ptr() as *const *const i8,
-			pEnabledFeatures: std::ptr::null()
+			pEnabledFeatures: &features
 		};
 		(adapter.create_device(&device_info).unwrap(), queue_count - 1)
 	}
@@ -327,7 +399,7 @@ fn main()
 			queueCreateInfoCount: queue_infos.len() as u32, pQueueCreateInfos: queue_infos.as_ptr(),
 			enabledLayerCount: dev_layers.len() as u32, ppEnabledLayerNames: dev_layers.as_ptr() as *const *const i8,
 			enabledExtensionCount: dev_extensions.len() as u32, ppEnabledExtensionNames: dev_extensions.as_ptr() as *const *const i8,
-			pEnabledFeatures: std::ptr::null()
+			pEnabledFeatures: &features
 		};
 		(adapter.create_device(&device_info).unwrap(), 0)
 	};
