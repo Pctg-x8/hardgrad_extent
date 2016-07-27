@@ -211,7 +211,6 @@ pub struct PipelineCommonStore<'d>
 {
 	device_ref: &'d vk::Device<'d>,
 	pub cache: vk::PipelineCache<'d>,
-	pub layout_ub2_pc1: vk::PipelineLayout<'d>,
 	pub layout_ub2: vk::PipelineLayout<'d>,
 	pub layout_ub1_s1: vk::PipelineLayout<'d>,
 	pub layout_ub2_g: vk::PipelineLayout<'d>,
@@ -227,9 +226,6 @@ impl <'d> PipelineCommonStore<'d>
 		{
 			device_ref: device,
 			cache: device.create_empty_pipeline_cache().unwrap(),
-			layout_ub2_pc1: device.create_pipeline_layout(&[
-				*descriptor_sets.set_layout_ub1_vg, *descriptor_sets.set_layout_ub1
-			], &[VkPushConstantRange(VK_SHADER_STAGE_VERTEX_BIT, 0, std::mem::size_of::<u32>() as u32)]).unwrap(),
 			layout_ub2: device.create_pipeline_layout(&[*descriptor_sets.set_layout_ub1_vg, *descriptor_sets.set_layout_ub1], &[]).unwrap(),
 			layout_ub1_s1: device.create_pipeline_layout(&[
 				*descriptor_sets.set_layout_ub1_vg, *descriptor_sets.set_layout_s1
@@ -254,6 +250,7 @@ impl <'d> EnemyRenderer<'d>
 		let vshader_form = VertexShaderWithInputForm::new(commons.device_ref, "shaders/EnemyRenderV.spv",
 			Box::new([VertexInputBindingDesc::per_vertex::<Position>(0), VertexInputBindingDesc::per_instance::<u32>(1)]),
 			Box::new([VkVertexInputAttributeDescription(0, 0, VkFormat::R32G32B32A32_SFLOAT, 0), VkVertexInputAttributeDescription(1, 1, VkFormat::R32_UINT, 0)]));
+		let gshader = commons.device_ref.create_shader_module_from_file("shaders/EnemyDuplicator.spv").unwrap();
 
 		let viewports = [VkViewport(0.0f32, 0.0f32, fb_width as f32, fb_height as f32, 0.0f32, 1.0f32)];
 		let scissors = [VkRect2D(VkOffset2D(0, 0), framebuffer_size)];
@@ -272,11 +269,12 @@ impl <'d> EnemyRenderer<'d>
 		};
 		let shader_stages =
 		[
-			vshader_form.as_shader_stage(&commons.default_shader_entry_point, Some(&shader_const_specialization)),
+			vshader_form.as_shader_stage(&commons.default_shader_entry_point, None),
+			ShaderStage::geometry(&gshader, &commons.default_shader_entry_point, Some(&shader_const_specialization)),
 			ShaderStage::fragment(&commons.through_color_fs, &commons.default_shader_entry_point, None)
 		];
 		let vertex_input_state = vshader_form.as_vertex_input_state();
-		let input_assembly_state = InputAssemblyState::new(VkPrimitiveTopology::LineList, false);
+		let input_assembly_state = InputAssemblyState::new(VkPrimitiveTopology::LineListWithAdjacency, false);
 		let viewport_state = ViewportState::new(Box::new(viewports), Box::new(scissors));
 		let rasterization_state: VkPipelineRasterizationStateCreateInfo = Default::default();
 		let multisample_state: VkPipelineMultisampleStateCreateInfo = Default::default();
@@ -287,13 +285,13 @@ impl <'d> EnemyRenderer<'d>
 			pVertexInputState: &vertex_input_state, pInputAssemblyState: &input_assembly_state,
 			pViewportState: &*viewport_state, pRasterizationState: &rasterization_state,
 			pMultisampleState: &multisample_state, pColorBlendState: &*blend_state,
-			layout: commons.layout_ub2_pc1.get(), renderPass: render_pass.get(),
+			layout: commons.layout_ub2_g.get(), renderPass: render_pass.get(),
 			.. Default::default()
 		};
 
 		EnemyRenderer
 		{
-			layout_ref: &commons.layout_ub2_pc1,
+			layout_ref: &commons.layout_ub2_g,
 			state: commons.device_ref.create_graphics_pipelines(&commons.cache, &[pipeline_info]).unwrap().into_iter().next().unwrap()
 		}
 	}

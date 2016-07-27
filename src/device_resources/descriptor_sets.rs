@@ -42,7 +42,7 @@ impl <'d> DescriptorSets<'d>
 		let layout = device.create_descriptor_set_layout(&[ub1_set_layout_bindings]).unwrap();
 		let layout_s1 = device.create_descriptor_set_layout(&[s1_set_layout_bindings]).unwrap();
 		let layout_ub1_g = device.create_descriptor_set_layout(&[ub1_g_set_layout_bindings]).unwrap();
-		let sets = pool.allocate_sets(&[*layout_ub1_vg, *layout, *layout_ub1_g, *layout_s1]).unwrap();
+		let sets = pool.allocate_sets(&[*layout_ub1_vg, *layout_ub1_g, *layout_ub1_g, *layout_s1]).unwrap();
 
 		DescriptorSets
 		{

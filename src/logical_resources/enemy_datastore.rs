@@ -11,7 +11,6 @@ use rand::Rng;
 use time;
 
 fn size_vec4() -> VkDeviceSize { std::mem::size_of::<[f32; 4]>() as VkDeviceSize }
-const ENEMY_DATA_COUNT: VkDeviceSize = MAX_ENEMY_COUNT as VkDeviceSize + 1;
 
 type BlockIndexRange = std::ops::Range<u32>;
 enum FreeOperation
@@ -30,11 +29,11 @@ impl EnemyMemoryBlockManager
 	fn new() -> Self
 	{
 		let mut fl = std::collections::LinkedList::<BlockIndexRange>::new();
-		fl.push_back(1 .. MAX_ENEMY_COUNT as u32);
+		fl.push_back(0 .. (MAX_ENEMY_COUNT as u32 - 1));
 
 		EnemyMemoryBlockManager { freelist: fl }
 	}
-	fn free_all(&mut self) { self.freelist.clear(); self.freelist.push_back(1 .. MAX_ENEMY_COUNT as u32); }
+	fn free_all(&mut self) { self.freelist.clear(); self.freelist.push_back(0 .. (MAX_ENEMY_COUNT as u32 - 1)); }
 	fn allocate(&mut self) -> Option<u32>
 	{
 		match self.freelist.pop_front()
@@ -94,7 +93,7 @@ impl EnemyMemoryBlockManager
 					}
 					else { FreeOperation::AppendBack(i) }
 				}
-				else if target == b.start - 1 { FreeOperation::AppendFront(i) }
+				else if b.start > 0 && target == b.start - 1 { FreeOperation::AppendFront(i) }
 				else if target < b.start { FreeOperation::InsertNew(i) }
 				else { recursive(iter, target) }
 			}
@@ -187,18 +186,16 @@ impl EnemyDatastore
 		EnemyDatastore
 		{
 			descriptor_set_index: descriptor_set_index,
-			uniform_offset: offset, uniform_center_tf_offset: offset + size_vec4() * 2 * ENEMY_DATA_COUNT,
-			character_indices_offset: offset + size_vec4() * 3 * ENEMY_DATA_COUNT,
+			uniform_offset: offset, uniform_center_tf_offset: offset + size_vec4() * 2 * MAX_ENEMY_COUNT as VkDeviceSize,
+			character_indices_offset: offset + size_vec4() * 3 * MAX_ENEMY_COUNT as VkDeviceSize,
 			descriptor_buffer_info: VkDescriptorBufferInfo(buffer.get(), offset, Self::required_sizes()[0]),
 			memory_block_manager: EnemyMemoryBlockManager::new()
 		}
 	}
 	pub fn update_instance_data(&self, mapped_range: &vk::MemoryMappedRange, index: u32, qrot1: &Quaternion<f32>, qrot2: &Quaternion<f32>, center: &Vector4<f32>)
 	{
-		assert!(index != 0, "Index 0 is reserved for unused");
-
 		let q1_range = mapped_range.range_mut::<[f32; 4]>(self.uniform_offset + size_vec4() * index as VkDeviceSize, 1);
-		let q2_range = mapped_range.range_mut::<[f32; 4]>(self.uniform_offset + size_vec4() * (ENEMY_DATA_COUNT + index as VkDeviceSize), 1);
+		let q2_range = mapped_range.range_mut::<[f32; 4]>(self.uniform_offset + size_vec4() * (MAX_ENEMY_COUNT as VkDeviceSize + index as VkDeviceSize), 1);
 		let cv_range = mapped_range.range_mut::<[f32; 4]>(self.uniform_center_tf_offset + size_vec4() * index as VkDeviceSize, 1);
 
 		q1_range[0] = [qrot1.i, qrot1.j, qrot1.k, qrot1.w];
@@ -218,31 +215,23 @@ impl EnemyDatastore
 	}
 	fn enable_instance(&self, mapped_range: &vk::MemoryMappedRange, index: u32)
 	{
-		mapped_range.range_mut::<u32>(self.character_indices_offset, MAX_ENEMY_COUNT)[(index - 1) as usize] = 1;
+		mapped_range.range_mut::<u32>(self.character_indices_offset, MAX_ENEMY_COUNT)[index as usize] = 1;
 	}
 	fn disable_instance(&self, mapped_range: &vk::MemoryMappedRange, index: u32)
 	{
-		mapped_range.range_mut::<u32>(self.character_indices_offset, MAX_ENEMY_COUNT)[(index - 1) as usize] = 0;
+		mapped_range.range_mut::<u32>(self.character_indices_offset, MAX_ENEMY_COUNT)[index as usize] = 0;
 	}
 }
 impl DeviceStore for EnemyDatastore
 {
 	fn required_sizes() -> Vec<VkDeviceSize>
 	{
-		vec![std::mem::size_of::<[f32; 4]>() as VkDeviceSize * ENEMY_DATA_COUNT * 3, std::mem::size_of::<u32>() as VkDeviceSize * MAX_ENEMY_COUNT as VkDeviceSize]
+		vec![std::mem::size_of::<[[f32; 4]; MAX_ENEMY_COUNT]>() as VkDeviceSize * 3, std::mem::size_of::<u32>() as VkDeviceSize * MAX_ENEMY_COUNT as VkDeviceSize]
 	}
 	fn initial_stage_data(&self, mapped_range: &vk::MemoryMappedRange)
 	{
-		// Setup Invalid Data
-		let first_q_ref = mapped_range.range_mut::<[f32; 4]>(self.uniform_offset, 1);
-		let second_q_ref = mapped_range.range_mut::<[f32; 4]>(self.uniform_offset + size_vec4() * ENEMY_DATA_COUNT, 1);
-		let center_tf_ref = mapped_range.range_mut::<[f32; 4]>(self.uniform_center_tf_offset, 1);
 		let instance_switches_ref = mapped_range.range_mut::<u32>(self.character_indices_offset, MAX_ENEMY_COUNT);
-
-		first_q_ref[0] = [0.0f32; 4];
-		second_q_ref[0] = [0.0f32; 4];
-		center_tf_ref[0] = [0.0f32; 4];
-		for i in 0 .. MAX_ENEMY_COUNT { instance_switches_ref[i] = 0u32; }
+		instance_switches_ref.copy_from_slice(&[0u32; MAX_ENEMY_COUNT]);
 	}
 }
 impl HasDescriptor for EnemyDatastore

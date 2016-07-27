@@ -212,18 +212,6 @@ fn create_framebuffers<'d>(views: &Vec<vk::ImageView<'d>>, rp: &vk::RenderPass<'
 	}).collect::<Vec<_>>()
 }
 
-// barrier buffer memory without transitioning ownership
-fn buffer_memory_barrier(buffer: &vk::Buffer, view_range: std::ops::Range<VkDeviceSize>, src_access_mask: VkAccessFlags, dst_access_mask: VkAccessFlags) -> VkBufferMemoryBarrier
-{
-	VkBufferMemoryBarrier
-	{
-		sType: VkStructureType::BufferMemoryBarrier, pNext: std::ptr::null(),
-		srcAccessMask: src_access_mask, dstAccessMask: dst_access_mask,
-		srcQueueFamilyIndex: VK_QUEUE_FAMILY_IGNORED, dstQueueFamilyIndex: VK_QUEUE_FAMILY_IGNORED,
-		buffer: buffer.get(), offset: view_range.start, size: view_range.end - view_range.start
-	}
-}
-
 struct Enemy
 {
 	block_index: u32, left: f32, appear_time: time::PreciseTime
@@ -451,7 +439,7 @@ fn main()
 
 	// Setup Descriptors //
 	let descriptor_infos = {
-		let descriptor_providers: [&HasDescriptor; 3] = [&projection_matrixes, &enemy_datastore, &debug_info_resources];
+		let descriptor_providers: [&HasDescriptor; 4] = [&projection_matrixes, &enemy_datastore, &background_datastore, &debug_info_resources];
 		descriptor_providers.into_iter().flat_map(|x| x.write_descriptor_info(&descriptor_sets)).collect::<Vec<_>>()
 	};
 	device.update_descriptor_sets(&descriptor_infos, &[]);
@@ -488,14 +476,10 @@ fn main()
 			.bind_pipeline(&enemy_render.state)
 			.bind_descriptor_sets(enemy_render.layout_ref, &[descriptor_sets.sets[0], descriptor_sets.sets[1]], &[])
 			.bind_vertex_buffers(&vertex_buffers, &[meshstore.unit_cube_vertices_offset, enemy_datastore.character_indices_offset])
-			.bind_index_buffer(&memory_bound_resources.buffer, meshstore.unit_cube_indices_offset)
-			.push_constants(enemy_render.layout_ref, VK_SHADER_STAGE_VERTEX_BIT, 0, &[0u32])
-			.draw_indexed(24, MAX_ENEMY_COUNT as u32, 0)
-			.push_constants(enemy_render.layout_ref, VK_SHADER_STAGE_VERTEX_BIT, 0, &[1u32])
-			.draw_indexed(24, MAX_ENEMY_COUNT as u32, 0)
+			.draw(4, MAX_ENEMY_COUNT as u32)
 			.bind_pipeline(&background_render.state)
 			.bind_descriptor_sets(background_render.layout_ref, &[descriptor_sets.sets[0], descriptor_sets.sets[2]], &[])
-			.bind_vertex_buffers(&[**memory_bound_resources.buffer], &[meshstore.unit_plane_vertices_offset])
+			.bind_vertex_buffers(&vertex_buffers, &[meshstore.unit_plane_vertices_offset, background_datastore.index_multipliers_offset])
 			.draw(4, 1)
 			.bind_pipeline(&debug_render.state)
 			.bind_descriptor_sets(debug_render.layout_ref, &[descriptor_sets.sets[0], descriptor_sets.sets[di_desc as usize]], &[])
