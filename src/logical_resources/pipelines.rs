@@ -320,7 +320,7 @@ impl <'d> BackgroundRenderer<'d>
 			VkSpecializationMapEntry(12, (std::mem::size_of::<f32>() * 2) as u32, std::mem::size_of::<f32>()),
 			VkSpecializationMapEntry(13, (std::mem::size_of::<f32>() * 3) as u32, std::mem::size_of::<f32>())
 		];
-		let shader_specialization_data = [0.25f32, 0.9875f32, 0.5f32, 1.0f32];
+		let shader_specialization_data = [0.125f32, 0.5f32, 0.25f32, 0.75f32];
 		let shader_const_specialization = VkSpecializationInfo
 		{
 			mapEntryCount: shader_specialization_map_entries.len() as u32, pMapEntries: shader_specialization_map_entries.as_ptr(),
@@ -337,7 +337,7 @@ impl <'d> BackgroundRenderer<'d>
 		let viewport_state = ViewportState::new(Box::new(viewports), Box::new(scissors));
 		let rasterization_state: VkPipelineRasterizationStateCreateInfo = Default::default();
 		let multisample_state: VkPipelineMultisampleStateCreateInfo = Default::default();
-		let blend_state = ColorBlendState::new(Box::new([ColorBlendAttachmentStates::no_blend()]));
+		let blend_state = ColorBlendState::new(Box::new([ColorBlendAttachmentStates::premultiplied_alpha()]));
 		let pipeline_info = VkGraphicsPipelineCreateInfo
 		{
 			stageCount: shader_stages.len() as u32, pStages: shader_stages.as_ptr(),

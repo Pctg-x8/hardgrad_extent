@@ -25,7 +25,7 @@ layout(std140, binding = 0, set = 1) uniform BackgroundInststancingParams
 
 vec4 vertex_transform(vec4 base, vec4 displacement)
 {
-	return (base + displacement)/* * persp_projection_matrix*/;
+	return (base + displacement) * persp_projection_matrix;
 }
 
 void main()
@@ -33,10 +33,10 @@ void main()
 	if(instance_id[0] > 0)
 	{
 		vec4 offset_layers = offset[instance_id[0] - 1];
-		if(offset_layers.w >= gl_InvocationID)
+		if(offset_layers.w > gl_InvocationID)
 		{
-			vec4 offsetter = vec4(0.0f, 0.0f, gl_InvocationID, 0.0f) + vec4(offset_layers.xyz, 0.0f);
-			color = vec4(1.0f, 1.0f, 1.0f, 1.0f);
+			vec4 offsetter = vec4(0.0f, 0.0f, gl_InvocationID * 1.5f, 0.0f) + vec4(offset_layers.xyz, 0.0f);
+			color = vec4(r, g, b, a);
 			gl_Position = vertex_transform(gl_in[0].gl_Position, offsetter); EmitVertex();
 			gl_Position = vertex_transform(gl_in[1].gl_Position, offsetter); EmitVertex();
 			gl_Position = vertex_transform(gl_in[2].gl_Position, offsetter); EmitVertex();

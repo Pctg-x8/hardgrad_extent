@@ -44,7 +44,7 @@ impl DeviceStore for BackgroundDatastore
 
 		*index_multipliers_range = [0u32; MAX_BK_COUNT as usize];
 
-		uniform_range.offsets[0] = [0.0f32, 0.0f32, 0.0f32, 1.0f32];
+		uniform_range.offsets[0] = [0.0f32, 0.0f32, -20.0f32, 10.0f32];
 		index_multipliers_range[0] = 1;
 	}
 }

@@ -17,6 +17,7 @@ use xcbw::*;
 mod vertex_formats;
 mod device_resources;
 mod logical_resources;
+mod utils;
 use nalgebra::*;
 use rand::distributions::*;
 
@@ -261,7 +262,7 @@ fn main()
 	// init xcb(connection to display)
 	let xcon = XServerConnection::connect();
 
-	logical_resources::enemy_datastore::memory_management_test();
+	utils::memory_management_test();
 
 	// init vulkan
 	let instance = create_instance();
@@ -450,6 +451,7 @@ fn main()
 		meshstore.initial_stage_data(&mapped_range);
 		projection_matrixes.initial_stage_data(&mapped_range);
 		enemy_datastore.initial_stage_data(&mapped_range);
+		background_datastore.initial_stage_data(&mapped_range);
 	}
 
 	// Double-buffered object storages //
@@ -473,14 +475,14 @@ fn main()
 		final_commands.begin(cb_index).unwrap()
 			.resource_barrier(VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, &[], &[], &[image_barrier])
 			.begin_render_pass(&final_framebuffers[cb_index], &simple_pass, render_area, &clear_values, false)
+			.bind_pipeline(&background_render.state)
+			.bind_descriptor_sets(background_render.layout_ref, &[descriptor_sets.sets[0], descriptor_sets.sets[2]], &[])
+			.bind_vertex_buffers(&vertex_buffers, &[meshstore.unit_plane_vertices_offset, background_datastore.index_multipliers_offset])
+			.draw(4, 16)
 			.bind_pipeline(&enemy_render.state)
 			.bind_descriptor_sets(enemy_render.layout_ref, &[descriptor_sets.sets[0], descriptor_sets.sets[1]], &[])
 			.bind_vertex_buffers(&vertex_buffers, &[meshstore.unit_cube_vertices_offset, enemy_datastore.character_indices_offset])
 			.draw(4, MAX_ENEMY_COUNT as u32)
-			.bind_pipeline(&background_render.state)
-			.bind_descriptor_sets(background_render.layout_ref, &[descriptor_sets.sets[0], descriptor_sets.sets[2]], &[])
-			.bind_vertex_buffers(&vertex_buffers, &[meshstore.unit_plane_vertices_offset, background_datastore.index_multipliers_offset])
-			.draw(4, 1)
 			.bind_pipeline(&debug_render.state)
 			.bind_descriptor_sets(debug_render.layout_ref, &[descriptor_sets.sets[0], descriptor_sets.sets[di_desc as usize]], &[])
 			.bind_vertex_buffers(&[**debug_info_resources.buffer], &[0])

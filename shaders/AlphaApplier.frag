@@ -10,6 +10,7 @@ layout(set = 1, binding = 0) uniform sampler2D intex;
 
 void main()
 {
-	target = color;
-	target.a = texture(intex, uv).r;
+	float value = texture(intex, uv).r;
+	target = color * value;
+	target.a = value;
 }

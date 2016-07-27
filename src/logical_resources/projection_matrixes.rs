@@ -39,7 +39,7 @@ impl DeviceStore for ProjectionMatrixes
 		let (aspect, scaling) = (width as f32 / height as f32, 35.0f32);
 		let ortho_matrix = OrthographicMatrix3::new(-scaling, scaling, 0.0f32, scaling * aspect, -200.0f32, 100.0f32);
 		let pixel_matrix = OrthographicMatrix3::new(0.0f32, width as f32, 0.0f32, height as f32, -2.0f32, 1.0f32);
-		let persp_matrix = PerspectiveMatrix3::new(aspect, 70.0f32, -200.0f32, 100.0f32);
+		let persp_matrix = PerspectiveMatrix3::new(aspect, 70.0f32.to_radians(), 0.0f32, 100.0f32);
 
 		{
 			let r = mapped_range.range_mut::<f32>(self.ortho_offset, 16);
