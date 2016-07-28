@@ -11,6 +11,8 @@ layout(constant_id = 13) const float a = 0.0f;
 
 layout(location = 0) in uint instance_id[];
 layout(location = 0) out vec4 color;
+in gl_PerVertex { vec4 gl_Position; } gl_in[];
+out gl_PerVertex { vec4 gl_Position; };
 
 const int MAX_BK_COUNT = 64;
 

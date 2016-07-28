@@ -6,7 +6,7 @@ layout(location = 0) in vec4 pos;
 layout(location = 1) in uint character_index_mult;
 
 layout(location = 0) out uint instance_index;
-
+out gl_PerVertex { vec4 gl_Position; };
 
 void main()
 {
