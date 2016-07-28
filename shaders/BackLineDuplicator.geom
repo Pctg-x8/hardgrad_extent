@@ -20,30 +20,31 @@ layout(std140, set = 0, binding = 0) uniform ProjectionMatrix
 {
 	mat4 ortho_projection_matrix, pixel_projection_matrix, persp_projection_matrix;
 };
+struct BackgroundInstance { vec4 offset, scale; };
 layout(std140, binding = 0, set = 1) uniform BackgroundInststancingParams
 {
-	vec4 offset[MAX_BK_COUNT];
+	BackgroundInstance instances[MAX_BK_COUNT];
 };
 
-vec4 vertex_transform(vec4 base, vec4 displacement)
+vec4 vertex_transform(vec4 base, vec4 displacement, vec4 scale)
 {
-	return (base + displacement) * persp_projection_matrix;
+	return (base * scale + displacement) * persp_projection_matrix;
 }
 
 void main()
 {
 	if(instance_id[0] > 0)
 	{
-		vec4 offset_layers = offset[instance_id[0] - 1];
-		if(offset_layers.w > gl_InvocationID)
+		BackgroundInstance instance_data = instances[instance_id[0] - 1];
+		if(instance_data.offset.w > gl_InvocationID)
 		{
-			vec4 offsetter = vec4(0.0f, 0.0f, gl_InvocationID * 1.5f, 0.0f) + vec4(offset_layers.xyz, 0.0f);
+			vec4 offsetter = vec4(0.0f, 0.0f, gl_InvocationID * 1.25f, 0.0f) + vec4(instance_data.offset.xyz, 0.0f);
 			color = vec4(r, g, b, a);
-			gl_Position = vertex_transform(gl_in[0].gl_Position, offsetter); EmitVertex();
-			gl_Position = vertex_transform(gl_in[1].gl_Position, offsetter); EmitVertex();
-			gl_Position = vertex_transform(gl_in[2].gl_Position, offsetter); EmitVertex();
-			gl_Position = vertex_transform(gl_in[3].gl_Position, offsetter); EmitVertex();
-			gl_Position = vertex_transform(gl_in[0].gl_Position, offsetter); EmitVertex();
+			gl_Position = vertex_transform(gl_in[0].gl_Position, offsetter, instance_data.scale); EmitVertex();
+			gl_Position = vertex_transform(gl_in[1].gl_Position, offsetter, instance_data.scale); EmitVertex();
+			gl_Position = vertex_transform(gl_in[2].gl_Position, offsetter, instance_data.scale); EmitVertex();
+			gl_Position = vertex_transform(gl_in[3].gl_Position, offsetter, instance_data.scale); EmitVertex();
+			gl_Position = vertex_transform(gl_in[0].gl_Position, offsetter, instance_data.scale); EmitVertex();
 			EndPrimitive();
 		}
 	}

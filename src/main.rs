@@ -5,6 +5,7 @@ extern crate rand;
 extern crate time;
 extern crate freetype;
 extern crate unicode_normalization;
+extern crate thread_scoped;
 #[macro_use] mod vkffi;
 mod render_vk;
 
@@ -478,7 +479,8 @@ fn main()
 		// Present -> Render //
 		if fence.get_status().is_ok()
 		{
-			debug_info_resources.update_text_data(&dt_mapped_range, render_start_time.to(time::PreciseTime::now()).num_microseconds().unwrap() as f32 / 1000.0f32, enemy_counter);
+			let delta_time = render_start_time.to(time::PreciseTime::now());
+			debug_info_resources.update_text_data(&dt_mapped_range, delta_time.num_microseconds().unwrap() as f32 / 1000.0f32, enemy_counter);
 			fence.reset().unwrap();
 			swapchain.present(&graphics_queue, index_render_to, &[]).unwrap();
 			index_render_to = swapchain.acquire_next_image(&render_target_sem).unwrap();
@@ -491,6 +493,7 @@ fn main()
 			graphics_queue.submit_commands(&[final_commands[index_render_to as usize]], &wait_semaphores, &[], Some(&fence)).unwrap();
 			render_start_time = time::PreciseTime::now();
 			require_transfer = false;
+			background_datastore.update(&mapped_range, &mut randomizer, delta_time);
 		}
 
 		if prev_frame_time.to(time::PreciseTime::now()) >= time::Duration::milliseconds(8)

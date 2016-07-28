@@ -588,6 +588,12 @@ pub struct MemoryMappedRange<'b>
 {
 	memory_ref: &'b DeviceMemory<'b>, ptr: *mut c_void
 }
+#[derive(Clone, Copy)]
+pub struct SendableMemoryMappedRange<'d>
+{
+	memory_ref: &'d DeviceMemory<'d>, ptr: usize
+}
+unsafe impl <'d> std::marker::Send for SendableMemoryMappedRange<'d> {}
 impl <'d> DeviceMemory<'d>
 {
 	pub fn map(&'d self, range: std::ops::Range<VkDeviceSize>) -> Result<MemoryMappedRange<'d>, VkResult>
@@ -606,6 +612,25 @@ impl <'d> DeviceMemory<'d>
 	}
 }
 impl <'b> MemoryMappedRange<'b>
+{
+	pub fn range_mut<T>(&self, offset: VkDeviceSize, elements: usize) -> &mut [T]
+	{
+		unsafe
+		{
+			std::slice::from_raw_parts_mut::<T>(std::mem::transmute(std::mem::transmute::<_, VkDeviceSize>(self.ptr) + offset), elements)
+		}
+	}
+	pub fn map_mut<T>(&self, offset: VkDeviceSize) -> &mut T
+	{
+		let r: &mut T = unsafe { std::mem::transmute(std::mem::transmute::<_, VkDeviceSize>(self.ptr) + offset) };
+		r
+	}
+	pub fn as_sendable(&self) -> SendableMemoryMappedRange
+	{
+		SendableMemoryMappedRange { memory_ref: self.memory_ref, ptr: unsafe { std::mem::transmute(self.ptr) } }
+	}
+}
+impl <'b> SendableMemoryMappedRange<'b>
 {
 	pub fn range_mut<T>(&self, offset: VkDeviceSize, elements: usize) -> &mut [T]
 	{

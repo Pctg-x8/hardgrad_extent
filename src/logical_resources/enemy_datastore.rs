@@ -6,7 +6,6 @@ use traits::*;
 use device_resources;
 use constants::*;
 use nalgebra::*;
-use time;
 use utils::*;
 
 #[repr(C)]
