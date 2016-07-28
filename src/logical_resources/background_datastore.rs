@@ -39,10 +39,10 @@ impl BackgroundDatastore
 	}
 	pub fn update(&self, mapped_range: &vk::MemoryMappedRange, mut randomizer: &mut rand::Rng, delta_time: time::Duration)
 	{
-		let delta_ms = delta_time.num_microseconds().unwrap_or(0) as f32 / 1000.0f32;
+		let delta_sec = delta_time.num_microseconds().unwrap_or(0) as f32 / (1000.0f32 * 1000.0f32);
 		let uniform_range = mapped_range.map_mut::<UniformBufferData>(self.uniform_offset);
 		let index_multipliers_range = mapped_range.map_mut::<[u32; MAX_BK_COUNT as usize]>(self.index_multipliers_offset);
-		let mut rrange = rand::distributions::Range::new(0, 64 * 64);
+		let mut rrange = rand::distributions::Range::new(0, 64 * 4);
 		let mut left_range = rand::distributions::Range::new(-10.0f32, 10.0f32);
 		let mut count_range = rand::distributions::Range::new(2, 10);
 		let mut scale_range = rand::distributions::Range::new(1.0f32, 3.0f32);
@@ -61,7 +61,7 @@ impl BackgroundDatastore
 			}
 			else
 			{
-				uniform_range.instances[i].offset[1] += delta_ms / 32.0f32;
+				uniform_range.instances[i].offset[1] += delta_sec * 16.0f32;
 				if uniform_range.instances[i].offset[1] >= 20.0f32
 				{
 					index_multipliers_range[i] = 0;
