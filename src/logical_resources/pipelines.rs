@@ -4,6 +4,7 @@ use std;
 use device_resources;
 use traits::*;
 use vertex_formats::*;
+use structures;
 
 impl std::default::Default for VkPipelineRasterizationStateCreateInfo
 {
@@ -347,6 +348,63 @@ impl <'d> BackgroundRenderer<'d>
 		};
 
 		BackgroundRenderer
+		{
+			layout_ref: &commons.layout_uniform,
+			state: commons.device_ref.create_graphics_pipelines(&commons.cache, &[pipeline_info]).unwrap().into_iter().next().unwrap()
+		}
+	}
+}
+pub struct PlayerRenderer<'d>
+{
+	pub layout_ref: &'d vk::PipelineLayout<'d>,
+	pub state: vk::Pipeline<'d>
+}
+impl <'d> PlayerRenderer<'d>
+{
+	pub fn new(commons: &'d PipelineCommonStore, render_pass: &vk::RenderPass<'d>, framebuffer_size: VkExtent2D) -> Self
+	{
+		let VkExtent2D(fb_width, fb_height) = framebuffer_size;
+		let vshader_form = VertexShaderWithInputForm::new(commons.device_ref, "shaders/PlayerRotor.spv",
+			Box::new([VertexInputBindingDesc::per_vertex::<Position>(0), VertexInputBindingDesc::per_instance::<structures::CVector4>(1)]),
+			Box::new([VkVertexInputAttributeDescription(0, 0, VkFormat::R32G32B32A32_SFLOAT, 0), VkVertexInputAttributeDescription(1, 1, VkFormat::R32G32B32A32_SFLOAT, 0)]));
+
+		let viewports = [VkViewport(0.0f32, 0.0f32, fb_width as f32, fb_height as f32, 0.0f32, 1.0f32)];
+		let scissors = [VkRect2D(VkOffset2D(0, 0), framebuffer_size)];
+		let shader_specialization_map_entries =
+		[
+			VkSpecializationMapEntry(10, 0, std::mem::size_of::<f32>()),
+			VkSpecializationMapEntry(11, (std::mem::size_of::<f32>() * 1) as u32, std::mem::size_of::<f32>()),
+			VkSpecializationMapEntry(12, (std::mem::size_of::<f32>() * 2) as u32, std::mem::size_of::<f32>()),
+			VkSpecializationMapEntry(13, (std::mem::size_of::<f32>() * 3) as u32, std::mem::size_of::<f32>())
+		];
+		let shader_specialization_data = [1.5f32, 1.25f32, 0.375f32, 1.0f32];
+		let shader_const_specialization = VkSpecializationInfo
+		{
+			mapEntryCount: shader_specialization_map_entries.len() as u32, pMapEntries: shader_specialization_map_entries.as_ptr(),
+			dataSize: std::mem::size_of::<[f32; 4]>(), pData: unsafe { std::mem::transmute(shader_specialization_data.as_ptr()) }
+		};
+		let shader_stages =
+		[
+			vshader_form.as_shader_stage(&commons.default_shader_entry_point, Some(&shader_const_specialization)),
+			ShaderStage::fragment(&commons.through_color_fs, &commons.default_shader_entry_point, None)
+		];
+		let vertex_input_state = vshader_form.as_vertex_input_state();
+		let input_assembly_state = InputAssemblyState::new(VkPrimitiveTopology::LineList, false);
+		let viewport_state = ViewportState::new(Box::new(viewports), Box::new(scissors));
+		let rasterization_state: VkPipelineRasterizationStateCreateInfo = Default::default();
+		let multisample_state: VkPipelineMultisampleStateCreateInfo = Default::default();
+		let blend_state = ColorBlendState::new(Box::new([ColorBlendAttachmentStates::no_blend()]));
+		let pipeline_info = VkGraphicsPipelineCreateInfo
+		{
+			stageCount: shader_stages.len() as u32, pStages: shader_stages.as_ptr(),
+			pVertexInputState: &vertex_input_state, pInputAssemblyState: &input_assembly_state,
+			pViewportState: &*viewport_state, pRasterizationState: &rasterization_state,
+			pMultisampleState: &multisample_state, pColorBlendState: &*blend_state,
+			layout: commons.layout_uniform.get(), renderPass: render_pass.get(),
+			.. Default::default()
+		};
+
+		PlayerRenderer
 		{
 			layout_ref: &commons.layout_uniform,
 			state: commons.device_ref.create_graphics_pipelines(&commons.cache, &[pipeline_info]).unwrap().into_iter().next().unwrap()

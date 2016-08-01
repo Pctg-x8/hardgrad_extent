@@ -351,6 +351,7 @@ fn main()
 	let pp_commons = logical_resources::PipelineCommonStore::new(&device, &descriptor_sets);
 	let enemy_render = logical_resources::EnemyRenderer::new(&pp_commons, &simple_pass, sc_extent);
 	let background_render = logical_resources::BackgroundRenderer::new(&pp_commons, &simple_pass, sc_extent);
+	let player_render = logical_resources::PlayerRenderer::new(&pp_commons, &simple_pass, sc_extent);
 	let debug_render = logical_resources::DebugRenderer::new(&pp_commons, &simple_pass, sc_extent);
 
 	// Logical Resources //
@@ -380,11 +381,18 @@ fn main()
 		let um = mapped_range.map_mut::<structures::UniformMemory>(memory_preallocator.uniform_memory_base);
 		let im = mapped_range.map_mut::<structures::InstanceMemory>(memory_preallocator.instance_base);
 
+		let player_rotq_unit = [UnitQuaternion::new(Vector3::new(-1.0f32, 0.0f32, 0.75f32)), UnitQuaternion::new(Vector3::new(1.0f32, -1.0f32, 0.5f32))];
+
 		meshstore.initial_stage_data(&mapped_range);
 		projection_matrixes.initial_stage_data(um);
 		enemy_datastore.initial_stage_data(um);
 		im.enemy_instance_mult = [1; structures::MAX_ENEMY_COUNT];
 		im.background_instance_mult = [1; structures::MAX_BACKGROUND_COUNT];
+		um.player_center_tf = [0.0f32, 40.0f32, 0.0f32, 0.0f32];
+		for (i, q) in player_rotq_unit.iter().map(|x| x.quaternion()).enumerate()
+		{
+			im.player_rotq[i] = [q.i, q.j, q.k, q.w];
+		}
 	}
 
 	// Double-buffered object storages //
@@ -417,6 +425,11 @@ fn main()
 			.bind_pipeline(&enemy_render.state)
 			.bind_vertex_buffers_partial(1, &[**memory_bound_resources.buffer], &[memory_preallocator.instance_base])
 			.draw(4, structures::MAX_ENEMY_COUNT as u32, 0)
+			.bind_pipeline(&player_render.state)
+			.bind_vertex_buffers(&[**memory_bound_resources.buffer, **memory_bound_resources.buffer],
+				&[meshstore.wire_render_offset + structures::player_cube_vertex_offs() as VkDeviceSize, memory_preallocator.instance_base + structures::player_instance_offs() as VkDeviceSize])
+			.bind_index_buffer(&memory_bound_resources.buffer, meshstore.index_offset)
+			.draw_indexed(24, 2, 0)
 			.bind_pipeline(&debug_render.state)
 			.bind_descriptor_sets(debug_render.layout_ref, &[descriptor_sets.sets[0], descriptor_sets.sets[di_desc as usize]], &[])
 			.bind_vertex_buffers(&[**debug_info_resources.buffer], &[0])
