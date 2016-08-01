@@ -14,28 +14,29 @@ layout(location = 0) out vec4 color;
 in gl_PerVertex { vec4 gl_Position; } gl_in[];
 out gl_PerVertex { vec4 gl_Position; };
 
+// CommonHeader
+const int MAX_ENEMY_COUNT = 128;
 const int MAX_BK_COUNT = 64;
-
-layout(std140, set = 0, binding = 0) uniform ProjectionMatrix
-{
-	mat4 ortho_projection_matrix, pixel_projection_matrix, persp_projection_matrix;
-};
+struct Matrixes { mat4 ortho, pixel, persp; };
+struct CharacterLocation { vec4 rotq[2], center_tf; };
 struct BackgroundInstance { vec4 offset, scale; };
-layout(std140, binding = 0, set = 1) uniform BackgroundInststancingParams
+layout(std140, set = 0, binding = 0) uniform UniformMemory
 {
-	BackgroundInstance instances[MAX_BK_COUNT];
+	Matrixes projection_matrixes;
+	CharacterLocation enemy_instance_data[MAX_ENEMY_COUNT];
+	BackgroundInstance background_instance_data[MAX_BK_COUNT];
 };
 
 vec4 vertex_transform(vec4 base, vec4 displacement, vec4 scale)
 {
-	return (base * scale + displacement) * persp_projection_matrix;
+	return (base * scale + displacement) * projection_matrixes.persp;
 }
 
 void main()
 {
 	if(instance_id[0] > 0)
 	{
-		BackgroundInstance instance_data = instances[instance_id[0] - 1];
+		BackgroundInstance instance_data = background_instance_data[instance_id[0] - 1];
 		if(instance_data.offset.w > gl_InvocationID)
 		{
 			vec4 offsetter = vec4(0.0f, 0.0f, gl_InvocationID * 1.25f, 0.0f) + vec4(instance_data.offset.xyz, 0.0f);

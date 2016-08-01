@@ -559,7 +559,7 @@ pub const VK_MEMORY_PROPERTY_LAZILY_ALLOCATED_BIT: VkFlags	= 0x10;
 
 pub const VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT: VkFlags	= 0x01;
 
-#[repr(C)] pub enum VkDescriptorType
+#[repr(C)] #[derive(Clone, Copy)] pub enum VkDescriptorType
 {
 	Sampler = 0,
 	CombinedImageSampler = 1,

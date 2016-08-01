@@ -598,7 +598,7 @@ pub struct VkDeviceCreateInfo
 }
 #[repr(C)] pub struct VkDescriptorImageInfo(pub VkSampler, pub VkImageView, pub VkImageLayout);			// sampler, view, layout
 #[repr(C)] pub struct VkDescriptorBufferInfo(pub VkBuffer, pub VkDeviceSize, pub VkDeviceSize);			// buffer, offset, range
-#[repr(C)] pub struct VkWriteDescriptorSet
+#[repr(C)] #[derive(Clone, Copy)] pub struct VkWriteDescriptorSet
 {
 	pub sType: VkStructureType, pub pNext: *const c_void, pub dstSet: VkDescriptorSet,
 	pub dstBinding: u32, pub dstArrayElement: u32, pub descriptorCount: u32, pub descriptorType: VkDescriptorType,

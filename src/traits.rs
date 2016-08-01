@@ -3,6 +3,7 @@
 use vkffi::*;
 use render_vk::wrap as vk;
 use device_resources;
+use structures;
 
 /// Indicates the object can process message from system
 pub trait MessageHandler
@@ -26,6 +27,10 @@ pub trait DeviceStore
 {
 	fn required_sizes() -> Vec<VkDeviceSize>;
 	fn initial_stage_data(&self, mapped_range: &vk::MemoryMappedRange);
+}
+pub trait UniformStore
+{
+	fn initial_stage_data(&self, uniform_memory_ref: &mut structures::UniformMemory);
 }
 pub trait HasDescriptor
 {

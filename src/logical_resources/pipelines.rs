@@ -211,9 +211,8 @@ pub struct PipelineCommonStore<'d>
 {
 	device_ref: &'d vk::Device<'d>,
 	pub cache: vk::PipelineCache<'d>,
-	pub layout_ub2: vk::PipelineLayout<'d>,
+	pub layout_uniform: vk::PipelineLayout<'d>,
 	pub layout_ub1_s1: vk::PipelineLayout<'d>,
-	pub layout_ub2_g: vk::PipelineLayout<'d>,
 	default_shader_entry_point: std::ffi::CString,
 	through_color_fs: vk::ShaderModule<'d>,
 	alpha_applier_fs: vk::ShaderModule<'d>
@@ -226,11 +225,10 @@ impl <'d> PipelineCommonStore<'d>
 		{
 			device_ref: device,
 			cache: device.create_empty_pipeline_cache().unwrap(),
-			layout_ub2: device.create_pipeline_layout(&[*descriptor_sets.set_layout_ub1_vg, *descriptor_sets.set_layout_ub1], &[]).unwrap(),
+			layout_uniform: device.create_pipeline_layout(&[*descriptor_sets.set_layout_uniform_vg], &[]).unwrap(),
 			layout_ub1_s1: device.create_pipeline_layout(&[
-				*descriptor_sets.set_layout_ub1_vg, *descriptor_sets.set_layout_s1
+				*descriptor_sets.set_layout_uniform_vg, *descriptor_sets.set_layout_s1
 			], &[]).unwrap(),
-			layout_ub2_g: device.create_pipeline_layout(&[*descriptor_sets.set_layout_ub1_vg, *descriptor_sets.set_layout_ub1_g], &[]).unwrap(),
 			default_shader_entry_point: std::ffi::CString::new("main").unwrap(),
 			through_color_fs: device.create_shader_module_from_file("shaders/ThroughColor.spv").unwrap(),
 			alpha_applier_fs: device.create_shader_module_from_file("shaders/AlphaApplier.spv").unwrap()
@@ -285,13 +283,13 @@ impl <'d> EnemyRenderer<'d>
 			pVertexInputState: &vertex_input_state, pInputAssemblyState: &input_assembly_state,
 			pViewportState: &*viewport_state, pRasterizationState: &rasterization_state,
 			pMultisampleState: &multisample_state, pColorBlendState: &*blend_state,
-			layout: commons.layout_ub2_g.get(), renderPass: render_pass.get(),
+			layout: commons.layout_uniform.get(), renderPass: render_pass.get(),
 			.. Default::default()
 		};
 
 		EnemyRenderer
 		{
-			layout_ref: &commons.layout_ub2_g,
+			layout_ref: &commons.layout_uniform,
 			state: commons.device_ref.create_graphics_pipelines(&commons.cache, &[pipeline_info]).unwrap().into_iter().next().unwrap()
 		}
 	}
@@ -344,13 +342,13 @@ impl <'d> BackgroundRenderer<'d>
 			pVertexInputState: &vertex_input_state, pInputAssemblyState: &input_assembly_state,
 			pViewportState: &*viewport_state, pRasterizationState: &rasterization_state,
 			pMultisampleState: &multisample_state, pColorBlendState: &*blend_state,
-			layout: commons.layout_ub2_g.get(), renderPass: render_pass.get(),
+			layout: commons.layout_uniform.get(), renderPass: render_pass.get(),
 			.. Default::default()
 		};
 
 		BackgroundRenderer
 		{
-			layout_ref: &commons.layout_ub2_g,
+			layout_ref: &commons.layout_uniform,
 			state: commons.device_ref.create_graphics_pipelines(&commons.cache, &[pipeline_info]).unwrap().into_iter().next().unwrap()
 		}
 	}

@@ -17,6 +17,7 @@ mod xcbw;
 use xcbw::*;
 mod vertex_formats;
 mod device_resources;
+mod structures;
 mod logical_resources;
 mod utils;
 use nalgebra::*;
@@ -193,11 +194,12 @@ struct Enemy
 }
 impl Enemy
 {
-	pub fn new(datastore: &mut logical_resources::EnemyDatastore, mapped_range: &vk::MemoryMappedRange, init_left: f32) -> Option<Self>
+	pub fn new(datastore: &mut logical_resources::EnemyDatastore, memory_ref: &mut structures::InstanceMemory, uniform_memory_ref: &mut structures::UniformMemory,
+		init_left: f32) -> Option<Self>
 	{
-		datastore.allocate_block(mapped_range).map(|index|
+		datastore.allocate_block(memory_ref).map(|index|
 		{
-			datastore.update_instance_data(mapped_range, index,
+			datastore.update_instance_data(uniform_memory_ref, index,
 				UnitQuaternion::new(Vector3::new(0.0f32, 0.0f32, 0.0f32)).quaternion(), UnitQuaternion::new(Vector3::new(0.0f32, 0.0f32, 0.0f32)).quaternion(),
 				&Vector4::new(init_left, 0.0f32, 0.0f32, 0.0f32));
 			Enemy
@@ -206,7 +208,7 @@ impl Enemy
 			}
 		})
 	}
-	pub fn update(&mut self, datastore: &logical_resources::EnemyDatastore, mapped_range: &vk::MemoryMappedRange) -> bool
+	pub fn update(&mut self, datastore: &logical_resources::EnemyDatastore, memory_ref: &mut structures::UniformMemory) -> bool
 	{
 		let delta_time = self.appear_time.to(time::PreciseTime::now());
 		let living_seconds = delta_time.num_milliseconds() as f32 / 1000.0f32;
@@ -218,16 +220,16 @@ impl Enemy
 		{
 			15.0f32 + (living_seconds - 0.875f32) * 2.5f32 - 3.0f32
 		};
-		datastore.update_instance_data(mapped_range, self.block_index,
+		datastore.update_instance_data(memory_ref, self.block_index,
 			UnitQuaternion::new(Vector3::new(-1.0f32, 0.0f32, 0.75f32).normalize() * (260.0f32 * living_seconds).to_radians()).quaternion(),
 			UnitQuaternion::new(Vector3::new(1.0f32, -1.0f32, 0.5f32).normalize() * (-260.0f32 * living_seconds + 13.0f32).to_radians()).quaternion(),
 			&Vector4::new(self.left, current_y, 0.0f32, 0.0f32));
 
 		current_y >= 50.0f32
 	}
-	pub fn die(&self, datastore: &mut logical_resources::EnemyDatastore, mapped_range: &vk::MemoryMappedRange)
+	pub fn die(&self, datastore: &mut logical_resources::EnemyDatastore, memory_ref: &mut structures::InstanceMemory)
 	{
-		datastore.free_block(self.block_index, mapped_range);
+		datastore.free_block(self.block_index, memory_ref);
 	}
 }
 
@@ -352,27 +354,37 @@ fn main()
 	let debug_render = logical_resources::DebugRenderer::new(&pp_commons, &simple_pass, sc_extent);
 
 	// Logical Resources //
-	let di_desc = 3;
+	let di_desc = 1;
 	let meshstore = logical_resources::Meshstore::new(memory_preallocator.meshstore_base);
-	let projection_matrixes = logical_resources::ProjectionMatrixes::new(&memory_bound_resources.buffer, memory_preallocator.projection_matrixes_base, 0, sc_extent);
-	let mut enemy_datastore = logical_resources::EnemyDatastore::new(&memory_bound_resources.buffer, memory_preallocator.enemy_datastore_base, 1);
-	let background_datastore = logical_resources::BackgroundDatastore::new(&memory_bound_resources.buffer, memory_preallocator.background_datastore_base, 2);
+	let projection_matrixes = logical_resources::ProjectionMatrixes::new(sc_extent);
+	let mut enemy_datastore = logical_resources::EnemyDatastore::new();
+	let background_datastore = logical_resources::BackgroundDatastore::new();
 	let debug_info_resources = logical_resources::DebugInfoResources::new(&device, &transfer_queue, &initializer_pool, &transfer_pool, di_desc);
 
 	// Setup Descriptors //
-	let descriptor_infos = {
-		let descriptor_providers: [&HasDescriptor; 4] = [&projection_matrixes, &enemy_datastore, &background_datastore, &debug_info_resources];
-		descriptor_providers.into_iter().flat_map(|x| x.write_descriptor_info(&descriptor_sets)).collect::<Vec<_>>()
-	};
+	let uniform_buffer_info = VkDescriptorBufferInfo(**memory_bound_resources.buffer, memory_preallocator.uniform_memory_base, memory_preallocator.uniform_memory_size);
+	let descriptor_infos = debug_info_resources.write_descriptor_info(&descriptor_sets).iter().chain(&[
+		VkWriteDescriptorSet
+		{
+			sType: VkStructureType::WriteDescriptorSet, pNext: std::ptr::null(),
+			dstSet: descriptor_sets.sets[0], dstBinding: 0, dstArrayElement: 0,
+			descriptorType: VkDescriptorType::UniformBuffer, descriptorCount: 1,
+			pBufferInfo: &uniform_buffer_info, pImageInfo: std::ptr::null(), pTexelBufferView: std::ptr::null()
+		}
+	]).map(|x| *x).collect::<Vec<_>>();
 	device.update_descriptor_sets(&descriptor_infos, &[]);
 
 	// Initial Staging //
 	{
 		let mapped_range = memory_bound_resources.stage_buffer.map(0 .. memory_preallocator.total_size).unwrap();
+		let um = mapped_range.map_mut::<structures::UniformMemory>(memory_preallocator.uniform_memory_base);
+		let im = mapped_range.map_mut::<structures::InstanceMemory>(memory_preallocator.instance_base);
+
 		meshstore.initial_stage_data(&mapped_range);
-		projection_matrixes.initial_stage_data(&mapped_range);
-		enemy_datastore.initial_stage_data(&mapped_range);
-		background_datastore.initial_stage_data(&mapped_range);
+		projection_matrixes.initial_stage_data(um);
+		enemy_datastore.initial_stage_data(um);
+		im.enemy_instance_mult = [1; structures::MAX_ENEMY_COUNT];
+		im.background_instance_mult = [1; structures::MAX_BACKGROUND_COUNT];
 	}
 
 	// Double-buffered object storages //
@@ -383,6 +395,8 @@ fn main()
 	];
 	let mut enemy_counter = 0;
 
+	println!("-- Background Instance Offs: {}", structures::background_instance_offs());
+
 	// Ready for command recording //
 	let final_commands = pool.allocate_primary_buffers(final_framebuffers.len()).unwrap();
 	let clear_values = [VkClearValue(VkClearColorValue(0.0f32, 0.0f32, 0.015625f32, 1.0f32))];
@@ -392,18 +406,17 @@ fn main()
 		let image_barrier = final_images[cb_index].memory_barrier(vk::ImageSubresourceRange::default_color(), VK_ACCESS_MEMORY_READ_BIT, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT)
 			.layout(VkImageLayout::PresentSrcKHR, VkImageLayout::ColorAttachmentOptimal);
 
-		let vertex_buffers = [**memory_bound_resources.buffer, **memory_bound_resources.buffer];
 		final_commands.begin(cb_index).unwrap()
 			.resource_barrier(VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, &[], &[], &[image_barrier])
 			.begin_render_pass(&final_framebuffers[cb_index], &simple_pass, render_area, &clear_values, false)
+			.bind_vertex_buffers(&[**memory_bound_resources.buffer], &[meshstore.wire_render_offset])
+			.bind_descriptor_sets(background_render.layout_ref, &[descriptor_sets.sets[0]], &[])
 			.bind_pipeline(&background_render.state)
-			.bind_descriptor_sets(background_render.layout_ref, &[descriptor_sets.sets[0], descriptor_sets.sets[2]], &[])
-			.bind_vertex_buffers(&vertex_buffers, &[meshstore.unit_plane_vertices_offset, background_datastore.index_multipliers_offset])
-			.draw(4, 16)
+			.bind_vertex_buffers_partial(1, &[**memory_bound_resources.buffer], &[memory_preallocator.instance_base + structures::background_instance_offs() as VkDeviceSize])
+			.draw(4, structures::MAX_BACKGROUND_COUNT as u32, 0)
 			.bind_pipeline(&enemy_render.state)
-			.bind_descriptor_sets(enemy_render.layout_ref, &[descriptor_sets.sets[0], descriptor_sets.sets[1]], &[])
-			.bind_vertex_buffers(&vertex_buffers, &[meshstore.unit_cube_vertices_offset, enemy_datastore.character_indices_offset])
-			.draw(4, MAX_ENEMY_COUNT as u32)
+			.bind_vertex_buffers_partial(1, &[**memory_bound_resources.buffer], &[memory_preallocator.instance_base])
+			.draw(4, structures::MAX_ENEMY_COUNT as u32, 0)
 			.bind_pipeline(&debug_render.state)
 			.bind_descriptor_sets(debug_render.layout_ref, &[descriptor_sets.sets[0], descriptor_sets.sets[di_desc as usize]], &[])
 			.bind_vertex_buffers(&[**debug_info_resources.buffer], &[0])
@@ -417,7 +430,7 @@ fn main()
 	let device_buffer_access_mask = VK_ACCESS_INDEX_READ_BIT | VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT | VK_ACCESS_UNIFORM_READ_BIT;
 	let transfer_commands = transfer_pool.allocate_primary_buffers(1).unwrap();
 	{
-		let entire_range = 0 .. memory_preallocator.total_size;
+		let entire_range = memory_preallocator.instance_base .. memory_preallocator.total_size;
 		let buffer_barriers = [
 			memory_bound_resources.stage_buffer.memory_barrier(entire_range.clone(), VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT),
 			memory_bound_resources.buffer.memory_barrier(entire_range.clone(), device_buffer_access_mask, VK_ACCESS_TRANSFER_WRITE_BIT)
@@ -426,7 +439,7 @@ fn main()
 			memory_bound_resources.stage_buffer.memory_barrier(entire_range.clone(), VK_ACCESS_TRANSFER_READ_BIT, VK_ACCESS_HOST_WRITE_BIT),
 			memory_bound_resources.buffer.memory_barrier(entire_range, VK_ACCESS_TRANSFER_WRITE_BIT, device_buffer_access_mask)
 		];
-		let copy_regions = [VkBufferCopy(0, 0, memory_preallocator.total_size)];
+		let copy_regions = [VkBufferCopy(memory_preallocator.instance_base, memory_preallocator.instance_base, memory_preallocator.total_size - memory_preallocator.instance_base)];
 		transfer_commands.begin(0).unwrap()
 			.resource_barrier(VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, &[], &buffer_barriers, &[])
 			.copy_buffer(&memory_bound_resources.stage_buffer, &memory_bound_resources.buffer, &copy_regions)
@@ -472,6 +485,8 @@ fn main()
 	// Application Loop
 	let mut prev_frame_time = time::PreciseTime::now();
 	let mapped_range = memory_bound_resources.stage_buffer.map(0 .. memory_preallocator.total_size).unwrap();
+	let instance_ref = mapped_range.map_mut::<structures::InstanceMemory>(memory_preallocator.instance_base);
+	let uniform_ref = mapped_range.map_mut::<structures::UniformMemory>(memory_preallocator.uniform_memory_base);
 	let dt_mapped_range = debug_info_resources.map_for_instance();
 	let mut require_transfer = false;
 	while xcon.process_messages()
@@ -493,14 +508,14 @@ fn main()
 			graphics_queue.submit_commands(&[final_commands[index_render_to as usize]], &wait_semaphores, &[], Some(&fence)).unwrap();
 			render_start_time = time::PreciseTime::now();
 			require_transfer = false;
-			background_datastore.update(&mapped_range, &mut randomizer, delta_time);
+			background_datastore.update(uniform_ref, instance_ref, &mut randomizer, delta_time);
 		}
 
 		if prev_frame_time.to(time::PreciseTime::now()) >= time::Duration::milliseconds(8)
 		{
 			if appear_percent_range.sample(&mut randomizer) == 0
 			{
-				if let Some(enemy) = Enemy::new(&mut enemy_datastore, &mapped_range, left_range.sample(&mut randomizer))
+				if let Some(enemy) = Enemy::new(&mut enemy_datastore, instance_ref, uniform_ref, left_range.sample(&mut randomizer))
 				{
 					enemy_list[olist_index].push_back(enemy);
 					enemy_counter += 1;
@@ -510,13 +525,13 @@ fn main()
 			let next_index = if olist_index == 0 { 1 } else { 0 };
 			while let Some(mut e) = enemy_list[olist_index].pop_front()
 			{
-				if !e.update(&enemy_datastore, &mapped_range)
+				if !e.update(&enemy_datastore, uniform_ref)
 				{
 					enemy_list[next_index].push_front(e);
 				}
 				else
 				{
-					e.die(&mut enemy_datastore, &mapped_range);
+					e.die(&mut enemy_datastore, instance_ref);
 					enemy_counter -= 1;
 				}
 			}

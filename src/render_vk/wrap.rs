@@ -789,14 +789,19 @@ impl CommandBufferRef
 		unsafe { vkCmdBindVertexBuffers(self.obj, 0, buffers.len() as u32, buffers.as_ptr(), offsets.as_ptr()) };
 		self
 	}
+	pub fn bind_vertex_buffers_partial(self, first_binding: u32, buffers: &[VkBuffer], offsets: &[VkDeviceSize]) -> Self
+	{
+		unsafe { vkCmdBindVertexBuffers(self.obj, first_binding, buffers.len() as u32, buffers.as_ptr(), offsets.as_ptr()) };
+		self
+	}
 	pub fn bind_index_buffer(self, buffer: &Buffer, offset: VkDeviceSize) -> Self
 	{
 		unsafe { vkCmdBindIndexBuffer(self.obj, buffer.get(), offset, VkIndexType::U16) };
 		self
 	}
-	pub fn draw(self, vertex_count: u32, instance_count: u32) -> Self
+	pub fn draw(self, vertex_count: u32, instance_count: u32, vertex_offset: u32) -> Self
 	{
-		unsafe { vkCmdDraw(self.obj, vertex_count, instance_count, 0, 0) };
+		unsafe { vkCmdDraw(self.obj, vertex_count, instance_count, vertex_offset, 0) };
 		self
 	}
 	pub fn draw_indexed(self, vertex_count: u32, instance_count: u32, instance_start_index: u32) -> Self
