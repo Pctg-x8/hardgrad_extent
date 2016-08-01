@@ -14,29 +14,9 @@ layout(location = 0) out vec4 color;
 in gl_PerVertex { vec4 gl_Position; } gl_in[];
 out gl_PerVertex { vec4 gl_Position; };
 
-// CommonHeader
-const int MAX_ENEMY_COUNT = 128;
-const int MAX_BK_COUNT = 64;
-struct Matrixes { mat4 ortho, pixel, persp; };
-struct CharacterLocation { vec4 rotq[2], center_tf; };
-struct BackgroundInstance { vec4 offset, scale; };
-layout(std140, set = 0, binding = 0) uniform UniformMemory
-{
-	Matrixes projection_matrixes;
-	CharacterLocation enemy_instance_data[MAX_ENEMY_COUNT];
-	BackgroundInstance background_instance_data[MAX_BK_COUNT];
-};
+#include "UniformMemory.glsl"
+#include "Quaternion.glsl"
 
-vec4 qConjugate(vec4 iq) { return vec4(-iq.xyz, iq.w); }
-vec4 qMult(vec4 q1, vec4 q2) { return vec4(cross(q1.xyz, q2.xyz) + q2.w * q1.xyz + q1.w * q2.xyz, q1.w * q2.w - dot(q1.xyz, q2.xyz)); }
-vec4 qRot(vec3 in_vec, vec4 rq)
-{
-    vec4 q1 = rq;
-    vec4 qp = vec4(in_vec, 0.0f);
-    vec4 q2 = qConjugate(rq);
-    vec4 qt = qMult(q1, qp);
-    return qMult(qt, q2);
-}
 vec4 vertex_transform(vec4 base, uint instance_index)
 {
 	vec4 q = enemy_instance_data[instance_index].rotq[gl_InvocationID];

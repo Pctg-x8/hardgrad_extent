@@ -1,6 +1,6 @@
 # Makefile for GLSL Shader Sources
 
-CC_GLSL = glslangValidator -V -l
+CC_GLSL = $(SHADERC_BUILD_DIR)/glslc/glslc
 .SUFFIXES: .vert .frag .geom .spv
 VERT_OUTS = $(patsubst %.vert,%.spv,$(wildcard *.vert))
 FRAG_OUTS = $(patsubst %.frag,%.spv,$(wildcard *.frag))

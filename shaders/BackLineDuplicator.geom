@@ -14,18 +14,7 @@ layout(location = 0) out vec4 color;
 in gl_PerVertex { vec4 gl_Position; } gl_in[];
 out gl_PerVertex { vec4 gl_Position; };
 
-// CommonHeader
-const int MAX_ENEMY_COUNT = 128;
-const int MAX_BK_COUNT = 64;
-struct Matrixes { mat4 ortho, pixel, persp; };
-struct CharacterLocation { vec4 rotq[2], center_tf; };
-struct BackgroundInstance { vec4 offset, scale; };
-layout(std140, set = 0, binding = 0) uniform UniformMemory
-{
-	Matrixes projection_matrixes;
-	CharacterLocation enemy_instance_data[MAX_ENEMY_COUNT];
-	BackgroundInstance background_instance_data[MAX_BK_COUNT];
-};
+#include "UniformMemory.glsl"
 
 vec4 vertex_transform(vec4 base, vec4 displacement, vec4 scale)
 {
