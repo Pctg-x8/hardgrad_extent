@@ -232,6 +232,37 @@ impl Enemy
 		datastore.free_block(self.block_index, memory_ref);
 	}
 }
+struct Player
+{
+	start_time: time::PreciseTime
+}
+impl Player
+{
+	fn new(uniform_ref: &mut structures::UniformMemory, instance_ref: &mut structures::InstanceMemory) -> Self
+	{
+		let u_quaternion = UnitQuaternion::new(Vector3::new(0.0f32, 0.0f32, 0.0f32));
+		let quaternion_ref = u_quaternion.quaternion();
+
+		instance_ref.player_rotq[0] = [quaternion_ref.i, quaternion_ref.j, quaternion_ref.k, quaternion_ref.w];
+		instance_ref.player_rotq[1] = [quaternion_ref.i, quaternion_ref.j, quaternion_ref.k, quaternion_ref.w];
+		uniform_ref.player_center_tf = [0.0f32, 38.0f32, 0.0f32, 0.0f32];
+
+		Player { start_time: time::PreciseTime::now() }
+	}
+	fn update(&self, instance_ref: &mut structures::InstanceMemory, uniform_ref: &mut structures::UniformMemory)
+	{
+		let delta_time = self.start_time.to(time::PreciseTime::now());
+		let living_secs = delta_time.num_milliseconds() as f64 / 1000.0f64;
+		let u_quaternions = [
+			UnitQuaternion::new(Vector3::new(-1.0f32, 0.0f32, 0.75f32).normalize() * (260.0f32 * living_secs as f32).to_radians()),
+			UnitQuaternion::new(Vector3::new(1.0f32, -1.0f32, 0.5f32).normalize() * (-260.0f32 * living_secs as f32 + 13.0f32).to_radians())
+		];
+		let mut quaternions = u_quaternions.iter().map(|x| x.quaternion()).map(|q| [q.i, q.j, q.k, q.w]);
+
+		instance_ref.player_rotq[0] = quaternions.next().unwrap();
+		instance_ref.player_rotq[1] = quaternions.next().unwrap();
+	}
+}
 
 fn main()
 {
@@ -375,25 +406,26 @@ fn main()
 	]).map(|x| *x).collect::<Vec<_>>();
 	device.update_descriptor_sets(&descriptor_infos, &[]);
 
+	// Memory to Structure Mapping //
+	let mapped_range = memory_bound_resources.stage_buffer.map(0 .. memory_preallocator.total_size).unwrap();
+	let (uniform_memory_range, instance_memory_range) = (
+		mapped_range.map_mut::<structures::UniformMemory>(memory_preallocator.uniform_memory_base),
+		mapped_range.map_mut::<structures::InstanceMemory>(memory_preallocator.instance_base)
+	);
+
 	// Initial Staging //
 	{
-		let mapped_range = memory_bound_resources.stage_buffer.map(0 .. memory_preallocator.total_size).unwrap();
-		let um = mapped_range.map_mut::<structures::UniformMemory>(memory_preallocator.uniform_memory_base);
-		let im = mapped_range.map_mut::<structures::InstanceMemory>(memory_preallocator.instance_base);
-
 		let player_rotq_unit = [UnitQuaternion::new(Vector3::new(-1.0f32, 0.0f32, 0.75f32)), UnitQuaternion::new(Vector3::new(1.0f32, -1.0f32, 0.5f32))];
 
 		meshstore.initial_stage_data(&mapped_range);
-		projection_matrixes.initial_stage_data(um);
-		enemy_datastore.initial_stage_data(um);
-		im.enemy_instance_mult = [1; structures::MAX_ENEMY_COUNT];
-		im.background_instance_mult = [1; structures::MAX_BACKGROUND_COUNT];
-		um.player_center_tf = [0.0f32, 40.0f32, 0.0f32, 0.0f32];
-		for (i, q) in player_rotq_unit.iter().map(|x| x.quaternion()).enumerate()
-		{
-			im.player_rotq[i] = [q.i, q.j, q.k, q.w];
-		}
+		projection_matrixes.initial_stage_data(uniform_memory_range);
+		enemy_datastore.initial_stage_data(uniform_memory_range);
+		instance_memory_range.enemy_instance_mult = [1; structures::MAX_ENEMY_COUNT];
+		instance_memory_range.background_instance_mult = [1; structures::MAX_BACKGROUND_COUNT];
 	}
+
+	// Player Instance //
+	let player = Player::new(uniform_memory_range, instance_memory_range);
 
 	// Double-buffered object storages //
 	let mut olist_index = 0;
@@ -497,9 +529,6 @@ fn main()
 
 	// Application Loop
 	let mut prev_frame_time = time::PreciseTime::now();
-	let mapped_range = memory_bound_resources.stage_buffer.map(0 .. memory_preallocator.total_size).unwrap();
-	let instance_ref = mapped_range.map_mut::<structures::InstanceMemory>(memory_preallocator.instance_base);
-	let uniform_ref = mapped_range.map_mut::<structures::UniformMemory>(memory_preallocator.uniform_memory_base);
 	let dt_mapped_range = debug_info_resources.map_for_instance();
 	let mut require_transfer = false;
 	while xcon.process_messages()
@@ -521,14 +550,15 @@ fn main()
 			graphics_queue.submit_commands(&[final_commands[index_render_to as usize]], &wait_semaphores, &[], Some(&fence)).unwrap();
 			render_start_time = time::PreciseTime::now();
 			require_transfer = false;
-			background_datastore.update(uniform_ref, instance_ref, &mut randomizer, delta_time);
+			background_datastore.update(uniform_memory_range, instance_memory_range, &mut randomizer, delta_time);
+			player.update(instance_memory_range, uniform_memory_range);
 		}
 
 		if prev_frame_time.to(time::PreciseTime::now()) >= time::Duration::milliseconds(8)
 		{
 			if appear_percent_range.sample(&mut randomizer) == 0
 			{
-				if let Some(enemy) = Enemy::new(&mut enemy_datastore, instance_ref, uniform_ref, left_range.sample(&mut randomizer))
+				if let Some(enemy) = Enemy::new(&mut enemy_datastore, instance_memory_range, uniform_memory_range, left_range.sample(&mut randomizer))
 				{
 					enemy_list[olist_index].push_back(enemy);
 					enemy_counter += 1;
@@ -538,13 +568,13 @@ fn main()
 			let next_index = if olist_index == 0 { 1 } else { 0 };
 			while let Some(mut e) = enemy_list[olist_index].pop_front()
 			{
-				if !e.update(&enemy_datastore, uniform_ref)
+				if !e.update(&enemy_datastore, uniform_memory_range)
 				{
 					enemy_list[next_index].push_front(e);
 				}
 				else
 				{
-					e.die(&mut enemy_datastore, instance_ref);
+					e.die(&mut enemy_datastore, instance_memory_range);
 					enemy_counter -= 1;
 				}
 			}

@@ -14,7 +14,7 @@ impl BackgroundDatastore
 		mut randomizer: &mut rand::Rng, delta_time: time::Duration)
 	{
 		let delta_sec = delta_time.num_microseconds().unwrap_or(0) as f32 / (1000.0f32 * 1000.0f32);
-		let mut rrange = rand::distributions::Range::new(0, 64 * 64);
+		let mut rrange = rand::distributions::Range::new(0, 64 * 4);
 		let mut left_range = rand::distributions::Range::new(-14.0f32, 14.0f32);
 		let mut count_range = rand::distributions::Range::new(2, 10);
 		let mut scale_range = rand::distributions::Range::new(1.0f32, 3.0f32);
