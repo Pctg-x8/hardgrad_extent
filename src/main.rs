@@ -6,6 +6,8 @@ extern crate time;
 extern crate freetype;
 extern crate unicode_normalization;
 extern crate thread_scoped;
+#[macro_use] extern crate log;
+extern crate ansi_term;
 #[macro_use] mod vkffi;
 mod render_vk;
 
@@ -23,9 +25,25 @@ mod utils;
 use nalgebra::*;
 use rand::distributions::*;
 
-use vkffi::*;
+use vkffi::*; use ansi_term::*;
 use render_vk::wrap as vk;
 use render_vk::traits::*;
+
+struct EngineLogger;
+impl log::Log for EngineLogger
+{
+	fn enabled(&self, metadata: &log::LogMetadata) -> bool
+	{
+		metadata.level() <= log::LogLevel::Info
+	}
+	fn log(&self, record: &log::LogRecord)
+	{
+		if self.enabled(record.metadata())
+		{
+			println!("{}", Style::new().bold().paint(format!("** [{}:{}]{}", record.target(), record.level(), record.args())));
+		}
+	}
+}
 
 // Application Dependent Factories
 fn create_instance() -> vk::Instance
@@ -47,6 +65,8 @@ fn create_instance() -> vk::Instance
 		enabledExtensionCount: extensions.len() as u32, ppEnabledExtensionNames: extensions.as_ptr() as *const *const i8,
 		.. Default::default()
 	};
+
+	info!("creating Vulkan Instance");
 
 	vk::Instance::create(&instance_info).expect("Unable to create instance")
 }
@@ -266,6 +286,12 @@ impl Player
 
 fn main()
 {
+	log::set_logger(|max_log_level|
+	{
+		max_log_level.set(log::LogLevelFilter::Info);
+		Box::new(EngineLogger)
+	});
+
 	// init xcb(connection to display)
 	let xcon = XServerConnection::connect();
 
