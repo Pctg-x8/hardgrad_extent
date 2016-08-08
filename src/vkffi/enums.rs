@@ -600,7 +600,7 @@ pub enum VkColorSpaceKHR
 {
 	SRGB_NonLinear = 0
 }
-#[repr(C)] #[derive(Clone, Debug, PartialEq, Eq)]
+#[repr(C)] #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum VkPresentModeKHR
 {
 	Immediate = 0,
@@ -608,27 +608,21 @@ pub enum VkPresentModeKHR
 	FIFO = 2,
 	FIFORelaxed = 3
 }
-#[repr(C)]
-pub enum VkSurfaceTransformFlagBitsKHR
-{
-	Identity = 0x00000001,
-	Rotate90 = 0x00000002,
-	Rotate180 = 0x00000004,
-	Rotate270 = 0x00000008,
-	HorizontalMirror = 0x00000010,
-	HorizontalMirrorRotate90 = 0x00000020,
-	HorizontalMirrorRotate180 = 0x00000040,
-	HorizontalMirrorRotate270 = 0x00000080,
-	Inherit = 0x00000100
-}
-#[repr(C)]
-pub enum VkCompositeAlphaFlagBitsKHR
-{
-	Opaque = 0x00000001,
-	Premultiplied = 0x00000002,
-	Postmultiplied = 0x00000004,
-	Inherit = 0x00000008
-}
+// VkSurfaceTransformFlagBitsKHR //
+pub const VK_SURFACE_TRANSFORM_IDENTITY_BIT: VkFlags                    = 0x0001;
+pub const VK_SURFACE_TRANSFORM_ROTATE90_BIT: VkFlags                    = 0x0002;
+pub const VK_SURFACE_TRANSFORM_ROTATE180_BIT: VkFlags                   = 0x0004;
+pub const VK_SURFACE_TRANSFORM_ROTATE270_BIT: VkFlags                   = 0x0008;
+pub const VK_SURFACE_TRANSFORM_HORIZONTAL_MIRROR_BIT: VkFlags           = 0x0010;
+pub const VK_SURFACE_TRANSFORM_HORIZONTAL_MIRROR_ROTATE90_BIT: VkFlags  = 0x0020;
+pub const VK_SURFACE_TRANSFORM_HORIZONTAL_MIRROR_ROTATE180_BIT: VkFlags = 0x0040;
+pub const VK_SURFACE_TRANSFORM_HORIZONTAL_MIRROR_ROTATE270_BIT: VkFlags = 0x0080;
+pub const VK_SURFACE_TRANSFORM_INHERIT_BIT: VkFlags                     = 0x0100;
+// VkCompositeAlphaFlagBitsKHR //
+pub const VK_COMPOSITE_ALPHA_OPAQUE_BIT: VkFlags            = 0x01;
+pub const VK_COMPOSITE_ALPHA_PREMULTIPLIED_BIT: VkFlags     = 0x02;
+pub const VK_COMPOSITE_ALPHA_POSTMULTIPLIED_BIT: VkFlags    = 0x04;
+pub const VK_COMPOSSITE_ALPHA_INHERIT: VkFlags              = 0x08;
 
 #[derive(Debug)]
 #[repr(C)] pub enum VkDebugReportObjectTypeEXT

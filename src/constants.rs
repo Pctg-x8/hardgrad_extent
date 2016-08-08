@@ -10,3 +10,5 @@ pub const SWAPCHAIN_EXTENSION_NAME: &'static str = "VK_KHR_swapchain\0";
 
 // Limitations
 pub const MAX_ENEMY_COUNT: usize = 128;
+pub const MAX_BK_COUNT: usize = 32;
+

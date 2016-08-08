@@ -9,6 +9,7 @@ macro_rules! VK_MAKE_VERSION
 	($major: expr, $minor: expr, $patch: expr) => (($major << 22) | ($minor << 12) | $patch)
 }
 pub const VK_API_VERSION_1_0: u32 = VK_MAKE_VERSION!(1, 0, 0);
+pub const VK_API_VERSION: u32 = VK_MAKE_VERSION!(1, 0, 0);
 
 pub const VK_MAX_PHYSICAL_DEVICE_NAME_SIZE: usize = 256;
 pub const VK_UUID_SIZE: usize = 16;

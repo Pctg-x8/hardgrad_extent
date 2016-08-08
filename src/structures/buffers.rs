@@ -1,10 +1,8 @@
 // Device Memory Structures
 
 use vertex_formats::*;
+use constants::*;
 use std;
-
-pub const MAX_ENEMY_COUNT: usize = 128;
-pub const MAX_BACKGROUND_COUNT: usize = 64;
 
 pub type CVector4 = [f32; 4];
 pub type CMatrix4 = [CVector4; 4];
@@ -22,8 +20,15 @@ pub fn player_cube_vertex_offs() -> usize { unsafe { std::mem::transmute(&std::m
 #[repr(C)] pub struct InstanceMemory
 {
     pub enemy_instance_mult: [u32; MAX_ENEMY_COUNT],
-    pub background_instance_mult: [u32; MAX_BACKGROUND_COUNT],
+    pub background_instance_mult: [u32; MAX_BK_COUNT],
     pub player_rotq: [CVector4; 2]
+}
+impl InstanceMemory
+{
+    pub fn partial_borrow(&mut self) -> (&mut [u32; MAX_ENEMY_COUNT], &mut [u32; MAX_BK_COUNT], &mut [CVector4; 2])
+    {
+        (&mut self.enemy_instance_mult, &mut self.background_instance_mult, &mut self.player_rotq)
+    }
 }
 pub fn background_instance_offs() -> usize { unsafe { std::mem::transmute(&std::mem::transmute::<_, &InstanceMemory>(0usize).background_instance_mult) } }
 pub fn player_instance_offs() -> usize { unsafe { std::mem::transmute(&std::mem::transmute::<_, &InstanceMemory>(0usize).player_rotq) } }
@@ -43,6 +48,13 @@ pub fn player_instance_offs() -> usize { unsafe { std::mem::transmute(&std::mem:
 {
     pub projection_matrixes: Matrixes,
     pub enemy_instance_data: [CharacterLocation; MAX_ENEMY_COUNT],
-    pub background_instance_data: [BackgroundInstance; MAX_BACKGROUND_COUNT],
+    pub background_instance_data: [BackgroundInstance; MAX_BK_COUNT],
     pub player_center_tf: CVector4
+}
+impl UniformMemory
+{
+    pub fn partial_borrow(&mut self) -> (&mut Matrixes, &mut [CharacterLocation; MAX_ENEMY_COUNT], &mut [BackgroundInstance; MAX_BK_COUNT], &mut CVector4)
+    {
+        (&mut self.projection_matrixes, &mut self.enemy_instance_data, &mut self.background_instance_data, &mut self.player_center_tf)
+    }
 }

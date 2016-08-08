@@ -5,17 +5,26 @@ use render_vk::wrap as vk;
 use device_resources;
 use structures;
 
+/// Indicates the object can produce window
+pub trait WindowProvider<'s, Window: 's>
+{
+	fn create_unresizable_window(&'s self, size: VkExtent2D, title: &str) -> Window;
+}
 /// Indicates the object can process message from system
 pub trait MessageHandler
 {
 	fn process_messages(&self) -> bool;
 }
 
-// Provides Internal Pointer type(for wrapper objects)
-pub trait InternalProvider<InternalType>
+/// Indicates the object is a placeholder of FFI objects
+pub trait NativeOwner<InternalType>
 {
+	/// Relases the ownership of FFI objects
+	fn release(mut self) -> InternalType;
+	/// Gets native pointer for FFI objects
 	fn get(&self) -> InternalType;
 }
+
 // Provides Reference to Parent object
 pub trait HasParent
 {

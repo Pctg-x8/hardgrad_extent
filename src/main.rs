@@ -45,97 +45,61 @@ impl log::Log for EngineLogger
 	}
 }
 
+use std::string::String;
+use std::collections::LinkedList;
+
 // Application Dependent Factories
-fn create_instance() -> vk::Instance
+struct Swapchain<'d>
 {
-	let layers = [DEBUG_LAYER_NAME.as_ptr()];
-	let extensions = [SURFACE_EXTENSION_NAME.as_ptr(), PSURFACE_EXTENSION_NAME.as_ptr(), DEBUG_EXTENSION_NAME.as_ptr()];
-	let app_info = VkApplicationInfo
-	{
-		pApplicationName: APP_NAME.as_ptr() as *const i8,
-		applicationVersion: VK_MAKE_VERSION!(0, 0, 1),
-		pEngineName: ENGINE_NAME.as_ptr() as *const i8,
-		engineVersion: VK_MAKE_VERSION!(0, 0, 1),
-		.. Default::default()
-	};
-	let instance_info = VkInstanceCreateInfo
-	{
-		pApplicationInfo: &app_info,
-		enabledLayerCount: layers.len() as u32, ppEnabledLayerNames: layers.as_ptr() as *const *const i8,
-		enabledExtensionCount: extensions.len() as u32, ppEnabledExtensionNames: extensions.as_ptr() as *const *const i8,
-		.. Default::default()
-	};
-
-	info!("creating Vulkan Instance");
-
-	vk::Instance::create(&instance_info).expect("Unable to create instance")
+    object: vk::Swapchain<'d>, format: VkFormat, extent: VkExtent2D, auto_vsync: bool
 }
-fn diagnose_adapter(server_con: &XServerConnection, adapter: &vk::PhysicalDevice, queue_index: u32)
+impl <'d> Swapchain<'d>
 {
-	// Feature Check //
-	let features = adapter.get_features();
-	println!("-- adapter features");
-	println!("---- independentBlend: {}", features.independentBlend);
-	println!("---- geometryShader: {}", features.geometryShader);
-	println!("---- multiDrawIndirect: {}", features.multiDrawIndirect);
-	println!("---- drawIndirectFirstInstance: {}", features.drawIndirectFirstInstance);
-	println!("---- shaderTessellationAndGeometryPointSize: {}", features.shaderTessellationAndGeometryPointSize);
-	println!("---- depthClamp: {}", features.depthClamp);
-	println!("---- depthBiasClamp: {}", features.depthBiasClamp);
-	println!("---- wideLines: {}", features.wideLines);
-	println!("---- alphaToOne: {}", features.alphaToOne);
-	println!("---- multiViewport: {}", features.multiViewport);
-	println!("---- shaderCullDistance: {}", features.shaderCullDistance);
-	println!("---- shaderClipDistance: {}", features.shaderClipDistance);
-	println!("---- shaderResourceResidency: {}", features.shaderResourceResidency);
-	// if features.depthClamp == false as VkBool32 { panic!("DepthClamp Feature is required in device"); }
+    fn create(queue: &vk::Queue<'d>, surface: &vk::Surface) -> Result<Self, String>
+    {
+        // capabilities check //
+        if !queue.parent().parent().is_surface_support(queue.family_index, surface) { Err(String::from("Unsupported Surface")) }
+        else
+        {
+            let surface_caps = queue.parent().parent().get_surface_capabilities(surface);
+            let VkExtent2D(caps_width, caps_height) = surface_caps.currentExtent;
 
-	// Vulkan and XCB Integration Check //
-	if !server_con.is_vk_presentation_support(adapter, queue_index) { panic!("Unsupported Display Format"); }
+            // making desired parameters //
+            let format = queue.parent().parent().enumerate_surface_formats(surface).into_iter().filter(|ref x| x.format == VkFormat::B8G8R8A8_SRGB || x.format == VkFormat::R8G8B8A8_SRGB).next();
+            let present_mode = queue.parent().parent().enumerate_present_modes(surface).into_iter().filter(|ref x| **x == VkPresentModeKHR::Mailbox || **x == VkPresentModeKHR::FIFO).next();
+            let extent = if caps_width == std::u32::MAX || caps_height == std::u32::MAX { VkExtent2D(640, 480) } else { VkExtent2D(caps_width, caps_height) };
+
+            match (format, present_mode)
+            {
+                (None, _) => Err(String::from("Desired Format(32bpp SRGB) is not supported on your device")),
+                (_, None) => Err(String::from("Desired Present Mode is not found(Mailbox or FIFO must be supported on your device)")),
+                (Some(f), Some(p)) =>
+                {
+                    // set information and create //
+                    let queue_family_indices = [queue.family_index];
+                    let swapchain_info = VkSwapchainCreateInfoKHR
+                    {
+                        sType: VkStructureType::SwapchainCreateInfoKHR, pNext: std::ptr::null(),
+                        minImageCount: std::cmp::max(surface_caps.minImageCount, 2), imageFormat: f.format, imageColorSpace: f.colorSpace,
+                        imageExtent: extent, imageArrayLayers: 1, imageUsage: VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT as u32,
+                        imageSharingMode: VkSharingMode::Exclusive, compositeAlpha: VK_COMPOSITE_ALPHA_OPAQUE_BIT, preTransform: VK_SURFACE_TRANSFORM_IDENTITY_BIT,
+                        presentMode: p, clipped: true as VkBool32,
+                        pQueueFamilyIndices: queue_family_indices.as_ptr(), queueFamilyIndexCount: queue_family_indices.len() as u32,
+                        oldSwapchain: std::ptr::null_mut(), flags: 0, surface: surface.get()
+                    };
+
+                    Ok(Swapchain { object: vk::Swapchain::create(queue.parent(), &swapchain_info).unwrap(), format: f.format, extent: extent, auto_vsync: p == VkPresentModeKHR::FIFO })
+                }
+            }
+        }
+    }
 }
-fn create_surface<'i, 'c>(instance_ref: &'i vk::Instance, window: &XWindow<'c>) -> vk::Surface<'i>
+impl <'d> std::ops::Deref for Swapchain<'d>
 {
-	let xcb_surface_info = VkXcbSurfaceCreateInfoKHR
-	{
-		sType: VkStructureType::XcbSurfaceCreateInfoKHR, pNext: std::ptr::null(), flags: 0,
-		connection: window.parent().get_raw(), window: window.get()
-	};
-	vk::Surface::create(instance_ref, &xcb_surface_info).unwrap()
+    type Target = vk::Swapchain<'d>;
+    fn deref(&self) -> &Self::Target { &self.object }
 }
-fn create_swapchain<'d>(queue: &vk::Queue<'d>, surface: &vk::Surface) -> (vk::Swapchain<'d>, VkFormat, VkExtent2D)
-{
-	// capabilities check //
-	if !queue.parent().parent().is_surface_support(queue.family_index, surface) { panic!("Unsupported Surface"); }
-	let surface_caps = queue.parent().parent().get_surface_capabilities(surface);
 
-	// making desired parameters //
-	let format = queue.parent().parent().enumerate_surface_formats(surface).into_iter()
-		.filter(|ref x| x.format == VkFormat::B8G8R8A8_SRGB || x.format == VkFormat::R8G8B8A8_SRGB)
-		.next().expect("Desired format is not found");
-	let present_mode = queue.parent().parent().enumerate_present_modes(surface).into_iter().filter(|ref x| **x == VkPresentModeKHR::Mailbox || **x == VkPresentModeKHR::FIFO)
-		.next().expect("Desired Present Mode is not found");
-	let sc_extent = match surface_caps.currentExtent
-	{
-		VkExtent2D(w, h) if w == std::u32::MAX || h == std::u32::MAX => { VkExtent2D(640, 480) },
-		e => e
-	};
-
-	// set information and create //
-	let queue_family_indices = [queue.family_index];
-	let swapchain_info = VkSwapchainCreateInfoKHR
-	{
-		sType: VkStructureType::SwapchainCreateInfoKHR, pNext: std::ptr::null(),
-		minImageCount: surface_caps.minImageCount + 1, imageFormat: format.format, imageColorSpace: format.colorSpace,
-		imageExtent: sc_extent, imageArrayLayers: 1, imageUsage: VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT as u32,
-		imageSharingMode: VkSharingMode::Exclusive, compositeAlpha: VkCompositeAlphaFlagBitsKHR::Opaque,
-		preTransform: VkSurfaceTransformFlagBitsKHR::Identity,
-		presentMode: present_mode, clipped: 1,
-		pQueueFamilyIndices: queue_family_indices.as_ptr(), queueFamilyIndexCount: queue_family_indices.len() as u32,
-		oldSwapchain: std::ptr::null_mut(), flags: 0, surface: surface.get()
-	};
-
-	(vk::Swapchain::create(queue.parent(), &swapchain_info).unwrap(), format.format, sc_extent)
-}
 fn create_image_views<'d, ImageObj: vk::VkImageResource + HasParent<ParentRefType=&'d vk::Device<'d>>>(images: &'d Vec<ImageObj>, format: VkFormat) -> Vec<vk::ImageView>
 {
 	images.into_iter().map(|o|
@@ -292,11 +256,11 @@ fn main()
 		Box::new(EngineLogger)
 	});
 
-	// init xcb(connection to display)
-	let xcon = XServerConnection::connect();
-
 	utils::memory_management_test();
 
+	let prelude = prelude::Engine::new("HardGrad->Extent", VK_MAKE_VERSION!(0, 0, 1));
+
+	/*
 	// init vulkan
 	let instance = create_instance();
 	let adapter = vk::PhysicalDevice::wrap(instance.enumerate_adapters().unwrap()[0]);
@@ -387,12 +351,12 @@ fn main()
 
 	// Ready for Rendering
 	let surface = create_surface(&instance, &window);
-	let (swapchain, sc_format, sc_extent) = create_swapchain(&graphics_queue, &surface);
-	let render_area = VkRect2D(VkOffset2D(0, 0), sc_extent);
-	let final_images = swapchain.get_images().unwrap();
-	let final_image_views = create_image_views(&final_images, sc_format);
-	let simple_pass = create_simple_render_pass(&device, sc_format);
-	let final_framebuffers = create_framebuffers(&final_image_views, &simple_pass, sc_extent);
+	let swapchain = Swapchain::create(&graphics_queue, &surface).unwrap();
+	let render_area = VkRect2D(VkOffset2D(0, 0), swapchain.extent);
+	let final_images = swapchain.object.get_images().unwrap();
+	let final_image_views = create_image_views(&final_images, swapchain.format);
+	let simple_pass = create_simple_render_pass(&device, swapchain.format);
+	let final_framebuffers = create_framebuffers(&final_image_views, &simple_pass, swapchain.extent);
 
 	// Command Pools //
 	let pool = device.create_command_pool(&graphics_queue, true, false).unwrap();
@@ -406,17 +370,17 @@ fn main()
 
 	// Ready for Shading
 	let pp_commons = logical_resources::PipelineCommonStore::new(&device, &descriptor_sets);
-	let enemy_render = logical_resources::EnemyRenderer::new(&pp_commons, &simple_pass, sc_extent);
-	let background_render = logical_resources::BackgroundRenderer::new(&pp_commons, &simple_pass, sc_extent);
-	let player_render = logical_resources::PlayerRenderer::new(&pp_commons, &simple_pass, sc_extent);
-	let debug_render = logical_resources::DebugRenderer::new(&pp_commons, &simple_pass, sc_extent);
+	let enemy_render = logical_resources::EnemyRenderer::new(&pp_commons, &simple_pass, swapchain.extent);
+	let background_render = logical_resources::BackgroundRenderer::new(&pp_commons, &simple_pass, swapchain.extent);
+	let player_render = logical_resources::PlayerRenderer::new(&pp_commons, &simple_pass, swapchain.extent);
+	let debug_render = logical_resources::DebugRenderer::new(&pp_commons, &simple_pass, swapchain.extent);
 
 	// Logical Resources //
 	let di_desc = 1;
 	let meshstore = logical_resources::Meshstore::new(memory_preallocator.meshstore_base);
-	let projection_matrixes = logical_resources::ProjectionMatrixes::new(sc_extent);
-	let mut enemy_datastore = logical_resources::EnemyDatastore::new();
-	let background_datastore = logical_resources::BackgroundDatastore::new();
+	let projection_matrixes = logical_resources::ProjectionMatrixes::new(swapchain.extent);
+	// let mut enemy_datastore = logical_resources::EnemyDatastore::new();
+	// let background_datastore = logical_resources::BackgroundDatastore::new();
 	let debug_info_resources = logical_resources::DebugInfoResources::new(&device, &transfer_queue, &initializer_pool, &transfer_pool, di_desc);
 
 	// Setup Descriptors //
@@ -438,6 +402,13 @@ fn main()
 		mapped_range.map_mut::<structures::UniformMemory>(memory_preallocator.uniform_memory_base),
 		mapped_range.map_mut::<structures::InstanceMemory>(memory_preallocator.instance_base)
 	);
+	let (projection_matrixes_ref, enemy_instance_data_ref, background_instance_data_ref, player_center_tf_ref) = uniform_memory_range.partial_borrow();
+	let (enemy_instance_mult_ref, background_instance_mult_ref, player_rotq_ref) = instance_memory_range.partial_borrow();
+
+    // Game Engine Instance and Initial Setups //
+    let mut engine = Engine::new(uniform_memory_range, instance_memory_range);
+    meshstore.initial_stage_data(instance_memory_range);
+    engine.setup_parameters();
 
 	// Initial Staging //
 	{
@@ -445,23 +416,7 @@ fn main()
 
 		meshstore.initial_stage_data(&mapped_range);
 		projection_matrixes.initial_stage_data(uniform_memory_range);
-		enemy_datastore.initial_stage_data(uniform_memory_range);
-		instance_memory_range.enemy_instance_mult = [1; structures::MAX_ENEMY_COUNT];
-		instance_memory_range.background_instance_mult = [1; structures::MAX_BACKGROUND_COUNT];
 	}
-
-	// Player Instance //
-	let player = Player::new(uniform_memory_range, instance_memory_range);
-
-	// Double-buffered object storages //
-	let mut olist_index = 0;
-	let mut enemy_list = [
-		std::collections::LinkedList::<Enemy>::new(),
-		std::collections::LinkedList::new()
-	];
-	let mut enemy_counter = 0;
-
-	println!("-- Background Instance Offs: {}", structures::background_instance_offs());
 
 	// Ready for command recording //
 	let final_commands = pool.allocate_primary_buffers(final_framebuffers.len()).unwrap();
@@ -479,10 +434,10 @@ fn main()
 			.bind_descriptor_sets(background_render.layout_ref, &[descriptor_sets.sets[0]], &[])
 			.bind_pipeline(&background_render.state)
 			.bind_vertex_buffers_partial(1, &[**memory_bound_resources.buffer], &[memory_preallocator.instance_base + structures::background_instance_offs() as VkDeviceSize])
-			.draw(4, structures::MAX_BACKGROUND_COUNT as u32, 0)
+			.draw(4, MAX_BK_COUNT as u32, 0)
 			.bind_pipeline(&enemy_render.state)
 			.bind_vertex_buffers_partial(1, &[**memory_bound_resources.buffer], &[memory_preallocator.instance_base])
-			.draw(4, structures::MAX_ENEMY_COUNT as u32, 0)
+			.draw(4, MAX_ENEMY_COUNT as u32, 0)
 			.bind_pipeline(&player_render.state)
 			.bind_vertex_buffers(&[**memory_bound_resources.buffer, **memory_bound_resources.buffer],
 				&[meshstore.wire_render_offset + structures::player_cube_vertex_offs() as VkDeviceSize, memory_preallocator.instance_base + structures::player_instance_offs() as VkDeviceSize])
@@ -548,11 +503,6 @@ fn main()
 	graphics_queue.submit_commands(&[final_commands[index_render_to as usize]], &[render_target_sem.get()], &[], Some(&fence)).unwrap();
 	let mut render_start_time = time::PreciseTime::now();
 
-	// randomizers //
-	let mut randomizer = rand::thread_rng();
-	let mut left_range = rand::distributions::Range::new(-25.0f32, 25.0f32);
-	let mut appear_percent_range = rand::distributions::Range::new(0, 40);
-
 	// Application Loop
 	let mut prev_frame_time = time::PreciseTime::now();
 	let dt_mapped_range = debug_info_resources.map_for_instance();
@@ -563,7 +513,7 @@ fn main()
 		if fence.get_status().is_ok()
 		{
 			let delta_time = render_start_time.to(time::PreciseTime::now());
-			debug_info_resources.update_text_data(&dt_mapped_range, delta_time.num_microseconds().unwrap() as f32 / 1000.0f32, enemy_counter);
+			// debug_info_resources.update_text_data(&dt_mapped_range, delta_time.num_microseconds().unwrap() as f32 / 1000.0f32, enemy_counter);
 			fence.reset().unwrap();
 			swapchain.present(&graphics_queue, index_render_to, &[]).unwrap();
 			index_render_to = swapchain.acquire_next_image(&render_target_sem).unwrap();
@@ -576,38 +526,292 @@ fn main()
 			graphics_queue.submit_commands(&[final_commands[index_render_to as usize]], &wait_semaphores, &[], Some(&fence)).unwrap();
 			render_start_time = time::PreciseTime::now();
 			require_transfer = false;
-			background_datastore.update(uniform_memory_range, instance_memory_range, &mut randomizer, delta_time);
-			player.update(instance_memory_range, uniform_memory_range);
+            // game.update(delta_time);
 		}
 
-		if prev_frame_time.to(time::PreciseTime::now()) >= time::Duration::milliseconds(8)
+		if prev_frame_time.to(time::PreciseTime::now()) >= time::Duration::milliseconds(16)
 		{
-			if appear_percent_range.sample(&mut randomizer) == 0
-			{
-				if let Some(enemy) = Enemy::new(&mut enemy_datastore, instance_memory_range, uniform_memory_range, left_range.sample(&mut randomizer))
-				{
-					enemy_list[olist_index].push_back(enemy);
-					enemy_counter += 1;
-				}
-				else { println!("Warning: Unable to allocate memory block for enemy"); }
-			}
-			let next_index = if olist_index == 0 { 1 } else { 0 };
-			while let Some(mut e) = enemy_list[olist_index].pop_front()
-			{
-				if !e.update(&enemy_datastore, uniform_memory_range)
-				{
-					enemy_list[next_index].push_front(e);
-				}
-				else
-				{
-					e.die(&mut enemy_datastore, instance_memory_range);
-					enemy_counter -= 1;
-				}
-			}
-			olist_index = next_index;
-			require_transfer = true;
-			prev_frame_time = time::PreciseTime::now();
+            // game.fixed_update();
+            prev_frame_time = time::PreciseTime::now();
 		}
 	}
 	device.wait_for_idle().unwrap();
+	*/
 }
+
+mod prelude
+{
+	use std;
+	use vkffi::*;
+	use render_vk::wrap as vk;
+	use xcbw::*;
+	use traits::*;
+
+	trait Window<'s, WindowServer: 's + WindowProvider<'s, NativeWindow>, NativeWindow: 's> where Self: std::marker::Sized
+	{
+		fn create_unresizable(server: &'s WindowServer, instance: &vk::Instance, size: VkExtent2D, title: &str) -> Result<Self, VkResult>;
+	}
+	pub struct XcbWindow
+	{
+		native: XWindow<'s>, surface_raw: VkSurfaceKHR
+	}
+	impl <'s> Window<'s, XServerConnection, XWindow<'s>> for XcbWindow<'s>
+	{
+		fn create_unresizable(server: &'s XServerConnection, instance: &vk::Instance, size: VkExtent2D, title: &str) -> Result<Self, VkResult>
+		{
+			let native = server.create_unresizable_window(size, title);
+			let surface_info = VkXcbSurfaceCreateInfoKHR
+			{
+				sType: VkStructureType::XcbSurfaceCreateInfoKHR, pNext: std::ptr::null(), flags: 0,
+				connection: server.get_raw(), window: native.get()
+			};
+			let surface = try!(vk::Surface::create(instance, &surface_info));
+
+			Ok(XcbWindow
+			{
+				surface_raw: surface.release(), native: server.create_unresizable_window(size, title),
+				server_ref: server
+			})
+		}
+	}
+
+	pub struct Device
+	{
+		internal: VkDevice, graphics_queue: VkQueue, transfer_queue: VkQueue
+	}
+	impl Device
+	{
+		fn create_with_shared_queue(adapter_ref: &vk::PhysicalDevice, features: VkPhysicalDeviceFeatures, qf_index: u32) -> Result<Self, VkResult>
+		{
+			println!("-- Sharing queue family: {}", qf_index);
+
+			let max_queue_count = adapter_ref.enumerate_queue_family_properties()[qf_index as usize].queueCount;
+			let qp = [0.0f32; 2];
+			let queue_count = std::cmp::min(2, max_queue_count);
+			let queue_info = VkDeviceQueueCreateInfo
+			{
+				sType: VkStructureType::DeviceQueueCreateInfo, pNext: std::ptr::null(), flags: 0,
+				queueCount: queue_count, queueFamilyIndex: qf_index, pQueuePriorities: qp.as_ptr()
+			};
+			let device = try!(Self::create_internal(adapter_ref, &[queue_info], &["VK_LAYER_LUNARG_standard_validation"], &["VK_KHR_swapchain"], features));
+			Ok(Device
+			{
+				graphics_queue: device.get_queue(qf_index, 0).release(),
+				transfer_queue: device.get_queue(qf_index, queue_count - 1).release(),
+				internal: device.release()
+			})
+		}
+		fn create_with_exclusive_queue(adapter_ref: &vk::PhysicalDevice, features: VkPhysicalDeviceFeatures, qf_indices: [u32; 2]) -> Result<Self, VkResult>
+		{
+			println!("-- Not sharing queue family: g={}, t={}", qf_indices[0], qf_indices[1]);
+
+			let qp = [0.0f32; 1];
+			let qinfos = qf_indices.into_iter().map(|&x| VkDeviceQueueCreateInfo
+			{
+				sType: VkStructureType::DeviceQueueCreateInfo, pNext: std::ptr::null(), flags: 0,
+				queueCount: 1, queueFamilyIndex: x, pQueuePriorities: qp.as_ptr()
+			}).collect::<Vec<_>>();
+			let device = try!(Self::create_internal(adapter_ref, &qinfos[..], &["VK_LAYER_LUNARG_standard_validation"], &["VK_KHR_swapchian"], features));
+			Ok(Device
+			{
+				graphics_queue: device.get_queue(qf_indices[0], 0).release(),
+				transfer_queue: device.get_queue(qf_indices[1], 0).release(),
+				internal: device.release()
+			})
+		}
+		fn drop(&self) { unsafe { vkDestroyDevice(self.internal, std::ptr::null()) }; }
+
+		fn create_internal<'a>(adapter_ref: &'a vk::PhysicalDevice, qinfos: &[VkDeviceQueueCreateInfo], layers: &[&str], extensions: &[&str], enabled_features: VkPhysicalDeviceFeatures)
+			-> Result<vk::Device<'a>, VkResult>
+		{
+			let layers_c = layers.into_iter().map(|&x| std::ffi::CString::new(x).unwrap()).collect::<Vec<_>>();
+			let extensions_c = extensions.into_iter().map(|&x| std::ffi::CString::new(x).unwrap()).collect::<Vec<_>>();
+			let layers_ptr_c = layers_c.iter().map(|x| x.as_ptr()).collect::<Vec<_>>();
+			let extensions_ptr_c = extensions_c.iter().map(|x| x.as_ptr()).collect::<Vec<_>>();
+
+			adapter_ref.create_device(&VkDeviceCreateInfo
+			{
+				sType: VkStructureType::DeviceCreateInfo, pNext: std::ptr::null(), flags: 0,
+				queueCreateInfoCount: qinfos.len() as u32, pQueueCreateInfos: qinfos.as_ptr(),
+				enabledLayerCount: layers_ptr_c.len() as u32, ppEnabledLayerNames: layers_ptr_c.as_ptr(),
+				enabledExtensionCount: extensions_ptr_c.len() as u32, ppEnabledExtensionNames: extensions_ptr_c.as_ptr(), pEnabledFeatures: &enabled_features
+			})
+		}
+	}
+
+	pub struct Engine
+	{
+		window_system: XServerConnection, instance: vk::Instance, #[allow(dead_code)] adapter: VkPhysicalDevice, device: Device
+	}
+	impl std::ops::Drop for Engine
+	{
+		fn drop(&mut self)
+		{
+			self.device.drop();
+		}
+	}
+	impl Engine
+	{
+		pub fn new(app_name: &str, app_version: u32) -> Engine
+		{
+			info!(target: "Prelude", "Initializing Engine...");
+
+			let instance = vk::Instance::new(app_name, app_version, "Prelude Computer-Graphics Engine", VK_MAKE_VERSION!(0, 0, 1),
+				&["VK_LAYER_LUNARG_standard_validation"], &["VK_KHR_surface", "VK_KHR_xcb_surface", "VK_EXT_debug_report"]).unwrap();
+
+			// ready for window system //
+			let window_server = XServerConnection::connect();
+			let window = XcbWindow::create_unresizable(&window_server, &instance, VkExtent2D(640, 480), app_name);
+			window_server.flush();
+
+			// Connection to Physical Device and Create Queues //
+			let adapter = vk::PhysicalDevice::wrap(*instance.enumerate_adapters().unwrap().iter().next().unwrap());
+			let (gqf_index, tqf_index) = Self::find_queue_family(&adapter).expect("Unable to find queue for graphics on device");
+			Self::diagnose_adapter(&window_server, &adapter, gqf_index);
+			let device_features = VkPhysicalDeviceFeatures { geometryShader: 1, .. Default::default() };
+			let device = if gqf_index == tqf_index { Device::create_with_shared_queue(&adapter, device_features, gqf_index) }
+				else { Device::create_with_exclusive_queue(&adapter, device_features, [gqf_index, tqf_index]) }.unwrap();
+
+			Engine
+			{
+				window_system: window_server, instance: instance, adapter: adapter.release(), device: device
+			}
+		}
+		pub fn process_messages(&self) -> bool
+		{
+			self.window_system.process_messages()
+		}
+
+		fn find_queue_family(adapter: &vk::PhysicalDevice) -> Option<(u32, u32)>
+		{
+			let queue_indices = adapter.get_queue_family_indices();
+			let mut iter = queue_indices.into_iter().enumerate();
+			let g = iter.by_ref().filter(|&(_, ref x)| (x.queueFlags & VK_QUEUE_GRAPHICS_BIT) != 0).map(|(i, _)| i as u32).next();
+			let t = iter.by_ref().filter(|&(_, ref x)| (x.queueFlags & VK_QUEUE_TRANSFER_BIT) != 0).map(|(i, _)| i as u32).next();
+			g.map(|x| (x, t.unwrap_or(x)))
+		}
+		fn diagnose_adapter(server_con: &XServerConnection, adapter: &vk::PhysicalDevice, queue_index: u32)
+		{
+			// Feature Check //
+			let features = adapter.get_features();
+			info!(target: "Prelude::DiagAdapter", "adapter features");
+			info!(target: "Prelude::DiagAdapter", "-- independentBlend: {}", features.independentBlend);
+			info!(target: "Prelude::DiagAdapter", "-- geometryShader: {}", features.geometryShader);
+			info!(target: "Prelude::DiagAdapter", "-- multiDrawIndirect: {}", features.multiDrawIndirect);
+			info!(target: "Prelude::DiagAdapter", "-- drawIndirectFirstInstance: {}", features.drawIndirectFirstInstance);
+			info!(target: "Prelude::DiagAdapter", "-- shaderTessellationAndGeometryPointSize: {}", features.shaderTessellationAndGeometryPointSize);
+			info!(target: "Prelude::DiagAdapter", "-- depthClamp: {}", features.depthClamp);
+			info!(target: "Prelude::DiagAdapter", "-- depthBiasClamp: {}", features.depthBiasClamp);
+			info!(target: "Prelude::DiagAdapter", "-- wideLines: {}", features.wideLines);
+			info!(target: "Prelude::DiagAdapter", "-- alphaToOne: {}", features.alphaToOne);
+			info!(target: "Prelude::DiagAdapter", "-- multiViewport: {}", features.multiViewport);
+			info!(target: "Prelude::DiagAdapter", "-- shaderCullDistance: {}", features.shaderCullDistance);
+			info!(target: "Prelude::DiagAdapter", "-- shaderClipDistance: {}", features.shaderClipDistance);
+			info!(target: "Prelude::DiagAdapter", "-- shaderResourceResidency: {}", features.shaderResourceResidency);
+			// if features.depthClamp == false as VkBool32 { panic!("DepthClamp Feature is required in device"); }
+
+			// Vulkan and XCB Integration Check //
+			if !server_con.is_vk_presentation_support(adapter, queue_index) { panic!("Unsupported Display Format"); }
+		}
+	}
+}
+
+/*
+// Engine Instance
+struct Engine<'d>
+{
+    prev_update_time: time::PreciseTime, prev_fixed_time: time::PreciseTime,
+    instance_memory: &'d mut structures::InstanceMemory, uniform_memory: &'d mut structures::UniformMemory,
+    projection_matrixes: logical_resources::ProjectionMatrixes, game: Game
+}
+impl <'d> Engine<'d>
+{
+    fn new(memory_range: &'d vk::MemoryMappedRange, preallocator: &'d device_resources::MemoryPreallocator) -> Self
+    {
+        Engine
+        {
+            instance_memory: memory_range.map_mut::<structures::InstanceMemory>(preallocator.instance_base),
+            uniform_memory: memory_range.map_mut::<structures::UniformMemory>(preallocator.uniform_memory_base),
+            projection_matrixes: logical_resources::ProjectionMatrixes::new(),
+            prev_update_time: time::PreciseTime::now(), prev_fixed_time: time::PreciseTime::now(),
+            game: Game::new()
+        }
+    }
+    fn setup_parameters(&mut self)
+    {
+        self.projection_matrixes.initial_stage_data(self.uniform_memory);
+        self.game.setup_parameters(self.instance_memory);
+    }
+    fn update(&mut self)
+    {
+        self.prev_fixed_time = if self.prev_fixed_time.to(time::PreciseTime::now()) >= time::Duration::milliseconds(16)
+        {
+            self.game.fixed_update();
+            time::PreciseTime::now()
+        } else { self.prev_fixed_time };
+
+        let delta_time = self.prev_update_time.to(time::PreciseTime::now());
+        self.game.update(self.instance_memory, self.uniform_memory, delta_time);
+        self.prev_update_time = time::PreciseTime::now();
+    }
+}
+
+// Game Instance
+struct Game
+{
+    player: Player, enemy_list: LinkedList<Enemy>, enemy_counter: u32,
+    enemy_datastore: logical_resources::EnemyDatastore, background_datastore: logical_resources::BackgroundDatastore,
+    randomizer: rand::ThreadRng,
+    require_appear_enemy: bool, require_appear_background: bool
+}
+impl Game
+{
+    fn new(instance_memory: &mut structures::InstanceMemory, uniform_memory: &mut structures::UniformMemory) -> Self
+    {
+        Game
+        {
+            enemy_datastore: logical_resources::EnemyDatastore::new(), background_datastore: logical_resources::BackgroundDatastore::new(),
+            player: Player::new(uniform_memory, instance_memory), enemy_list: LinkedList::<Enemy>::new(), enemy_counter: 0,
+            randomizer: rand::thread_rng(),
+            require_appear_enemy: false, require_appear_background: false
+        }
+    }
+    fn setup_parameters(&self, instance_memory: &mut structures::InstanceMemory)
+    {
+        instance_memory.enemy_instance_mult = [0; MAX_ENEMY_COUNT];
+        instance_memory.background_instance_mult = [0; MAX_BK_COUNT];
+    }
+    fn update(&mut self, instance_memory: &mut structures::InstanceMemory, uniform_memory: &mut structures::UniformMemory, delta_time: time::Duration)
+    {
+        self.background_datastore.update(self.uniform_memory, instance_memory, &mut self.randomizer, delta_time, self.require_appear_background);
+        self.player.update(instance_memory, uniform_memory);
+
+        if self.require_appear_enemy
+        {
+            let left_range = rand::distributions::Range::new(-25.0f32, 25.0f32);
+            if let Some(enemy) = Enemy::new(&mut self.enemy_datastore, instance_memory, uniform_memory, left_range.sample(&mut self.randomizer))
+            {
+                self.enemy_list.push_back(enemy);
+                self.enemy_counter += 1;
+            } else { println!("Warning: Unable to allocate memory block for enemy"); }
+        }
+        let living_list = LinkedList::<Enemy>::new();
+        while let Some(e) = self.enemy_list.pop_front()
+        {
+            let died = e.update(&self.enemy_datastore, self.uniform_memory);
+            if !died { living_list.push_back(e); } else { e.die(&mut self.enemy_datastore, self.instance_memory); self.enemy_counter -= 1; }
+        }
+        self.enemy_list = living_list;
+
+        self.require_appear_enemy = false; self.require_appear_background = false;
+    }
+    fn fixed_update(&mut self)
+    {
+        let enemy_incidence_range = rand::distributions::Range::new(0, 40);
+        let background_incidence_range = rand::distributions::Range::new(0, 4);
+
+        self.require_appear_enemy = enemy_incidence_range.sample(&mut self.randomizer) == 0;
+        self.require_appear_background = background_incidence_range.sample(&mut self.randomizer) == 0;
+    }
+}
+*/

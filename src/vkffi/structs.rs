@@ -644,7 +644,7 @@ pub struct VkSurfaceCapabilitiesKHR
 	pub maxImageExtent: VkExtent2D,
 	pub maxImageArrayLayers: u32,
 	pub supportedTransforms: VkSurfaceTransformFlagsKHR,
-	pub currentTransform: VkSurfaceTransformFlagBitsKHR,
+	pub currentTransform: VkSurfaceTransformFlagsKHR,
 	pub supportedCompositeAlpha: VkCompositeAlphaFlagsKHR,
 	pub supportedUsageFlags: VkImageUsageFlags
 }
@@ -671,8 +671,8 @@ pub struct VkSwapchainCreateInfoKHR
 	pub imageSharingMode: VkSharingMode,
 	pub queueFamilyIndexCount: u32,
 	pub pQueueFamilyIndices: *const u32,
-	pub preTransform: VkSurfaceTransformFlagBitsKHR,
-	pub compositeAlpha: VkCompositeAlphaFlagBitsKHR,
+	pub preTransform: VkSurfaceTransformFlagsKHR,
+	pub compositeAlpha: VkCompositeAlphaFlagsKHR,
 	pub presentMode: VkPresentModeKHR,
 	pub clipped: VkBool32,
 	pub oldSwapchain: VkSwapchainKHR

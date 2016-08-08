@@ -20,16 +20,38 @@ pub struct Instance
 	debug_destructor: PFN_vkDestroyDebugReportCallbackEXT,
 	debug: VkDebugReportCallbackEXT
 }
-impl CreationObject<VkInstanceCreateInfo> for Instance
+impl Instance
 {
-	fn create(info: &VkInstanceCreateInfo) -> Result<Self, VkResult>
+	pub fn new(app_name: &str, app_version: u32, engine_name: &str, engine_version: u32, layers: &[&str], extensions: &[&str]) -> Result<Self, VkResult>
 	{
-		let mut i: VkInstance = std::ptr::null_mut();
-		let res = unsafe { vkCreateInstance(info, std::ptr::null_mut(), &mut i) };
-		if res != VkResult::Success { Err(res) } else
+		let app_name_c = std::ffi::CString::new(app_name).unwrap();
+		let engine_name_c = std::ffi::CString::new(engine_name).unwrap();
+		let layers_c = layers.into_iter().map(|&x| std::ffi::CString::new(x).unwrap()).collect::<Vec<_>>();
+		let extensions_c = extensions.into_iter().map(|&x| std::ffi::CString::new(x).unwrap()).collect::<Vec<_>>();
+		let layers_ptr_c = layers_c.iter().map(|x| x.as_ptr()).collect::<Vec<_>>();
+		let extensions_ptr_c = extensions_c.iter().map(|x| x.as_ptr()).collect::<Vec<_>>();
+
+		let app = VkApplicationInfo
 		{
-			let cdrc = unsafe { std::mem::transmute::<_, PFN_vkCreateDebugReportCallbackEXT>(vkGetInstanceProcAddr(i, CString::new("vkCreateDebugReportCallbackEXT").unwrap().as_ptr())) };
-			let ddrc = unsafe { std::mem::transmute::<_, PFN_vkDestroyDebugReportCallbackEXT>(vkGetInstanceProcAddr(i, CString::new("vkDestroyDebugReportCallbackEXT").unwrap().as_ptr())) };
+			sType: VkStructureType::ApplicationInfo, pNext: std::ptr::null(),
+			pApplicationName: app_name_c.as_ptr(), applicationVersion: app_version,
+			pEngineName: engine_name_c.as_ptr(), engineVersion: engine_version,
+			apiVersion: VK_API_VERSION
+		};
+		let info = VkInstanceCreateInfo
+		{
+			sType: VkStructureType::InstanceCreateInfo, pNext: std::ptr::null(),
+			flags: 0, pApplicationInfo: &app,
+			enabledLayerCount: layers_ptr_c.len() as u32, ppEnabledLayerNames: layers_ptr_c.as_ptr(),
+			enabledExtensionCount: extensions_ptr_c.len() as u32, ppEnabledExtensionNames: extensions_ptr_c.as_ptr()
+		};
+		let mut instance: VkInstance = unsafe { std::mem::uninitialized() };
+		unsafe { vkCreateInstance(&info, std::ptr::null(), &mut instance) }.to_result().and_then(move |()|
+		{
+			let create_debug_report_callback_name = std::ffi::CString::new("vkCreateDebugReportCallbackEXT").unwrap();
+			let destroy_debug_report_callback_name = std::ffi::CString::new("vkDestroyDebugReportCallbackEXT").unwrap();
+			let cdrc = unsafe { std::mem::transmute::<_, PFN_vkCreateDebugReportCallbackEXT>(vkGetInstanceProcAddr(instance, create_debug_report_callback_name.as_ptr())) };
+			let ddrc = unsafe { std::mem::transmute::<_, PFN_vkDestroyDebugReportCallbackEXT>(vkGetInstanceProcAddr(instance, destroy_debug_report_callback_name.as_ptr())) };
 
 			let callback_info = VkDebugReportCallbackCreateInfoEXT
 			{
@@ -41,20 +63,10 @@ impl CreationObject<VkInstanceCreateInfo> for Instance
 			};
 
 			let mut callback: VkDebugReportCallbackEXT = std::ptr::null_mut();
-			let res = unsafe { cdrc(i, &callback_info, std::ptr::null(), &mut callback) };
-			if res != VkResult::Success { Err(res) } else
-			{
-				Ok(Instance
-				{
-					obj: i, debug: callback,
-					debug_destructor: ddrc
-				})
-			}
-		}
+			unsafe { cdrc(instance, &callback_info, std::ptr::null(), &mut callback) }.to_result()
+				.map(|()| Instance { obj: instance, debug: callback, debug_destructor: ddrc })
+		})
 	}
-}
-impl Instance
-{
 	pub fn enumerate_adapters(&self) -> Result<Vec<VkPhysicalDevice>, VkResult>
 	{
 		let mut adapter_count: u32 = 0;
@@ -185,14 +197,20 @@ impl PhysicalDevice
 			.map(|(i, _)| i).next()
 	}
 }
-impl InternalProvider<VkPhysicalDevice> for PhysicalDevice
+impl NativeOwner<VkPhysicalDevice> for PhysicalDevice
 {
+	fn release(mut self) -> VkPhysicalDevice { self.obj }
 	fn get(&self) -> VkPhysicalDevice { self.obj }
 }
 pub struct Device<'a> { adapter_ref: &'a PhysicalDevice, obj: VkDevice }
 impl <'a> std::ops::Drop for Device<'a>
 {
-	fn drop(&mut self) { unsafe { vkDestroyDevice(self.obj, std::ptr::null()) }; }
+	fn drop(&mut self) { if !self.obj.is_null() { unsafe { vkDestroyDevice(self.obj, std::ptr::null()) }; } }
+}
+impl <'a> NativeOwner<VkDevice> for Device<'a>
+{
+	fn release(mut self) -> VkDevice { let o = self.obj; self.obj = std::ptr::null_mut(); o }
+	fn get(&self) -> VkDevice { self.obj }
 }
 impl <'a> HasParent for Device<'a>
 {
@@ -407,6 +425,11 @@ impl <'a> Device<'a>
 }
 pub struct Queue<'d> { device_ref: &'d Device<'d>, obj: VkQueue, pub family_index: u32 }
 impl <'d> HasParent for Queue<'d> { type ParentRefType = &'d Device<'d>; fn parent(&self) -> &'d Device<'d> { self.device_ref } }
+impl <'d> NativeOwner<VkQueue> for Queue<'d>
+{
+	fn get(&self) -> VkQueue { self.obj }
+	fn release(mut self) -> VkQueue { self.obj }
+}
 impl <'d> Queue<'d>
 {
 	pub fn submit_commands(&self, buffers: &[VkCommandBuffer], device_synchronizer: &[VkSemaphore], device_signalizer: &[VkSemaphore], event_receiver: Option<&Fence>) -> Result<(), VkResult>
@@ -432,14 +455,18 @@ macro_rules! SafeObjectDerivedFromDevice
 	($name: ident for $t: tt destructed by $dfn: ident) =>
 	{
 		SafeObjectDerivedFromDevice!($name for $t);
-		impl <'d> std::ops::Drop for $name<'d> { fn drop(&mut self) { unsafe { $dfn(self.device_ref.obj, self.obj, std::ptr::null()) }; } }
+		impl <'d> std::ops::Drop for $name<'d> { fn drop(&mut self) { if !self.obj.is_null() { unsafe { $dfn(self.device_ref.obj, self.obj, std::ptr::null()) }; } } }
 	};
 	($name: ident for $t: ident) =>
 	{
 		pub struct $name<'d> { device_ref: &'d Device<'d>, obj: $t }
 		impl <'d> HasParent for $name<'d> { type ParentRefType = &'d Device<'d>; fn parent(&self) -> &'d Device<'d> { self.device_ref } }
 		impl <'d> std::ops::Deref for $name<'d> { type Target = $t; fn deref(&self) -> &$t { &self.obj } }
-		impl <'d> InternalProvider<$t> for $name<'d> { fn get(&self) -> $t { self.obj } }
+		impl <'d> NativeOwner<$t> for $name<'d>
+		{
+			fn release(mut self) -> $t { let o = self.obj; self.obj = std::ptr::null_mut(); o }
+			fn get(&self) -> $t { self.obj }
+		}
 	};
 }
 
@@ -480,11 +507,12 @@ impl <'a> Surface<'a>
 }
 impl <'a> std::ops::Drop for Surface<'a>
 {
-	fn drop(&mut self) { unsafe { vkDestroySurfaceKHR(self.instance_ref.obj, self.obj, std::ptr::null()) }; }
+	fn drop(&mut self) { if !self.obj.is_null() { unsafe { vkDestroySurfaceKHR(self.instance_ref.obj, self.obj, std::ptr::null()) }; } }
 }
-impl <'a> InternalProvider<VkSurfaceKHR> for Surface<'a>
+impl <'a> NativeOwner<VkSurfaceKHR> for Surface<'a>
 {
 	fn get(&self) -> VkSurfaceKHR { self.obj }
+	fn release(mut self) -> VkSurfaceKHR { let o = self.obj; self.obj = std::ptr::null_mut(); o }
 }
 
 SafeObjectDerivedFromDevice!(Swapchain for VkSwapchainKHR destructed by vkDestroySwapchainKHR);

@@ -38,7 +38,4 @@ impl EnemyDatastore
 		memory_ref.enemy_instance_mult[index as usize] = 0;
 	}
 }
-impl UniformStore for EnemyDatastore
-{
-	fn initial_stage_data(&self, memory_ref: &mut structures::UniformMemory) {}
-}
+
