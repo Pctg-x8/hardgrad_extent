@@ -2,6 +2,7 @@
 
 use vkffi::*;
 use std;
+use traits::*;
 use std::ffi::*;
 use std::os::raw::*;
 use libc::size_t;
@@ -216,7 +217,7 @@ impl Device
 	}
 	pub fn wait_for_idle(&self) -> Result<(), VkResult> { unsafe { vkDeviceWaitIdle(self.obj) }.to_result() }
 }
-pub struct Queue { obj: VkQueue, family_index: u32 }
+pub struct Queue { obj: VkQueue, pub family_index: u32 }
 impl Queue
 {
 	pub fn submit_commands(&self, buffers: &[VkCommandBuffer],
@@ -492,6 +493,7 @@ impl Sampler
 
 pub struct Surface { parent: Rc<Instance>, obj: VkSurfaceKHR }
 impl std::ops::Drop for Surface { fn drop(&mut self) { unsafe { vkDestroySurfaceKHR(self.parent.obj, self.obj, std::ptr::null()) }; } }
+impl NativeOwner<VkSurfaceKHR> for Surface { fn get(&self) -> VkSurfaceKHR { self.obj } }
 impl Surface
 {
 	pub fn new_xcb(instance: &Rc<Instance>, info: &VkXcbSurfaceCreateInfoKHR) -> Result<Surface, VkResult>
@@ -500,14 +502,24 @@ impl Surface
 		unsafe { vkCreateXcbSurfaceKHR(instance.obj, info, std::ptr::null(), &mut surf) }.map(move || Surface { obj: surf, parent: instance.clone() })
 	}
 }
-pub struct Swapchain { parent: Rc<Device>, obj: VkSwapchainKHR }
+pub struct Swapchain { parent: Rc<Device>, #[allow(dead_code)] base: Rc<Surface>, obj: VkSwapchainKHR }
 impl std::ops::Drop for Swapchain { fn drop(&mut self) { unsafe { vkDestroySwapchainKHR(self.parent.obj, self.obj, std::ptr::null()) }; } }
 impl Swapchain
 {
-	pub fn new(device: &Rc<Device>, info: &VkSwapchainCreateInfoKHR) -> Result<Self, VkResult>
+	pub fn new(device: &Rc<Device>, surface: &Rc<Surface>, info: &VkSwapchainCreateInfoKHR) -> Result<Self, VkResult>
 	{
 		let mut sc: VkSwapchainKHR = empty_handle();
-		unsafe { vkCreateSwapchainKHR(device.obj, info, std::ptr::null(), &mut sc) }.map(move || Swapchain { obj: sc, parent: device.clone() })
+		unsafe { vkCreateSwapchainKHR(device.obj, info, std::ptr::null(), &mut sc) }
+			.map(move || Swapchain { obj: sc, base: surface.clone(), parent: device.clone() })
+	}
+	pub fn get_images(&self) -> Result<Vec<VkImage>, VkResult>
+	{
+		let mut image_count = 0u32;
+		unsafe { vkGetSwapchainImagesKHR(self.parent.obj, self.obj, &mut image_count, std::ptr::null_mut()) }.and_then(move ||
+		{
+			let mut images: Vec<VkImage> = vec![empty_handle(); image_count as usize];
+			unsafe { vkGetSwapchainImagesKHR(self.parent.obj, self.obj, &mut image_count, images.as_mut_ptr()) }.map(move || images)
+		})
 	}
 	pub fn acquire_next_image(&self, parent: &Device, device_synchronizer: &Semaphore) -> Result<u32, VkResult>
 	{

@@ -20,8 +20,6 @@ pub trait MessageHandler
 /// Indicates the object is a placeholder of FFI objects
 pub trait NativeOwner<InternalType>
 {
-	/// Relases the ownership of FFI objects
-	fn release(self) -> InternalType;
 	/// Gets native pointer for FFI objects
 	fn get(&self) -> InternalType;
 }

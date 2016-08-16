@@ -276,6 +276,13 @@ pub struct VkDeviceCreateInfo
 {
 	pub r: VkComponentSwizzle, pub g: VkComponentSwizzle, pub b: VkComponentSwizzle, pub a: VkComponentSwizzle
 }
+impl VkComponentMapping
+{
+	pub fn default() -> VkComponentMapping
+	{
+		VkComponentMapping { r: VkComponentSwizzle::R, g: VkComponentSwizzle::G, b: VkComponentSwizzle::B, a: VkComponentSwizzle::A }
+	}
+}
 #[repr(C)] #[derive(Clone, Copy)] pub struct VkImageSubresourceRange
 {
 	pub aspectMask: VkImageAspectFlags,

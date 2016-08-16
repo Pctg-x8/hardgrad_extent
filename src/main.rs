@@ -35,51 +35,6 @@ use std::rc::Rc;
 
 /*
 // Application Dependent Factories
-struct Swapchain
-{
-    object: vk::Swapchain, format: VkFormat, extent: VkExtent2D, auto_vsync: bool
-}
-impl Swapchain
-{
-    fn create(queue: &vk::Queue, surface: &vk::Surface) -> Result<Self, String>
-    {
-        // capabilities check //
-        if !queue.parent().parent().is_surface_support(queue.family_index, surface) { Err(String::from("Unsupported Surface")) }
-        else
-        {
-            let surface_caps = queue.parent().parent().get_surface_capabilities(surface);
-            let VkExtent2D(caps_width, caps_height) = surface_caps.currentExtent;
-
-            // making desired parameters //
-            let format = queue.parent().parent().enumerate_surface_formats(surface).into_iter().filter(|ref x| x.format == VkFormat::B8G8R8A8_SRGB || x.format == VkFormat::R8G8B8A8_SRGB).next();
-            let present_mode = queue.parent().parent().enumerate_present_modes(surface).into_iter().filter(|ref x| **x == VkPresentModeKHR::Mailbox || **x == VkPresentModeKHR::FIFO).next();
-            let extent = if caps_width == std::u32::MAX || caps_height == std::u32::MAX { VkExtent2D(640, 480) } else { VkExtent2D(caps_width, caps_height) };
-
-            match (format, present_mode)
-            {
-                (None, _) => Err(String::from("Desired Format(32bpp SRGB) is not supported on your device")),
-                (_, None) => Err(String::from("Desired Present Mode is not found(Mailbox or FIFO must be supported on your device)")),
-                (Some(f), Some(p)) =>
-                {
-                    // set information and create //
-                    let queue_family_indices = [queue.family_index];
-                    let swapchain_info = VkSwapchainCreateInfoKHR
-                    {
-                        sType: VkStructureType::SwapchainCreateInfoKHR, pNext: std::ptr::null(),
-                        minImageCount: std::cmp::max(surface_caps.minImageCount, 2), imageFormat: f.format, imageColorSpace: f.colorSpace,
-                        imageExtent: extent, imageArrayLayers: 1, imageUsage: VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT as u32,
-                        imageSharingMode: VkSharingMode::Exclusive, compositeAlpha: VK_COMPOSITE_ALPHA_OPAQUE_BIT, preTransform: VK_SURFACE_TRANSFORM_IDENTITY_BIT,
-                        presentMode: p, clipped: true as VkBool32,
-                        pQueueFamilyIndices: queue_family_indices.as_ptr(), queueFamilyIndexCount: queue_family_indices.len() as u32,
-                        oldSwapchain: std::ptr::null_mut(), flags: 0, surface: surface.get()
-                    };
-
-                    Ok(Swapchain { object: vk::Swapchain::create(queue.parent(), &swapchain_info).unwrap(), format: f.format, extent: extent, auto_vsync: p == VkPresentModeKHR::FIFO })
-                }
-            }
-        }
-    }
-}
 impl std::ops::Deref for Swapchain
 {
     type Target = vk::Swapchain;
@@ -247,7 +202,6 @@ fn app_main() -> Result<(), prelude::EngineError>
 
 	let prelude = try!(prelude::Engine::new("HardGrad->Extent", VK_MAKE_VERSION!(0, 0, 1)));
 	let main_frame = try!(prelude.create_render_window(VkExtent2D(640, 480), "HardGrad -> Extent"));
-	main_frame.show();
 
 	while prelude.process_messages()
 	{
@@ -545,7 +499,7 @@ mod prelude
 	use std::rc::Rc;
 	use log;
 	use ansi_term::*;
-	use std::ffi::{CString, CStr};
+	use std::ffi::*;
 	use std::os::raw::*;
 	use libc::size_t;
 
@@ -554,7 +508,7 @@ mod prelude
 		type NativeWindow;
 		type WindowServer: WindowProvider<Self::NativeWindow>;
 
-		fn create_unresizable(server: &Rc<Self::WindowServer>, instance: &Rc<vk::Instance>, size: VkExtent2D, title: &str) -> Result<Self, EngineError>;
+		fn create_unresizable(engine: &Engine, size: VkExtent2D, title: &str) -> Result<Box<Self>, EngineError>;
 	}
 	pub trait Window
 	{
@@ -562,51 +516,121 @@ mod prelude
 	}
 	pub trait RenderWindow : Window
 	{
-		fn get_surface(&self) -> &vk::Surface;
+		fn get_back_images(&self) -> Vec<&VkImage>;
+		fn get_back_image_views(&self) -> Vec<&vk::ImageView>;
 	}
+	pub struct EntireImage(VkImage, vk::ImageView);
 	pub struct XcbWindow
 	{
-		server_ref: Rc<XServerConnection>, instance_ref: Rc<vk::Instance>, native: XWindowHandle, device_obj: vk::Surface
+		server: Rc<XServerConnection>, native: XWindowHandle,
+		device_obj: Rc<vk::Surface>, swapchain: Rc<vk::Swapchain>, rt: Vec<EntireImage>,
+		format: VkFormat, extent: VkExtent2D, has_vsync: bool
 	}
 	impl InternalWindow for XcbWindow
 	{
 		type NativeWindow = XWindowHandle;
 		type WindowServer = XServerConnection;
 
-		fn create_unresizable(server: &Rc<XServerConnection>, instance: &Rc<vk::Instance>, size: VkExtent2D, title: &str) -> Result<Self, EngineError>
+		fn create_unresizable(engine: &Engine, size: VkExtent2D, title: &str) -> Result<Box<Self>, EngineError>
 		{
-			let native = server.create_unresizable_window(size, title);
+			let native = engine.window_system.create_unresizable_window(size, title);
+			engine.window_system.show_window(native);
+			engine.window_system.flush();
+
 			let surface_info = VkXcbSurfaceCreateInfoKHR
 			{
 				sType: VkStructureType::XcbSurfaceCreateInfoKHR, pNext: std::ptr::null(), flags: 0,
-				connection: server.get_raw(), window: native
+				connection: engine.window_system.get_raw(), window: native
 			};
-			let surface = try!(vk::Surface::new_xcb(instance, &surface_info));
+			let surface = Rc::new(try!(vk::Surface::new_xcb(&engine.instance, &surface_info)));
 
-			Ok(XcbWindow
+			// capabilities check //
+			if !engine.device.adapter.is_surface_support(engine.device.graphics_queue.family_index, &surface)
 			{
-				server_ref: server.clone(), instance_ref: instance.clone(),
-				device_obj: surface, native: server.create_unresizable_window(size, title)
-			})
+				Err(EngineError::GenericError("Unsupported Surface"))
+			}
+			else
+			{
+				let surface_caps = engine.device.adapter.get_surface_caps(&surface);
+
+				// Making desired parameters //
+				let formats = engine.device.adapter.enumerate_surface_formats(&surface);
+				let present_modes = engine.device.adapter.enumerate_present_modes(&surface);
+				let format = formats.iter().find(|&x| x.format == VkFormat::R8G8B8A8_SRGB || x.format == VkFormat::B8G8R8A8_SRGB);
+				let present_mode = present_modes.iter().find(|&&x| x == VkPresentModeKHR::FIFO)
+					.or_else(|| present_modes.iter().find(|&&x| x == VkPresentModeKHR::Mailbox));
+				let extent = match surface_caps.currentExtent
+				{
+					VkExtent2D(std::u32::MAX, _) | VkExtent2D(_, std::u32::MAX) => VkExtent2D(640, 480),
+					ce => ce
+				};
+
+				match (format, present_mode)
+				{
+					(None, _) => Err(EngineError::GenericError("Desired Format(32bpp SRGB) is not supported")),
+					(_, None) => Err(EngineError::GenericError("Desired Present Mode is not found")),
+					(Some(f), Some(&p)) =>
+					{
+						// set information and create //
+						let queue_family_indices = [engine.device.graphics_queue.family_index];
+						let scinfo = VkSwapchainCreateInfoKHR
+						{
+							sType: VkStructureType::SwapchainCreateInfoKHR, pNext: std::ptr::null(),
+							minImageCount: std::cmp::max(surface_caps.minImageCount, 2), imageFormat: f.format, imageColorSpace: f.colorSpace,
+							imageExtent: extent, imageArrayLayers: 1, imageUsage: VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
+							imageSharingMode: VkSharingMode::Exclusive, compositeAlpha: VK_COMPOSITE_ALPHA_OPAQUE_BIT,
+							preTransform: VK_SURFACE_TRANSFORM_IDENTITY_BIT, presentMode: p, clipped: true as VkBool32,
+							pQueueFamilyIndices: queue_family_indices.as_ptr(), queueFamilyIndexCount: queue_family_indices.len() as u32,
+							oldSwapchain: std::ptr::null_mut(), flags: 0, surface: surface.get()
+						};
+						let sc = Rc::new(try!(vk::Swapchain::new(&engine.device, &surface, &scinfo)));
+						let rt_images = try!(sc.get_images());
+						let rt =
+						{
+							let mut temp: Vec<EntireImage> = Vec::new();
+							for img in rt_images
+							{
+								let info = VkImageViewCreateInfo
+								{
+									sType: VkStructureType::ImageViewCreateInfo, pNext: std::ptr::null(), flags: 0,
+									image: img, subresourceRange: vk::ImageSubresourceRange::default_color(),
+									format: f.format, viewType: VkImageViewType::Dim2,
+									components: VkComponentMapping::default()
+								};
+								temp.push(EntireImage(img, try!(vk::ImageView::new(&engine.device, &info))));
+							}
+							temp
+						};
+						Ok(Box::new(XcbWindow
+						{
+							server: engine.window_system.clone(),
+							native: native, device_obj: surface, swapchain: sc, rt: rt,
+							format: f.format, extent: extent, has_vsync: p == VkPresentModeKHR::FIFO
+						}))
+					}
+				}
+			}
 		}
 	}
 	impl Window for XcbWindow
 	{
 		fn show(&self)
 		{
-			self.server_ref.show_window(self.native);
-			self.server_ref.flush();
+			self.server.show_window(self.native);
+			self.server.flush();
 		}
 	}
 	impl RenderWindow for XcbWindow
 	{
-		fn get_surface(&self) -> &vk::Surface { &self.device_obj }
+		fn get_back_images(&self) -> Vec<&VkImage> { self.rt.iter().map(|&EntireImage(ref i, _)| i).collect() }
+		fn get_back_image_views(&self) -> Vec<&vk::ImageView> { self.rt.iter().map(|&EntireImage(_, ref v)| v).collect() }
 	}
 
 	pub struct Device
 	{
-		adapter_ref: Rc<vk::PhysicalDevice>, internal: Rc<vk::Device>, graphics_queue: vk::Queue, transfer_queue: vk::Queue
+		adapter: Rc<vk::PhysicalDevice>, internal: Rc<vk::Device>, graphics_queue: vk::Queue, transfer_queue: vk::Queue
 	}
+	impl std::ops::Deref for Device { type Target = Rc<vk::Device>; fn deref(&self) -> &Self::Target { &self.internal } }
 	impl Device
 	{
 		fn create_with_shared_queue(adapter_ref: &Rc<vk::PhysicalDevice>, features: VkPhysicalDeviceFeatures,
@@ -627,7 +651,7 @@ mod prelude
 			{
 				graphics_queue: device.get_queue(qf_index, 0),
 				transfer_queue: device.get_queue(qf_index, queue_count - 1),
-				internal: device, adapter_ref: adapter_ref.clone()
+				internal: device, adapter: adapter_ref.clone()
 			})
 		}
 		fn create_with_exclusive_queue(adapter_ref: &Rc<vk::PhysicalDevice>, features: VkPhysicalDeviceFeatures,
@@ -646,7 +670,7 @@ mod prelude
 			{
 				graphics_queue: device.get_queue(qf_indices[0], 0),
 				transfer_queue: device.get_queue(qf_indices[1], 0),
-				internal: device, adapter_ref: adapter_ref.clone()
+				internal: device, adapter: adapter_ref.clone()
 			})
 		}
 
@@ -690,11 +714,12 @@ mod prelude
 	}
 	pub fn crash(err: EngineError) -> !
 	{
-		match err
+		error!(target: "Prelude", "{:?}", err);
+		panic!("Application has exited due to {}", match err
 		{
-			EngineError::DeviceError(_) => { error!(target: "Prelude", "{:?}", err); panic!("Application has exited due to DeviceError"); },
-			EngineError::GenericError(_) => { error!(target: "Prelude", "{:?}", err); panic!("Application has exited due to GenericError"); }
-		}
+			EngineError::DeviceError(_) => "DeviceError",
+			EngineError::GenericError(_) => "GenericError"
+		})
 	}
 	unsafe extern "system" fn device_report_callback(flags: VkDebugReportFlagsEXT, object_type: VkDebugReportObjectTypeEXT, _: u64,
 		_: size_t, _: i32, _: *const c_char, message: *const c_char, _: *mut c_void) -> VkBool32
@@ -736,11 +761,11 @@ mod prelude
 	pub struct Engine
 	{
 		window_system: Rc<XServerConnection>, instance: Rc<vk::Instance>, #[allow(dead_code)] debug_callback: vk::DebugReportCallback,
-		device: Rc<Device>
+		device: Device
 	}
 	impl Engine
 	{
-		pub fn new(app_name: &str, app_version: u32) -> Result<Box<Engine>, EngineError>
+		pub fn new(app_name: &str, app_version: u32) -> Result<Engine, EngineError>
 		{
 			// Setup Engine Logger //
 			log::set_logger(|max_log_level| { max_log_level.set(log::LogLevelFilter::Info); Box::new(EngineLogger) }).unwrap();
@@ -762,7 +787,7 @@ mod prelude
 			let (gqf_index, tqf_index) = try!(Self::find_queue_family(&queue_family_properties));
 			Self::diagnose_adapter(&window_server, &adapter, gqf_index);
 			let device_features = VkPhysicalDeviceFeatures { geometryShader: 1, .. Default::default() };
-			let device = Rc::new(try!
+			let device = try!
 			{
 				if gqf_index == tqf_index
 				{
@@ -772,16 +797,17 @@ mod prelude
 				{
 					Device::create_with_exclusive_queue(&adapter, device_features, [gqf_index, tqf_index])
 				}
-			});
+			};
 
-			Ok(Box::new(Engine
+			Ok(Engine
 			{
 				window_system: window_server, instance: instance, debug_callback: dbg_callback, device: device
-			}))
+			})
 		}
 		pub fn create_render_window(&self, size: VkExtent2D, title: &str) -> Result<Box<RenderWindow>, EngineError>
 		{
-			XcbWindow::create_unresizable(&self.window_system, &self.instance, size, title).map(|x| Box::new(x) as Box<RenderWindow>)
+			info!(target: "Prelude", "Creating Render Window \"{}\" ({}x{})", title, size.0, size.1);
+			XcbWindow::create_unresizable(&self, size, title).map(|x| x as Box<RenderWindow>)
 		}
 		pub fn process_messages(&self) -> bool
 		{
@@ -816,7 +842,7 @@ mod prelude
 			// if features.depthClamp == false as VkBool32 { panic!("DepthClamp Feature is required in device"); }
 
 			// Vulkan and XCB Integration Check //
-			if !server_con.is_vk_presentation_support(adapter, queue_index) { panic!("Unsupported Display Format"); }
+			if !server_con.is_vk_presentation_support(adapter, queue_index) { panic!("Vulkan Presentation is not supported by window system"); }
 		}
 	}
 }

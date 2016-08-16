@@ -107,7 +107,7 @@ impl <'s> WindowProvider<XWindowHandle> for XServerConnection
 	{
 		let window_id = self.con.generate_id();
 		let VkExtent2D(width, height) = size;
-		println!("creating window with resolution {}x{}", width, height);
+		// println!("creating window with resolution {}x{}", width, height);
 		unsafe { xcb::ffi::xproto::xcb_create_window(self.con.get_raw_conn(), self.root_depth, window_id, self.root_screen,
 			0, 0, width as u16, height as u16, 0, xcb::ffi::xproto::XCB_WINDOW_CLASS_INPUT_OUTPUT as u16, self.root_visual, 0, std::ptr::null()) };
 		unsafe { xcb::ffi::xproto::xcb_change_property(self.con.get_raw_conn(), xcb::ffi::xproto::XCB_PROP_MODE_REPLACE as u8, window_id,
