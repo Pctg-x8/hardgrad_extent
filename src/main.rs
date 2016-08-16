@@ -17,10 +17,10 @@ mod traits;
 use traits::*;
 mod xcbw;
 use xcbw::*;
-mod vertex_formats;
-mod device_resources;
-mod structures;
-mod logical_resources;
+// mod vertex_formats;
+// mod device_resources;
+// mod structures;
+// mod logical_resources;
 mod utils;
 use nalgebra::*;
 use rand::distributions::*;
@@ -29,33 +29,19 @@ use vkffi::*; use ansi_term::*;
 use render_vk::wrap as vk;
 use render_vk::traits::*;
 
-struct EngineLogger;
-impl log::Log for EngineLogger
-{
-	fn enabled(&self, metadata: &log::LogMetadata) -> bool
-	{
-		metadata.level() <= log::LogLevel::Info
-	}
-	fn log(&self, record: &log::LogRecord)
-	{
-		if self.enabled(record.metadata())
-		{
-			println!("{}", Style::new().bold().paint(format!("** [{}:{}]{}", record.target(), record.level(), record.args())));
-		}
-	}
-}
-
 use std::string::String;
 use std::collections::LinkedList;
+use std::rc::Rc;
 
+/*
 // Application Dependent Factories
-struct Swapchain<'d>
+struct Swapchain
 {
-    object: vk::Swapchain<'d>, format: VkFormat, extent: VkExtent2D, auto_vsync: bool
+    object: vk::Swapchain, format: VkFormat, extent: VkExtent2D, auto_vsync: bool
 }
-impl <'d> Swapchain<'d>
+impl Swapchain
 {
-    fn create(queue: &vk::Queue<'d>, surface: &vk::Surface) -> Result<Self, String>
+    fn create(queue: &vk::Queue, surface: &vk::Surface) -> Result<Self, String>
     {
         // capabilities check //
         if !queue.parent().parent().is_surface_support(queue.family_index, surface) { Err(String::from("Unsupported Surface")) }
@@ -94,13 +80,13 @@ impl <'d> Swapchain<'d>
         }
     }
 }
-impl <'d> std::ops::Deref for Swapchain<'d>
+impl std::ops::Deref for Swapchain
 {
-    type Target = vk::Swapchain<'d>;
+    type Target = vk::Swapchain;
     fn deref(&self) -> &Self::Target { &self.object }
 }
 
-fn create_image_views<'d, ImageObj: vk::VkImageResource + HasParent<ParentRefType=&'d vk::Device<'d>>>(images: &'d Vec<ImageObj>, format: VkFormat) -> Vec<vk::ImageView>
+fn create_image_views<'d, ImageObj: vk::VkImageResource + HasParent<ParentRefType=Rc<vk::Device>>>(images: &'d Vec<ImageObj>, format: VkFormat) -> Vec<vk::ImageView>
 {
 	images.into_iter().map(|o|
 	{
@@ -247,18 +233,28 @@ impl Player
 		instance_ref.player_rotq[1] = quaternions.next().unwrap();
 	}
 }
-
+*/
 fn main()
 {
-	log::set_logger(|max_log_level|
+	if let Err(e) = app_main()
 	{
-		max_log_level.set(log::LogLevelFilter::Info);
-		Box::new(EngineLogger)
-	});
-
+		prelude::crash(e);
+	}
+}
+fn app_main() -> Result<(), prelude::EngineError>
+{
 	utils::memory_management_test();
 
-	let prelude = prelude::Engine::new("HardGrad->Extent", VK_MAKE_VERSION!(0, 0, 1));
+	let prelude = try!(prelude::Engine::new("HardGrad->Extent", VK_MAKE_VERSION!(0, 0, 1)));
+	let main_frame = try!(prelude.create_render_window(VkExtent2D(640, 480), "HardGrad -> Extent"));
+	main_frame.show();
+
+	while prelude.process_messages()
+	{
+		// Render code...
+	}
+
+	Ok(())
 
 	/*
 	// init vulkan
@@ -546,48 +542,81 @@ mod prelude
 	use render_vk::wrap as vk;
 	use xcbw::*;
 	use traits::*;
+	use std::rc::Rc;
+	use log;
+	use ansi_term::*;
+	use std::ffi::{CString, CStr};
+	use std::os::raw::*;
+	use libc::size_t;
 
-	trait Window<'s, WindowServer: 's + WindowProvider<'s, NativeWindow>, NativeWindow: 's> where Self: std::marker::Sized
+	trait InternalWindow where Self: std::marker::Sized
 	{
-		fn create_unresizable(server: &'s WindowServer, instance: &vk::Instance, size: VkExtent2D, title: &str) -> Result<Self, VkResult>;
+		type NativeWindow;
+		type WindowServer: WindowProvider<Self::NativeWindow>;
+
+		fn create_unresizable(server: &Rc<Self::WindowServer>, instance: &Rc<vk::Instance>, size: VkExtent2D, title: &str) -> Result<Self, EngineError>;
+	}
+	pub trait Window
+	{
+		fn show(&self);
+	}
+	pub trait RenderWindow : Window
+	{
+		fn get_surface(&self) -> &vk::Surface;
 	}
 	pub struct XcbWindow
 	{
-		native: XWindow<'s>, surface_raw: VkSurfaceKHR
+		server_ref: Rc<XServerConnection>, instance_ref: Rc<vk::Instance>, native: XWindowHandle, device_obj: vk::Surface
 	}
-	impl <'s> Window<'s, XServerConnection, XWindow<'s>> for XcbWindow<'s>
+	impl InternalWindow for XcbWindow
 	{
-		fn create_unresizable(server: &'s XServerConnection, instance: &vk::Instance, size: VkExtent2D, title: &str) -> Result<Self, VkResult>
+		type NativeWindow = XWindowHandle;
+		type WindowServer = XServerConnection;
+
+		fn create_unresizable(server: &Rc<XServerConnection>, instance: &Rc<vk::Instance>, size: VkExtent2D, title: &str) -> Result<Self, EngineError>
 		{
 			let native = server.create_unresizable_window(size, title);
 			let surface_info = VkXcbSurfaceCreateInfoKHR
 			{
 				sType: VkStructureType::XcbSurfaceCreateInfoKHR, pNext: std::ptr::null(), flags: 0,
-				connection: server.get_raw(), window: native.get()
+				connection: server.get_raw(), window: native
 			};
-			let surface = try!(vk::Surface::create(instance, &surface_info));
+			let surface = try!(vk::Surface::new_xcb(instance, &surface_info));
 
 			Ok(XcbWindow
 			{
-				surface_raw: surface.release(), native: server.create_unresizable_window(size, title),
-				server_ref: server
+				server_ref: server.clone(), instance_ref: instance.clone(),
+				device_obj: surface, native: server.create_unresizable_window(size, title)
 			})
 		}
+	}
+	impl Window for XcbWindow
+	{
+		fn show(&self)
+		{
+			self.server_ref.show_window(self.native);
+			self.server_ref.flush();
+		}
+	}
+	impl RenderWindow for XcbWindow
+	{
+		fn get_surface(&self) -> &vk::Surface { &self.device_obj }
 	}
 
 	pub struct Device
 	{
-		internal: VkDevice, graphics_queue: VkQueue, transfer_queue: VkQueue
+		adapter_ref: Rc<vk::PhysicalDevice>, internal: Rc<vk::Device>, graphics_queue: vk::Queue, transfer_queue: vk::Queue
 	}
 	impl Device
 	{
-		fn create_with_shared_queue(adapter_ref: &vk::PhysicalDevice, features: VkPhysicalDeviceFeatures, qf_index: u32) -> Result<Self, VkResult>
+		fn create_with_shared_queue(adapter_ref: &Rc<vk::PhysicalDevice>, features: VkPhysicalDeviceFeatures,
+			queue_family: (u32, &VkQueueFamilyProperties)) -> Result<Self, VkResult>
 		{
-			println!("-- Sharing queue family: {}", qf_index);
+			let (qf_index, family_properties) = queue_family;
+			info!(target: "Prelude", "Sharing queue family: {}", qf_index);
 
-			let max_queue_count = adapter_ref.enumerate_queue_family_properties()[qf_index as usize].queueCount;
 			let qp = [0.0f32; 2];
-			let queue_count = std::cmp::min(2, max_queue_count);
+			let queue_count = std::cmp::min(2, family_properties.queueCount);
 			let queue_info = VkDeviceQueueCreateInfo
 			{
 				sType: VkStructureType::DeviceQueueCreateInfo, pNext: std::ptr::null(), flags: 0,
@@ -596,14 +625,15 @@ mod prelude
 			let device = try!(Self::create_internal(adapter_ref, &[queue_info], &["VK_LAYER_LUNARG_standard_validation"], &["VK_KHR_swapchain"], features));
 			Ok(Device
 			{
-				graphics_queue: device.get_queue(qf_index, 0).release(),
-				transfer_queue: device.get_queue(qf_index, queue_count - 1).release(),
-				internal: device.release()
+				graphics_queue: device.get_queue(qf_index, 0),
+				transfer_queue: device.get_queue(qf_index, queue_count - 1),
+				internal: device, adapter_ref: adapter_ref.clone()
 			})
 		}
-		fn create_with_exclusive_queue(adapter_ref: &vk::PhysicalDevice, features: VkPhysicalDeviceFeatures, qf_indices: [u32; 2]) -> Result<Self, VkResult>
+		fn create_with_exclusive_queue(adapter_ref: &Rc<vk::PhysicalDevice>, features: VkPhysicalDeviceFeatures,
+			qf_indices: [u32; 2]) -> Result<Self, VkResult>
 		{
-			println!("-- Not sharing queue family: g={}, t={}", qf_indices[0], qf_indices[1]);
+			info!(target: "Prelude", "-- Not sharing queue family: g={}, t={}", qf_indices[0], qf_indices[1]);
 
 			let qp = [0.0f32; 1];
 			let qinfos = qf_indices.into_iter().map(|&x| VkDeviceQueueCreateInfo
@@ -611,84 +641,159 @@ mod prelude
 				sType: VkStructureType::DeviceQueueCreateInfo, pNext: std::ptr::null(), flags: 0,
 				queueCount: 1, queueFamilyIndex: x, pQueuePriorities: qp.as_ptr()
 			}).collect::<Vec<_>>();
-			let device = try!(Self::create_internal(adapter_ref, &qinfos[..], &["VK_LAYER_LUNARG_standard_validation"], &["VK_KHR_swapchian"], features));
+			let device = try!(Self::create_internal(adapter_ref, &qinfos[..], &["VK_LAYER_LUNARG_standard_validation"], &["VK_KHR_swapchain"], features));
 			Ok(Device
 			{
-				graphics_queue: device.get_queue(qf_indices[0], 0).release(),
-				transfer_queue: device.get_queue(qf_indices[1], 0).release(),
-				internal: device.release()
+				graphics_queue: device.get_queue(qf_indices[0], 0),
+				transfer_queue: device.get_queue(qf_indices[1], 0),
+				internal: device, adapter_ref: adapter_ref.clone()
 			})
 		}
-		fn drop(&self) { unsafe { vkDestroyDevice(self.internal, std::ptr::null()) }; }
 
-		fn create_internal<'a>(adapter_ref: &'a vk::PhysicalDevice, qinfos: &[VkDeviceQueueCreateInfo], layers: &[&str], extensions: &[&str], enabled_features: VkPhysicalDeviceFeatures)
-			-> Result<vk::Device<'a>, VkResult>
+		fn create_internal<'a>(adapter_ref: &Rc<vk::PhysicalDevice>, qinfos: &[VkDeviceQueueCreateInfo], layers: &[&str], extensions: &[&str],
+			enabled_features: VkPhysicalDeviceFeatures) -> Result<Rc<vk::Device>, VkResult>
 		{
 			let layers_c = layers.into_iter().map(|&x| std::ffi::CString::new(x).unwrap()).collect::<Vec<_>>();
 			let extensions_c = extensions.into_iter().map(|&x| std::ffi::CString::new(x).unwrap()).collect::<Vec<_>>();
 			let layers_ptr_c = layers_c.iter().map(|x| x.as_ptr()).collect::<Vec<_>>();
 			let extensions_ptr_c = extensions_c.iter().map(|x| x.as_ptr()).collect::<Vec<_>>();
 
-			adapter_ref.create_device(&VkDeviceCreateInfo
+			vk::Device::new(&adapter_ref, &VkDeviceCreateInfo
 			{
 				sType: VkStructureType::DeviceCreateInfo, pNext: std::ptr::null(), flags: 0,
 				queueCreateInfoCount: qinfos.len() as u32, pQueueCreateInfos: qinfos.as_ptr(),
 				enabledLayerCount: layers_ptr_c.len() as u32, ppEnabledLayerNames: layers_ptr_c.as_ptr(),
-				enabledExtensionCount: extensions_ptr_c.len() as u32, ppEnabledExtensionNames: extensions_ptr_c.as_ptr(), pEnabledFeatures: &enabled_features
-			})
+				enabledExtensionCount: extensions_ptr_c.len() as u32, ppEnabledExtensionNames: extensions_ptr_c.as_ptr(),
+				pEnabledFeatures: &enabled_features
+			}).map(|x| Rc::new(x))
 		}
 	}
 
+	pub enum EngineError
+	{
+		DeviceError(VkResult), GenericError(&'static str)
+	}
+	impl std::convert::From<VkResult> for EngineError
+	{
+		fn from(res: VkResult) -> EngineError { EngineError::DeviceError(res) }
+	}
+	impl std::fmt::Debug for EngineError
+	{
+		fn fmt(&self, formatter: &mut std::fmt::Formatter) -> Result<(), std::fmt::Error>
+		{
+			match self
+			{
+				&EngineError::DeviceError(ref r) => write!(formatter, "DeviceError: {:?}", r),
+				&EngineError::GenericError(ref e) => write!(formatter, "GenericError: {}", e),
+			}
+		}
+	}
+	pub fn crash(err: EngineError) -> !
+	{
+		match err
+		{
+			EngineError::DeviceError(_) => { error!(target: "Prelude", "{:?}", err); panic!("Application has exited due to DeviceError"); },
+			EngineError::GenericError(_) => { error!(target: "Prelude", "{:?}", err); panic!("Application has exited due to GenericError"); }
+		}
+	}
+	unsafe extern "system" fn device_report_callback(flags: VkDebugReportFlagsEXT, object_type: VkDebugReportObjectTypeEXT, _: u64,
+		_: size_t, _: i32, _: *const c_char, message: *const c_char, _: *mut c_void) -> VkBool32
+	{
+		if (flags & VK_DEBUG_REPORT_ERROR_BIT_EXT) != 0
+		{
+			error!(target: format!("Vulkan DebugCall [{:?}]", object_type).as_str(), "{}", CStr::from_ptr(message).to_str().unwrap());
+		}
+		else if (flags & VK_DEBUG_REPORT_PERFORMANCE_WARNING_BIT_EXT) != 0
+		{
+			warn!(target: format!("Vulkan PerformanceDebug [{:?}]", object_type).as_str(), "{}", CStr::from_ptr(message).to_str().unwrap());
+		}
+		else if (flags & VK_DEBUG_REPORT_WARNING_BIT_EXT) != 0
+		{
+			warn!(target: format!("Vulkan DebugCall [{:?}]", object_type).as_str(), "{}", CStr::from_ptr(message).to_str().unwrap());
+		}
+		else
+		{
+			info!(target: format!("Vulkan DebugCall [{:?}]", object_type).as_str(), "{}", CStr::from_ptr(message).to_str().unwrap());
+		}
+		true as VkBool32
+	}
+
+	struct EngineLogger;
+	impl log::Log for EngineLogger
+	{
+		fn enabled(&self, metadata: &log::LogMetadata) -> bool
+		{
+			metadata.level() <= log::LogLevel::Info
+		}
+		fn log(&self, record: &log::LogRecord)
+		{
+			if self.enabled(record.metadata())
+			{
+				println!("{}", Style::new().bold().paint(format!("** [{}:{}]{}", record.target(), record.level(), record.args())));
+			}
+		}
+	}
 	pub struct Engine
 	{
-		window_system: XServerConnection, instance: vk::Instance, #[allow(dead_code)] adapter: VkPhysicalDevice, device: Device
-	}
-	impl std::ops::Drop for Engine
-	{
-		fn drop(&mut self)
-		{
-			self.device.drop();
-		}
+		window_system: Rc<XServerConnection>, instance: Rc<vk::Instance>, #[allow(dead_code)] debug_callback: vk::DebugReportCallback,
+		device: Rc<Device>
 	}
 	impl Engine
 	{
-		pub fn new(app_name: &str, app_version: u32) -> Engine
+		pub fn new(app_name: &str, app_version: u32) -> Result<Box<Engine>, EngineError>
 		{
+			// Setup Engine Logger //
+			log::set_logger(|max_log_level| { max_log_level.set(log::LogLevelFilter::Info); Box::new(EngineLogger) }).unwrap();
 			info!(target: "Prelude", "Initializing Engine...");
 
-			let instance = vk::Instance::new(app_name, app_version, "Prelude Computer-Graphics Engine", VK_MAKE_VERSION!(0, 0, 1),
-				&["VK_LAYER_LUNARG_standard_validation"], &["VK_KHR_surface", "VK_KHR_xcb_surface", "VK_EXT_debug_report"]).unwrap();
-
 			// ready for window system //
-			let window_server = XServerConnection::connect();
-			let window = XcbWindow::create_unresizable(&window_server, &instance, VkExtent2D(640, 480), app_name);
-			window_server.flush();
+			let window_server = Rc::new(XServerConnection::connect());
 
-			// Connection to Physical Device and Create Queues //
-			let adapter = vk::PhysicalDevice::wrap(*instance.enumerate_adapters().unwrap().iter().next().unwrap());
-			let (gqf_index, tqf_index) = Self::find_queue_family(&adapter).expect("Unable to find queue for graphics on device");
+			let instance = Rc::new(try!(vk::Instance::new(app_name, app_version, "Prelude Computer-Graphics Engine", VK_MAKE_VERSION!(0, 0, 1),
+				&["VK_LAYER_LUNARG_standard_validation"], &["VK_KHR_surface", "VK_KHR_xcb_surface", "VK_EXT_debug_report"])));
+			let dbg_callback = try!(vk::DebugReportCallback::new(&instance, device_report_callback));
+			let adapter = try!
+			{
+				instance.enumerate_adapters().map_err(|e| EngineError::from(e))
+					.and_then(|aa| aa.into_iter().next().ok_or(EngineError::GenericError("PhysicalDevices are not found")))
+					.map(|a| Rc::new(vk::PhysicalDevice::from(a, &instance)))
+			};
+			let queue_family_properties = adapter.enumerate_queue_family_properties();
+			let (gqf_index, tqf_index) = try!(Self::find_queue_family(&queue_family_properties));
 			Self::diagnose_adapter(&window_server, &adapter, gqf_index);
 			let device_features = VkPhysicalDeviceFeatures { geometryShader: 1, .. Default::default() };
-			let device = if gqf_index == tqf_index { Device::create_with_shared_queue(&adapter, device_features, gqf_index) }
-				else { Device::create_with_exclusive_queue(&adapter, device_features, [gqf_index, tqf_index]) }.unwrap();
-
-			Engine
+			let device = Rc::new(try!
 			{
-				window_system: window_server, instance: instance, adapter: adapter.release(), device: device
-			}
+				if gqf_index == tqf_index
+				{
+					Device::create_with_shared_queue(&adapter, device_features, (gqf_index, &queue_family_properties[gqf_index as usize]))
+				}
+				else
+				{
+					Device::create_with_exclusive_queue(&adapter, device_features, [gqf_index, tqf_index])
+				}
+			});
+
+			Ok(Box::new(Engine
+			{
+				window_system: window_server, instance: instance, debug_callback: dbg_callback, device: device
+			}))
+		}
+		pub fn create_render_window(&self, size: VkExtent2D, title: &str) -> Result<Box<RenderWindow>, EngineError>
+		{
+			XcbWindow::create_unresizable(&self.window_system, &self.instance, size, title).map(|x| Box::new(x) as Box<RenderWindow>)
 		}
 		pub fn process_messages(&self) -> bool
 		{
 			self.window_system.process_messages()
 		}
 
-		fn find_queue_family(adapter: &vk::PhysicalDevice) -> Option<(u32, u32)>
+		fn find_queue_family(family_properties: &[VkQueueFamilyProperties]) -> Result<(u32, u32), EngineError>
 		{
-			let queue_indices = adapter.get_queue_family_indices();
-			let mut iter = queue_indices.into_iter().enumerate();
+			let mut iter = family_properties.into_iter().enumerate();
 			let g = iter.by_ref().filter(|&(_, ref x)| (x.queueFlags & VK_QUEUE_GRAPHICS_BIT) != 0).map(|(i, _)| i as u32).next();
 			let t = iter.by_ref().filter(|&(_, ref x)| (x.queueFlags & VK_QUEUE_TRANSFER_BIT) != 0).map(|(i, _)| i as u32).next();
-			g.map(|x| (x, t.unwrap_or(x)))
+			g.map(|x| (x, t.unwrap_or(x))).ok_or(EngineError::GenericError("Unable to find queue for graphics on device"))
 		}
 		fn diagnose_adapter(server_con: &XServerConnection, adapter: &vk::PhysicalDevice, queue_index: u32)
 		{

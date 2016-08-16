@@ -4,7 +4,7 @@ use render_vk::wrap as vk;
 
 pub struct DescriptorSets<'d>
 {
-	#[allow(dead_code)] pool: vk::DescriptorPool<'d>,
+	#[allow(dead_code)] pool: vk::DescriptorPool,
 	pub set_layout_uniform_vg: vk::DescriptorSetLayout<'d>,
 	pub set_layout_s1: vk::DescriptorSetLayout<'d>,
 	pub sets: vk::DescriptorSets<'d>

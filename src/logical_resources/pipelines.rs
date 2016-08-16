@@ -5,6 +5,7 @@ use device_resources;
 use traits::*;
 use vertex_formats::*;
 use structures;
+use std::rc::Rc;
 
 impl std::default::Default for VkPipelineRasterizationStateCreateInfo
 {
@@ -124,7 +125,7 @@ impl VertexInputBindingDesc
 
 pub struct VertexShaderWithInputForm<'d>
 {
-	#[allow(dead_code)] device_ref: &'d vk::Device<'d>,
+	#[allow(dead_code)] device_ref: Rc<vk::Device>,
 	#[allow(dead_code)] module: vk::ShaderModule<'d>,
 	#[allow(dead_code)] bindings: Box<[VkVertexInputBindingDescription]>, #[allow(dead_code)] attributes: Box<[VkVertexInputAttributeDescription]>
 }
@@ -210,7 +211,7 @@ impl std::ops::Deref for ColorBlendState
 
 pub struct PipelineCommonStore<'d>
 {
-	device_ref: &'d vk::Device<'d>,
+	device_ref: Rc<vk::Device>,
 	pub cache: vk::PipelineCache<'d>,
 	pub layout_uniform: vk::PipelineLayout<'d>,
 	pub layout_ub1_s1: vk::PipelineLayout<'d>,
@@ -220,7 +221,7 @@ pub struct PipelineCommonStore<'d>
 }
 impl <'d> PipelineCommonStore<'d>
 {
-	pub fn new(device: &'d vk::Device<'d>, descriptor_sets: &device_resources::DescriptorSets<'d>) -> Self
+	pub fn new(device: &Rc<vk::Device>, descriptor_sets: &device_resources::DescriptorSets<'d>) -> Self
 	{
 		PipelineCommonStore
 		{

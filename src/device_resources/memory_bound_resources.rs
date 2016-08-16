@@ -49,13 +49,13 @@ impl MemoryPreallocator
 	}
 }
 
-pub struct MemoryBoundResources<'d>
+pub struct MemoryBoundResources
 {
-	pub buffer: DeviceBuffer<'d>, pub stage_buffer: StagingBuffer<'d>
+	pub buffer: DeviceBuffer, pub stage_buffer: StagingBuffer
 }
-impl <'d> MemoryBoundResources<'d>
+impl MemoryBoundResources
 {
-	pub fn new(device: &'d vk::Device, preallocator: &MemoryPreallocator) -> Self
+	pub fn new(device: &vk::Device, preallocator: &MemoryPreallocator) -> Self
 	{
 		MemoryBoundResources
 		{

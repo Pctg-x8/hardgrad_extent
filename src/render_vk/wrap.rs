@@ -1,36 +1,50 @@
-// Safety Vulkan Modules
+// Objective Vulkan Wrapping
 
-use std::io::prelude::*;
 use vkffi::*;
 use std;
 use std::ffi::*;
 use std::os::raw::*;
 use libc::size_t;
-use traits::*;
 use render_vk::traits::*;
+use std::rc::Rc;
+use xcb;
+
+fn empty_handle<T>() -> *mut T { std::ptr::null_mut() }
 
 impl ResultValueToObject for VkResult
 {
 	fn to_result(self) -> Result<(), Self> { return if self == VkResult::Success { Ok(()) } else { Err(self) } }
+	fn and_then<F, T>(self, f: F) -> Result<T, Self> where F: FnOnce() -> Result<T, Self>
+	{
+		return if self == VkResult::Success { f() } else { Err(self) }
+	}
+	fn map<F, T>(self, f: F) -> Result<T, Self> where F: FnOnce() -> T
+	{
+		return if self == VkResult::Success { Ok(f()) } else { Err(self) }
+	}
 }
 
 pub struct Instance
 {
 	obj: VkInstance,
-	debug_destructor: PFN_vkDestroyDebugReportCallbackEXT,
-	debug: VkDebugReportCallbackEXT
+	create_debug_report_callback: Option<PFN_vkCreateDebugReportCallbackEXT>,
+	destroy_debug_report_callback: Option<PFN_vkDestroyDebugReportCallbackEXT>
 }
+impl std::ops::Drop for Instance { fn drop(&mut self) { unsafe { vkDestroyInstance(self.obj, std::ptr::null()) }; } }
 impl Instance
 {
-	pub fn new(app_name: &str, app_version: u32, engine_name: &str, engine_version: u32, layers: &[&str], extensions: &[&str]) -> Result<Self, VkResult>
+	pub fn new(app_name: &str, app_version: u32, engine_name: &str, engine_version: u32, layers: &[&str], extensions: &[&str])
+		-> Result<Self, VkResult>
 	{
-		let app_name_c = std::ffi::CString::new(app_name).unwrap();
-		let engine_name_c = std::ffi::CString::new(engine_name).unwrap();
-		let layers_c = layers.into_iter().map(|&x| std::ffi::CString::new(x).unwrap()).collect::<Vec<_>>();
-		let extensions_c = extensions.into_iter().map(|&x| std::ffi::CString::new(x).unwrap()).collect::<Vec<_>>();
-		let layers_ptr_c = layers_c.iter().map(|x| x.as_ptr()).collect::<Vec<_>>();
-		let extensions_ptr_c = extensions_c.iter().map(|x| x.as_ptr()).collect::<Vec<_>>();
-
+		let (app_name_c, engine_name_c, layers_c, extensions_c) = (
+			CString::new(app_name).unwrap(), CString::new(engine_name).unwrap(),
+			layers.into_iter().map(|&x| CString::new(x).unwrap()).collect::<Vec<_>>(),
+			extensions.into_iter().map(|&x| CString::new(x).unwrap()).collect::<Vec<_>>()
+		);
+		let (layers_ptr_c, extensions_ptr_c) = (
+			layers_c.iter().map(|x| x.as_ptr()).collect::<Vec<_>>(),
+			extensions_c.iter().map(|x| x.as_ptr()).collect::<Vec<_>>()
+		);
 		let app = VkApplicationInfo
 		{
 			sType: VkStructureType::ApplicationInfo, pNext: std::ptr::null(),
@@ -40,130 +54,75 @@ impl Instance
 		};
 		let info = VkInstanceCreateInfo
 		{
-			sType: VkStructureType::InstanceCreateInfo, pNext: std::ptr::null(),
-			flags: 0, pApplicationInfo: &app,
+			sType: VkStructureType::InstanceCreateInfo, pNext: std::ptr::null(), flags: 0, pApplicationInfo: &app,
 			enabledLayerCount: layers_ptr_c.len() as u32, ppEnabledLayerNames: layers_ptr_c.as_ptr(),
 			enabledExtensionCount: extensions_ptr_c.len() as u32, ppEnabledExtensionNames: extensions_ptr_c.as_ptr()
 		};
-		let mut instance: VkInstance = unsafe { std::mem::uninitialized() };
-		unsafe { vkCreateInstance(&info, std::ptr::null(), &mut instance) }.to_result().and_then(move |()|
-		{
-			let create_debug_report_callback_name = std::ffi::CString::new("vkCreateDebugReportCallbackEXT").unwrap();
-			let destroy_debug_report_callback_name = std::ffi::CString::new("vkDestroyDebugReportCallbackEXT").unwrap();
-			let cdrc = unsafe { std::mem::transmute::<_, PFN_vkCreateDebugReportCallbackEXT>(vkGetInstanceProcAddr(instance, create_debug_report_callback_name.as_ptr())) };
-			let ddrc = unsafe { std::mem::transmute::<_, PFN_vkDestroyDebugReportCallbackEXT>(vkGetInstanceProcAddr(instance, destroy_debug_report_callback_name.as_ptr())) };
-
-			let callback_info = VkDebugReportCallbackCreateInfoEXT
+		
+		let mut instance: VkInstance = empty_handle();
+		unsafe { vkCreateInstance(&info, std::ptr::null(), &mut instance) }
+			.map(move || if layers.iter().find(|&&e| e == "VK_LAYER_LUNARG_standard_validation").is_some()
 			{
-				sType: VkStructureType::DebugReportCallbackCreateInfoEXT, pNext: std::ptr::null(),
-				flags: VkDebugReportFlagBitsEXT::Error as u32 | VkDebugReportFlagBitsEXT::Warning as u32 |
-					VkDebugReportFlagBitsEXT::PerformanceWarning as u32/* | VkDebugReportFlagBitsEXT::Information as u32*/,
-				pfnCallback: Self::debug_callback,
-				pUserData: std::ptr::null_mut()
-			};
-
-			let mut callback: VkDebugReportCallbackEXT = std::ptr::null_mut();
-			unsafe { cdrc(instance, &callback_info, std::ptr::null(), &mut callback) }.to_result()
-				.map(|()| Instance { obj: instance, debug: callback, debug_destructor: ddrc })
-		})
+				let create_debug_report_callback_name = CString::new("vkCreateDebugReportCallbackEXT").unwrap();
+				let destroy_debug_report_callback_name = CString::new("vkDestroyDebugReportCallbackEXT").unwrap();
+				let create_debug_report_callback_f: PFN_vkCreateDebugReportCallbackEXT =
+					unsafe { std::mem::transmute(vkGetInstanceProcAddr(instance, create_debug_report_callback_name.as_ptr())) };
+				let destory_debug_report_callback_f: PFN_vkDestroyDebugReportCallbackEXT =
+					unsafe { std::mem::transmute(vkGetInstanceProcAddr(instance, destroy_debug_report_callback_name.as_ptr())) };
+				
+				Instance
+				{
+					obj: instance,
+					create_debug_report_callback: Some(create_debug_report_callback_f),
+					destroy_debug_report_callback: Some(destory_debug_report_callback_f)
+				}
+			}
+			else
+			{
+				Instance { obj: instance, create_debug_report_callback: None, destroy_debug_report_callback: None }
+			})
 	}
 	pub fn enumerate_adapters(&self) -> Result<Vec<VkPhysicalDevice>, VkResult>
 	{
 		let mut adapter_count: u32 = 0;
-		let res = unsafe { vkEnumeratePhysicalDevices(self.obj, &mut adapter_count, std::ptr::null_mut()) };
-		if res == VkResult::Success
-		{
-			let mut adapters: Vec<VkPhysicalDevice> = vec![std::ptr::null_mut(); adapter_count as usize];
-			let res = unsafe { vkEnumeratePhysicalDevices(self.obj, &mut adapter_count, adapters.as_mut_ptr()) };
-			if res == VkResult::Success
+		unsafe { vkEnumeratePhysicalDevices(self.obj, &mut adapter_count, std::ptr::null_mut()).map(move || adapter_count) }
+			.and_then(|mut adapter_count| unsafe
 			{
-				println!("=== Physical Device Enumeration ===");
-				println!("-- Found {} adapters", adapter_count);
-				for i in 0 .. adapter_count
-				{
-					let mut props: VkPhysicalDeviceProperties = unsafe { std::mem::uninitialized() };
-					let mut memory_props: VkPhysicalDeviceMemoryProperties = unsafe { std::mem::uninitialized() };
-
-					unsafe
-					{
-						vkGetPhysicalDeviceProperties(adapters[i as usize], &mut props);
-						vkGetPhysicalDeviceMemoryProperties(adapters[i as usize], &mut memory_props);
-					}
-
-					println!("#{}: ", i);
-					println!("  Name: {}", unsafe { std::ffi::CStr::from_ptr(props.deviceName.as_ptr()).to_str().unwrap() });
-					println!("  API Version: {}", props.apiVersion);
-				}
-				Ok(adapters)
-			}
-			else { Err(res) }
-		}
-		else { Err(res) }
-	}
-	unsafe extern "system" fn debug_callback(flags: VkDebugReportFlagsEXT, object_type: VkDebugReportObjectTypeEXT, _: u64,
-		_: size_t, _: i32, _: *const c_char, message: *const c_char, _: *mut c_void) -> VkBool32
-	{
-		println!("Vulkan DebugCall[{:?}/{:?}]: {}", object_type, flags, CStr::from_ptr(message).to_str().unwrap());
-		1
+				let mut adapters: Vec<VkPhysicalDevice> = vec![empty_handle(); adapter_count as usize];
+				vkEnumeratePhysicalDevices(self.obj, &mut adapter_count, adapters.as_mut_ptr()).map(move || adapters)
+			})
 	}
 }
-impl std::ops::Drop for Instance
+pub struct DebugReportCallback { obj: VkDebugReportCallbackEXT, parent: Rc<Instance> }
+impl std::ops::Drop for DebugReportCallback
 {
 	fn drop(&mut self)
 	{
-		unsafe { (self.debug_destructor)(self.obj, self.debug, std::ptr::null()) };
-		unsafe { vkDestroyInstance(self.obj, std::ptr::null()) };
+		unsafe
+		{
+			(self.parent.destroy_debug_report_callback.expect("Validation Layer is not presented"))(self.parent.obj, self.obj, std::ptr::null());
+		}
 	}
 }
-pub struct PhysicalDevice { obj: VkPhysicalDevice, memory_properties: VkPhysicalDeviceMemoryProperties }
+impl DebugReportCallback
+{
+	pub fn new(instance: &Rc<Instance>, f: PFN_vkDebugReportCallbackEXT) -> Result<Self, VkResult>
+	{
+		let info = VkDebugReportCallbackCreateInfoEXT
+		{
+			sType: VkStructureType::DebugReportCallbackCreateInfoEXT, pNext: std::ptr::null(),
+			flags: VK_DEBUG_REPORT_ERROR_BIT_EXT | VK_DEBUG_REPORT_WARNING_BIT_EXT | VK_DEBUG_REPORT_PERFORMANCE_WARNING_BIT_EXT,
+			pfnCallback: f, pUserData: std::ptr::null_mut()
+		};
+		let mut callback: VkDebugReportCallbackEXT = empty_handle();
+		unsafe { (instance.create_debug_report_callback.expect("Validation Layer is not presented"))(instance.obj, &info, std::ptr::null(), &mut callback) }
+			.map(move || DebugReportCallback { obj: callback, parent: instance.clone() })
+	}
+}
+pub struct PhysicalDevice { obj: VkPhysicalDevice, #[allow(dead_code)] parent: Rc<Instance> }
 impl PhysicalDevice
 {
-	pub fn wrap(pdev: VkPhysicalDevice) -> Self
-	{
-		let mut mem_props: VkPhysicalDeviceMemoryProperties = unsafe { std::mem::uninitialized() };
-		unsafe { vkGetPhysicalDeviceMemoryProperties(pdev, &mut mem_props) };
-		PhysicalDevice { obj: pdev, memory_properties: mem_props }
-	}
-	pub fn get_queue_family_indices(&self) -> Vec<VkQueueFamilyProperties>
-	{
-		let mut property_count: u32 = 0;
-		unsafe { vkGetPhysicalDeviceQueueFamilyProperties(self.obj, &mut property_count, std::ptr::null_mut()) };
-		let mut properties: Vec<VkQueueFamilyProperties> = unsafe { vec![std::mem::uninitialized(); property_count as usize] };
-		unsafe { vkGetPhysicalDeviceQueueFamilyProperties(self.obj, &mut property_count, properties.as_mut_ptr()) };
-		properties
-	}
-	pub fn is_surface_support<'i>(&self, queue_family_index: u32, surface: &Surface<'i>) -> bool
-	{
-		let mut supported: VkBool32 = 0;
-		unsafe { vkGetPhysicalDeviceSurfaceSupportKHR(self.obj, queue_family_index, surface.obj, &mut supported) };
-		supported == 1
-	}
-	pub fn get_surface_capabilities<'i>(&self, surface: &Surface<'i>) -> VkSurfaceCapabilitiesKHR
-	{
-		let mut caps: VkSurfaceCapabilitiesKHR = unsafe { std::mem::uninitialized() };
-		unsafe { vkGetPhysicalDeviceSurfaceCapabilitiesKHR(self.obj, surface.obj, &mut caps) };
-		caps
-	}
-	pub fn enumerate_surface_formats<'i>(&self, surface: &Surface<'i>) -> Vec<VkSurfaceFormatKHR>
-	{
-		let mut format_count: u32 = 0;
-		unsafe { vkGetPhysicalDeviceSurfaceFormatsKHR(self.obj, surface.obj, &mut format_count, std::ptr::null_mut()) };
-		let mut vformats: Vec<VkSurfaceFormatKHR> = vec![unsafe { std::mem::uninitialized() }; format_count as usize];
-		unsafe { vkGetPhysicalDeviceSurfaceFormatsKHR(self.obj, surface.obj, &mut format_count, vformats.as_mut_ptr()) };
-		println!("== Enumerate Supported Formats ==");
-		for f in &vformats { println!("- {:?}", f.format); }
-		vformats
-	}
-	pub fn enumerate_present_modes<'i>(&self, surface: &Surface<'i>) -> Vec<VkPresentModeKHR>
-	{
-		let mut present_mode_count: u32 = 0;
-		unsafe { vkGetPhysicalDeviceSurfacePresentModesKHR(self.obj, surface.obj, &mut present_mode_count, std::ptr::null_mut()) };
-		let mut vmodes: Vec<VkPresentModeKHR> = vec![unsafe { std::mem::uninitialized() }; present_mode_count as usize];
-		unsafe { vkGetPhysicalDeviceSurfacePresentModesKHR(self.obj, surface.obj, &mut present_mode_count, vmodes.as_mut_ptr()) };
-		println!("== Enumerate Supported Present Modes ==");
-		for m in &vmodes { println!("- {:?}", m); }
-		vmodes
-	}
+	pub fn from(pd: VkPhysicalDevice, parent: &Rc<Instance>) -> PhysicalDevice { PhysicalDevice { obj: pd, parent: parent.clone() } }
 	pub fn get_properties(&self) -> VkPhysicalDeviceProperties
 	{
 		let mut props: VkPhysicalDeviceProperties = unsafe { std::mem::uninitialized() };
@@ -176,101 +135,234 @@ impl PhysicalDevice
 		unsafe { vkGetPhysicalDeviceFeatures(self.obj, &mut features) };
 		features
 	}
-	pub fn enumerate_queue_family_properties(&self) -> Vec<VkQueueFamilyProperties>
+	pub fn get_memory_properties(&self) -> VkPhysicalDeviceMemoryProperties
 	{
-		let mut count: u32 = 0;
-		unsafe { vkGetPhysicalDeviceQueueFamilyProperties(self.obj, &mut count, std::ptr::null_mut()) };
-		let mut props: Vec<VkQueueFamilyProperties> = vec![unsafe { std::mem::uninitialized() }; count as usize];
-		unsafe { vkGetPhysicalDeviceQueueFamilyProperties(self.obj, &mut count, props.as_mut_ptr()) };
+		let mut props: VkPhysicalDeviceMemoryProperties = unsafe { std::mem::uninitialized() };
+		unsafe { vkGetPhysicalDeviceMemoryProperties(self.obj, &mut props) };
 		props
 	}
-
-	pub fn create_device(&self, info: &VkDeviceCreateInfo) -> Result<Device, VkResult>
+	pub fn enumerate_queue_family_properties(&self) -> Vec<VkQueueFamilyProperties>
 	{
-		let mut dev: VkDevice = std::ptr::null_mut();
-		unsafe { vkCreateDevice(self.obj, info, std::ptr::null(), &mut dev) }.to_result().map(|()| Device { adapter_ref: self, obj: dev })
+		let mut property_count: u32 = 0;
+		unsafe { vkGetPhysicalDeviceQueueFamilyProperties(self.obj, &mut property_count, std::ptr::null_mut()) };
+		let mut properties: Vec<VkQueueFamilyProperties> = unsafe { vec![std::mem::uninitialized(); property_count as usize] };
+		unsafe { vkGetPhysicalDeviceQueueFamilyProperties(self.obj, &mut property_count, properties.as_mut_ptr()) };
+		properties
 	}
+
+	pub fn is_xcb_presentation_support(&self, queue_family_index: u32, con: *mut xcb::ffi::xcb_connection_t, vis: xcb::ffi::xcb_visualid_t) -> bool
+	{
+		unsafe { vkGetPhysicalDeviceXcbPresentationSupportKHR(self.obj, queue_family_index, con, vis) == 1 }
+	}
+	pub fn is_surface_support(&self, queue_family_index: u32, surface: &Surface) -> bool
+	{
+		let mut supported = false as VkBool32;
+		unsafe { vkGetPhysicalDeviceSurfaceSupportKHR(self.obj, queue_family_index, surface.obj, &mut supported) };
+		supported == true as VkBool32
+	}
+	pub fn get_surface_caps(&self, surface: &Surface) -> VkSurfaceCapabilitiesKHR
+	{
+		let mut caps: VkSurfaceCapabilitiesKHR = unsafe { std::mem::uninitialized() };
+		unsafe { vkGetPhysicalDeviceSurfaceCapabilitiesKHR(self.obj, surface.obj, &mut caps) };
+		caps
+	}
+	pub fn enumerate_surface_formats(&self, surface: &Surface) -> Vec<VkSurfaceFormatKHR>
+	{
+		let mut format_count = 0u32;
+		unsafe { vkGetPhysicalDeviceSurfaceFormatsKHR(self.obj, surface.obj, &mut format_count, std::ptr::null_mut()) };
+		let mut formats: Vec<VkSurfaceFormatKHR> = unsafe { vec![std::mem::uninitialized(); format_count as usize] };
+		unsafe { vkGetPhysicalDeviceSurfaceFormatsKHR(self.obj, surface.obj, &mut format_count, formats.as_mut_ptr()) };
+		formats
+	}
+	pub fn enumerate_present_modes(&self, surface: &Surface) -> Vec<VkPresentModeKHR>
+	{
+		let mut mode_count = 0u32;
+		unsafe { vkGetPhysicalDeviceSurfacePresentModesKHR(self.obj, surface.obj, &mut mode_count, std::ptr::null_mut()) };
+		let mut modes: Vec<VkPresentModeKHR> = unsafe { vec![std::mem::uninitialized(); mode_count as usize] };
+		unsafe { vkGetPhysicalDeviceSurfacePresentModesKHR(self.obj, surface.obj, &mut mode_count, modes.as_mut_ptr()) };
+		modes
+	}
+}
+/*
+impl PhysicalDevice
+{
 	pub fn get_memory_type_index(&self, desired_property_flags: VkMemoryPropertyFlags) -> Option<usize>
 	{
-		self.memory_properties.memoryTypes[0 .. self.memory_properties.memoryTypeCount as usize]
-			.iter().enumerate().filter(|&(_, &VkMemoryType(property_flags, _))| (property_flags & desired_property_flags) != 0)
-			.map(|(i, _)| i).next()
+		self.memory_props.memoryTypes[0 .. self.memory_props.memoryTypeCount as usize]
+			.iter().enumerate().find(|&(_, &VkMemoryType(property_flags, _))| (property_flags & desired_property_flags) != 0)
+			.map(|(i, _)| i)
 	}
 }
-impl NativeOwner<VkPhysicalDevice> for PhysicalDevice
+*/
+pub struct Device { obj: VkDevice, #[allow(dead_code)] parent: Rc<PhysicalDevice> }
+impl std::ops::Drop for Device { fn drop(&mut self) { unsafe { vkDestroyDevice(self.obj, std::ptr::null()) }; } }
+impl Device
 {
-	fn release(mut self) -> VkPhysicalDevice { self.obj }
-	fn get(&self) -> VkPhysicalDevice { self.obj }
-}
-pub struct Device<'a> { adapter_ref: &'a PhysicalDevice, obj: VkDevice }
-impl <'a> std::ops::Drop for Device<'a>
-{
-	fn drop(&mut self) { if !self.obj.is_null() { unsafe { vkDestroyDevice(self.obj, std::ptr::null()) }; } }
-}
-impl <'a> NativeOwner<VkDevice> for Device<'a>
-{
-	fn release(mut self) -> VkDevice { let o = self.obj; self.obj = std::ptr::null_mut(); o }
-	fn get(&self) -> VkDevice { self.obj }
-}
-impl <'a> HasParent for Device<'a>
-{
-	type ParentRefType = &'a PhysicalDevice;
-	fn parent(&self) -> Self::ParentRefType { self.adapter_ref }
-}
-impl <'a> Device<'a>
-{
+	pub fn new(adapter: &Rc<PhysicalDevice>, info: &VkDeviceCreateInfo) -> Result<Self, VkResult>
+	{
+		let mut dev: VkDevice = empty_handle();
+		unsafe { vkCreateDevice(adapter.obj, info, std::ptr::null(), &mut dev) }.map(move || Device { obj: dev, parent: adapter.clone() })
+	}
 	pub fn get_queue(&self, family_index: u32, index: u32) -> Queue
 	{
-		let mut q: VkQueue = std::ptr::null_mut();
+		let mut q: VkQueue = empty_handle();
 		unsafe { vkGetDeviceQueue(self.obj, family_index, index, &mut q) };
-		Queue { device_ref: self, obj: q, family_index: family_index }
+		Queue { obj: q, family_index: family_index }
 	}
-	pub fn create_image_view(&self, info: &VkImageViewCreateInfo) -> Result<ImageView, VkResult>
+
+	pub fn update_descriptor_sets(&self, write_infos: &[VkWriteDescriptorSet], copy_infos: &[VkCopyDescriptorSet])
 	{
-		let mut obj: VkImageView = std::ptr::null_mut();
-		unsafe { vkCreateImageView(self.obj, info, std::ptr::null(), &mut obj) }.to_result().map(|()| ImageView { device_ref: self, obj: obj })
+		unsafe { vkUpdateDescriptorSets(self.obj, write_infos.len() as u32, write_infos.as_ptr(), copy_infos.len() as u32, copy_infos.as_ptr()) };
 	}
-	pub fn create_render_pass(&self, info: &VkRenderPassCreateInfo) -> Result<RenderPass, VkResult>
+	pub fn wait_for_idle(&self) -> Result<(), VkResult> { unsafe { vkDeviceWaitIdle(self.obj) }.to_result() }
+}
+pub struct Queue { obj: VkQueue, family_index: u32 }
+impl Queue
+{
+	pub fn submit_commands(&self, buffers: &[VkCommandBuffer],
+		device_synchronizer: &[VkSemaphore], synchronizer_stages: &[VkPipelineStageFlags], device_signalizer: &[VkSemaphore],
+		event_receiver: Option<&Fence>) -> Result<(), VkResult>
 	{
-		let mut obj: VkRenderPass = std::ptr::null_mut();
-		unsafe { vkCreateRenderPass(self.obj, info, std::ptr::null(), &mut obj) }.to_result().map(|()| RenderPass { device_ref: self, obj: obj })
+		let submit_info = VkSubmitInfo
+		{
+			sType: VkStructureType::SubmitInfo, pNext: std::ptr::null(),
+			waitSemaphoreCount: device_synchronizer.len() as u32, pWaitSemaphores: device_synchronizer.as_ptr(), pWaitDstStageMask: synchronizer_stages.as_ptr(),
+			commandBufferCount: buffers.len() as u32, pCommandBuffers: buffers.as_ptr(),
+			signalSemaphoreCount: device_signalizer.len() as u32, pSignalSemaphores: device_signalizer.as_ptr()
+		};
+		unsafe { vkQueueSubmit(self.obj, 1, &submit_info, event_receiver.map(|x| x.obj).unwrap_or(std::ptr::null_mut())) }.to_result()
 	}
-	pub fn create_framebuffer(&self, info: &VkFramebufferCreateInfo) -> Result<Framebuffer, VkResult>
+	pub fn wait_for_idle(&self) -> Result<(), VkResult>
 	{
-		let mut obj: VkFramebuffer = std::ptr::null_mut();
-		unsafe { vkCreateFramebuffer(self.obj, info, std::ptr::null(), &mut obj) }.to_result().map(|()| Framebuffer { device_ref: self, obj: obj })
+		unsafe { vkQueueWaitIdle(self.obj) }.to_result()
 	}
-	/// Creates command pool
-	pub fn create_command_pool(&self, queue: &Queue, allow_resetting_per_buffer: bool, transient: bool) -> Result<CommandPool, VkResult>
+}
+pub struct DeviceMemory { #[allow(dead_code)] parent: Rc<Device>, obj: VkDeviceMemory }
+impl std::ops::Drop for DeviceMemory { fn drop(&mut self) { unsafe { vkFreeMemory(self.parent.obj, self.obj, std::ptr::null()) }; } }
+impl DeviceMemory
+{
+	pub fn alloc(device: &Rc<Device>, info: &VkMemoryAllocateInfo) -> Result<Self, VkResult>
 	{
-		let flags = if allow_resetting_per_buffer { VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT } else { 0 }
-			| if transient { VK_COMMAND_POOL_CREATE_TRANSIENT_BIT } else { 0 };
+		let mut mem: VkDeviceMemory = empty_handle();
+		unsafe { vkAllocateMemory(device.obj, info, std::ptr::null(), &mut mem) }.map(move || DeviceMemory { obj: mem, parent: device.clone() })
+	}
+	pub fn map(&self, device: &Device, range: std::ops::Range<VkDeviceSize>) -> Result<*mut c_void, VkResult>
+	{
+		let mut data_ptr: *mut c_void = std::ptr::null_mut();
+		unsafe { vkMapMemory(device.obj, self.obj, range.start, range.end - range.start, 0, std::mem::transmute(&mut data_ptr)) }
+			.map(move || data_ptr)
+	}
+	pub fn unmap(&self, device: &Device)
+	{
+		unsafe { vkUnmapMemory(device.obj, self.obj) };
+	}
+	pub fn bind_buffer(&self, device: &Device, buffer: &Buffer, offset: VkDeviceSize) -> Result<(), VkResult>
+	{
+		unsafe { vkBindBufferMemory(device.obj, buffer.obj, self.obj, offset) }.to_result()
+	}
+	pub fn bind_image(&self, device: &Device, image: &Image, offset: VkDeviceSize) -> Result<(), VkResult>
+	{
+		unsafe { vkBindImageMemory(device.obj, image.obj, self.obj, offset) }.to_result()
+	}
+}
+pub struct Buffer { #[allow(dead_code)] parent: Rc<Device>, obj: VkBuffer }
+impl std::ops::Drop for Buffer { fn drop(&mut self) { unsafe { vkDestroyBuffer(self.parent.obj, self.obj, std::ptr::null()) }; } }
+impl Buffer
+{
+	pub fn new(device: &Rc<Device>, info: &VkBufferCreateInfo) -> Result<Self, VkResult>
+	{
+		let mut buffer: VkBuffer = empty_handle();
+		unsafe { vkCreateBuffer(device.obj, info, std::ptr::null(), &mut buffer) }.map(move || Buffer { obj: buffer, parent: device.clone() })
+	}
+}
+pub struct Image { #[allow(dead_code)] parent: Rc<Device>, obj: VkImage }
+impl std::ops::Drop for Image { fn drop(&mut self) { unsafe { vkDestroyImage(self.parent.obj, self.obj, std::ptr::null()) }; } }
+impl Image
+{
+	pub fn new(device: &Rc<Device>, info: &VkImageCreateInfo) -> Result<Self, VkResult>
+	{
+		let mut image: VkImage = empty_handle();
+		unsafe { vkCreateImage(device.obj, info, std::ptr::null(), &mut image) }.map(move || Image { obj: image, parent: device.clone() })
+	}
+}
+pub struct ImageView { #[allow(dead_code)] parent: Rc<Device>, obj: VkImageView }
+impl std::ops::Drop for ImageView { fn drop(&mut self) { unsafe { vkDestroyImageView(self.parent.obj, self.obj, std::ptr::null()) }; } }
+impl ImageView
+{
+	pub fn new(device: &Rc<Device>, info: &VkImageViewCreateInfo) -> Result<Self, VkResult>
+	{
+		let mut view: VkImageView = empty_handle();
+		unsafe { vkCreateImageView(device.obj, info, std::ptr::null(), &mut view) }.map(move || ImageView { obj: view, parent: device.clone() })
+	}
+}
+pub struct RenderPass { #[allow(dead_code)] parent: Rc<Device>, obj: VkRenderPass }
+impl std::ops::Drop for RenderPass { fn drop(&mut self) { unsafe { vkDestroyRenderPass(self.parent.obj, self.obj, std::ptr::null()) }; } }
+impl RenderPass
+{
+	pub fn new(device: &Rc<Device>, info: &VkRenderPassCreateInfo) -> Result<Self, VkResult>
+	{
+		let mut pass: VkRenderPass = empty_handle();
+		unsafe { vkCreateRenderPass(device.obj, info, std::ptr::null(), &mut pass) }.map(move || RenderPass { obj: pass, parent: device.clone() })
+	}
+}
+pub struct Framebuffer { #[allow(dead_code)] parent: Rc<Device>, obj: VkFramebuffer }
+impl std::ops::Drop for Framebuffer { fn drop(&mut self) { unsafe { vkDestroyFramebuffer(self.parent.obj, self.obj, std::ptr::null()) }; } }
+impl Framebuffer
+{
+	pub fn new(device: &Rc<Device>, info: &VkFramebufferCreateInfo) -> Result<Self, VkResult>
+	{
+		let mut fb: VkFramebuffer = empty_handle();
+		unsafe { vkCreateFramebuffer(device.obj, info, std::ptr::null(), &mut fb) }.map(move || Framebuffer { obj: fb, parent: device.clone() })
+	}
+}
+
+pub struct CommandPool { #[allow(dead_code)] parent: Rc<Device>, obj: VkCommandPool }
+impl std::ops::Drop for CommandPool { fn drop(&mut self) { unsafe { vkDestroyCommandPool(self.parent.obj, self.obj, std::ptr::null()) }; } }
+impl CommandPool
+{
+	pub fn new(device: &Rc<Device>, queue: &Queue, transient: bool) -> Result<Self, VkResult>
+	{
+		let flags = if transient { VK_COMMAND_POOL_CREATE_TRANSIENT_BIT } else { 0 };
 		let info = VkCommandPoolCreateInfo
 		{
 			sType: VkStructureType::CommandPoolCreateInfo, pNext: std::ptr::null(),
 			flags: flags, queueFamilyIndex: queue.family_index
 		};
-		let mut obj: VkCommandPool = std::ptr::null_mut();
-		unsafe { vkCreateCommandPool(self.obj, &info, std::ptr::null(), &mut obj) }.to_result().map(|()| CommandPool { device_ref: self, obj: obj })
+		let mut pool = empty_handle();
+		unsafe { vkCreateCommandPool(device.obj, &info, std::ptr::null(), &mut pool) }.map(move || CommandPool { obj: pool, parent: device.clone() })
 	}
-	pub fn create_shader_module_from_file(&self, path_to_spirv: &str) -> Result<ShaderModule, VkResult>
+	pub fn allocate_buffers(&self, device: &Device, buffer_level: VkCommandBufferLevel, count: u32) -> Result<Vec<VkCommandBuffer>, VkResult>
 	{
-		let bin =
+		let info = VkCommandBufferAllocateInfo
 		{
-			let mut fp = std::fs::File::open(path_to_spirv).expect("Shader binary not found");
-			let mut bin: Vec<u8> = Vec::new();
-			fp.read_to_end(&mut bin).expect("Unable to read from binary file");
-			bin
+			sType: VkStructureType::CommandBufferAllocateInfo, pNext: std::ptr::null(),
+			commandPool: self.obj, level: buffer_level, commandBufferCount: count
 		};
+		let mut buffers: Vec<VkCommandBuffer> = vec![std::ptr::null_mut(); count as usize];
+		unsafe { vkAllocateCommandBuffers(device.obj, &info, buffers.as_mut_ptr()) }.map(move || buffers)
+	}
+}
+
+pub struct ShaderModule { #[allow(dead_code)] parent: Rc<Device>, obj: VkShaderModule }
+impl std::ops::Drop for ShaderModule { fn drop(&mut self) { unsafe { vkDestroyShaderModule(self.parent.obj, self.obj, std::ptr::null()) }; } }
+impl ShaderModule
+{
+	pub fn new(device: &Rc<Device>, binary: &[u8]) -> Result<Self, VkResult>
+	{
 		let info = VkShaderModuleCreateInfo
 		{
 			sType: VkStructureType::ShaderModuleCreateInfo, pNext: std::ptr::null(),
-			flags: 0, codeSize: bin.len() as size_t, pCode: bin.as_ptr() as *const u32
+			flags: 0, codeSize: binary.len() as size_t, pCode: binary.as_ptr() as *const u32
 		};
-		let mut obj: VkShaderModule = std::ptr::null_mut();
-		unsafe { vkCreateShaderModule(self.obj, &info, std::ptr::null(), &mut obj) }.to_result().map(|()| ShaderModule { device_ref: self, obj: obj })
+		let mut m: VkShaderModule = empty_handle();
+		unsafe { vkCreateShaderModule(device.obj, &info, std::ptr::null(), &mut m) }.map(move || ShaderModule { obj: m, parent: device.clone() })
 	}
-	pub fn create_pipeline_layout(&self, descriptor_set_layouts: &[VkDescriptorSetLayout], push_constants: &[VkPushConstantRange]) -> Result<PipelineLayout, VkResult>
+}
+pub struct PipelineLayout { #[allow(dead_code)] parent: Rc<Device>, obj: VkPipelineLayout }
+impl std::ops::Drop for PipelineLayout { fn drop(&mut self) { unsafe { vkDestroyPipelineLayout(self.parent.obj, self.obj, std::ptr::null()) }; } }
+impl PipelineLayout
+{
+	pub fn new(device: &Rc<Device>, descriptor_set_layouts: &[VkDescriptorSetLayout], push_constants: &[VkPushConstantRange]) -> Result<Self, VkResult>
 	{
 		let info = VkPipelineLayoutCreateInfo
 		{
@@ -278,601 +370,186 @@ impl <'a> Device<'a>
 			setLayoutCount: descriptor_set_layouts.len() as u32, pSetLayouts: descriptor_set_layouts.as_ptr(),
 			pushConstantRangeCount: push_constants.len() as u32, pPushConstantRanges: push_constants.as_ptr()
 		};
-		let mut obj: VkPipelineLayout = std::ptr::null_mut();
-		unsafe { vkCreatePipelineLayout(self.obj, &info, std::ptr::null(), &mut obj) }.to_result().map(|()| PipelineLayout { device_ref: self, obj: obj })
+		let mut layout: VkPipelineLayout = empty_handle();
+		unsafe { vkCreatePipelineLayout(device.obj, &info, std::ptr::null(), &mut layout) }
+			.map(move || PipelineLayout { obj: layout, parent: device.clone() })
 	}
-	pub fn create_empty_pipeline_cache(&self) -> Result<PipelineCache, VkResult>
+}
+pub struct PipelineCache { #[allow(dead_code)] parent: Rc<Device>, obj: VkPipelineCache }
+impl std::ops::Drop for PipelineCache { fn drop(&mut self) { unsafe { vkDestroyPipelineCache(self.parent.obj, self.obj, std::ptr::null()) }; } }
+impl PipelineCache
+{
+	pub fn new_empty(device: &Rc<Device>) -> Result<Self, VkResult>
 	{
-		let mut obj: VkPipelineCache = std::ptr::null_mut();
 		let info = VkPipelineCacheCreateInfo
 		{
 			sType: VkStructureType::PipelineCacheCreateInfo, pNext: std::ptr::null(), flags: 0,
 			pInitialData: std::ptr::null(), initialDataSize: 0
 		};
-		unsafe { vkCreatePipelineCache(self.obj, &info, std::ptr::null(), &mut obj) }.to_result().map(|()| PipelineCache { device_ref: self, obj: obj })
+		let mut c: VkPipelineCache = empty_handle();
+		unsafe { vkCreatePipelineCache(device.obj, &info, std::ptr::null(), &mut c) }.map(move || PipelineCache { obj: c, parent: device.clone() })
 	}
-	pub fn create_graphics_pipelines(&self, cache: &PipelineCache, infos: &[VkGraphicsPipelineCreateInfo]) -> Result<Vec<Pipeline>, VkResult>
+}
+pub struct Pipeline { parent: Rc<Device>, obj: VkPipeline }
+impl std::ops::Drop for Pipeline { fn drop(&mut self) { unsafe { vkDestroyPipeline(self.parent.obj, self.obj, std::ptr::null()) }; } }
+impl Pipeline
+{
+	pub fn new(device: &Rc<Device>, cache: &PipelineCache, infos: &[VkGraphicsPipelineCreateInfo]) -> Result<Vec<Self>, VkResult>
 	{
-		let mut objs: Vec<VkPipeline> = vec![std::ptr::null_mut(); infos.len()];
-		unsafe { vkCreateGraphicsPipelines(self.obj, cache.get(), infos.len() as u32, infos.as_ptr(), std::ptr::null(), objs.as_mut_ptr()) }
-			.to_result().map(|()| objs.into_iter().map(|p| Pipeline { device_ref: self, obj: p }).collect::<Vec<_>>())
+		let mut objs: Vec<VkPipeline> = vec![empty_handle(); infos.len()];
+		unsafe { vkCreateGraphicsPipelines(device.obj, cache.obj, infos.len() as u32, infos.as_ptr(), std::ptr::null(), objs.as_mut_ptr()) }
+			.map(move || objs.into_iter().map(|p| Pipeline { obj: p, parent: device.clone() }).collect())
 	}
-	pub fn create_fence(&self) -> Result<Fence, VkResult>
+}
+
+pub struct Fence { parent: Rc<Device>, obj: VkFence }
+impl std::ops::Drop for Fence { fn drop(&mut self) { unsafe { vkDestroyFence(self.parent.obj, self.obj, std::ptr::null()) }; } }
+impl Fence
+{
+	pub fn new(device: &Rc<Device>) -> Result<Self, VkResult>
 	{
-		let info = VkFenceCreateInfo
-		{
-			sType: VkStructureType::FenceCreateInfo, pNext: std::ptr::null(), flags: 0
-		};
-		let mut obj: VkFence = std::ptr::null_mut();
-		unsafe { vkCreateFence(self.obj, &info, std::ptr::null(), &mut obj) }.to_result().map(|()| Fence { device_ref: self, obj: obj })
+		let info = VkFenceCreateInfo { sType: VkStructureType::FenceCreateInfo, pNext: std::ptr::null(), flags: 0 };
+		let mut fence: VkFence = empty_handle();
+		unsafe { vkCreateFence(device.obj, &info, std::ptr::null(), &mut fence) }.map(move || Fence { obj: fence, parent: device.clone() })
 	}
-	pub fn create_semaphore(&self) -> Result<Semaphore, VkResult>
+	pub fn wait(&self, parent: &Device) -> Result<(), VkResult>
 	{
-		let info = VkSemaphoreCreateInfo
-		{
-			sType: VkStructureType::SemaphoreCreateInfo, pNext: std::ptr::null(), flags: 0
-		};
-		let mut obj: VkSemaphore = std::ptr::null_mut();
-		unsafe { vkCreateSemaphore(self.obj, &info, std::ptr::null(), &mut obj) }.to_result().map(|()| Semaphore { device_ref: self, obj: obj })
+		unsafe { vkWaitForFences(parent.obj, 1, &self.obj, true as VkBool32, std::u64::MAX) }.to_result()
 	}
-	/// Creates Exclusive buffer
-	pub fn create_buffer(&self, usage_bits: VkBufferUsageFlags, size: VkDeviceSize) -> Result<Buffer, VkResult>
+	pub fn reset(&self, parent: &Device) -> Result<(), VkResult>
 	{
-		let buffer_info = VkBufferCreateInfo
-		{
-			sType: VkStructureType::BufferCreateInfo, pNext: std::ptr::null(), flags: 0,
-			usage: usage_bits, size: size, sharingMode: VkSharingMode::Exclusive,
-			queueFamilyIndexCount: 0, pQueueFamilyIndices: std::ptr::null()
-		};
-		let mut obj: VkBuffer = std::ptr::null_mut();
-		unsafe { vkCreateBuffer(self.obj, &buffer_info, std::ptr::null(), &mut obj) }.to_result().map(|()| Buffer { device_ref: self, obj: obj })
+		unsafe { vkResetFences(parent.obj, 1, &self.obj) }.to_result()
 	}
-	/// Creates an image with info
-	fn create_descripted_image(&self, info: &VkImageCreateInfo) -> Result<Image, VkResult>
+	pub fn get_status(&self, parent: &Device) -> Result<(), VkResult>
 	{
-		let mut obj: VkImage = unsafe { std::mem::uninitialized() };
-		unsafe { vkCreateImage(self.obj, info, std::ptr::null(), &mut obj) }.to_result().map(|()| Image { device_ref: self, obj: obj })
+		unsafe { vkGetFenceStatus(parent.obj, self.obj) }.to_result()
 	}
-	/// Creates Exclusive image
-	pub fn create_image(&self, extent: VkExtent2D, tiling: VkImageTiling, usage_bits: VkImageUsageFlags) -> Result<Image, VkResult>
+}
+pub struct Semaphore { parent: Rc<Device>, obj: VkSemaphore }
+impl std::ops::Drop for Semaphore { fn drop(&mut self) { unsafe { vkDestroySemaphore(self.parent.obj, self.obj, std::ptr::null()) }; } }
+impl Semaphore
+{
+	pub fn new(device: &Rc<Device>) -> Result<Self, VkResult>
 	{
-		let VkExtent2D(w, h) = extent;
-		self.create_descripted_image(&VkImageCreateInfo
-		{
-			sType: VkStructureType::ImageCreateInfo, pNext: std::ptr::null(), flags: 0,
-			imageType: VkImageType::Dim2, format: VkFormat::R8G8B8A8_UNORM,
-			extent: VkExtent3D(w, h, 1), mipLevels: 1, arrayLayers: 1,
-			samples: VK_SAMPLE_COUNT_1_BIT, tiling: tiling,
-			usage: usage_bits, sharingMode: VkSharingMode::Exclusive,
-			queueFamilyIndexCount: 0, pQueueFamilyIndices: std::ptr::null(), initialLayout: VkImageLayout::Preinitialized
-		})
+		let info = VkSemaphoreCreateInfo { sType: VkStructureType::SemaphoreCreateInfo, pNext: std::ptr::null(), flags: 0 };
+		let mut sem: VkSemaphore = empty_handle();
+		unsafe { vkCreateSemaphore(device.obj, &info, std::ptr::null(), &mut sem) }.map(move || Semaphore { obj: sem, parent: device.clone() })
 	}
-	pub fn create_single_image(&self, extent: VkExtent2D, tiling: VkImageTiling, usage_bits: VkImageUsageFlags) -> Result<Image, VkResult>
+}
+
+pub struct DescriptorSetLayout { parent: Rc<Device>, obj: VkDescriptorSetLayout }
+impl std::ops::Drop for DescriptorSetLayout { fn drop(&mut self) { unsafe { vkDestroyDescriptorSetLayout(self.parent.obj, self.obj, std::ptr::null()) }; } }
+impl DescriptorSetLayout
+{
+	pub fn new(device: &Rc<Device>, bindings: &[VkDescriptorSetLayoutBinding]) -> Result<Self, VkResult>
 	{
-		let VkExtent2D(w, h) = extent;
-		self.create_descripted_image(&VkImageCreateInfo
-		{
-			sType: VkStructureType::ImageCreateInfo, pNext: std::ptr::null(), flags: 0,
-			imageType: VkImageType::Dim2, format: VkFormat::R8_UNORM,
-			extent: VkExtent3D(w, h, 1), mipLevels: 1, arrayLayers: 1,
-			samples: VK_SAMPLE_COUNT_1_BIT, tiling: tiling,
-			usage: usage_bits, sharingMode: VkSharingMode::Exclusive,
-			queueFamilyIndexCount: 0, pQueueFamilyIndices: std::ptr::null(), initialLayout: VkImageLayout::Preinitialized
-		})
-	}
-	pub fn allocate_memory(&self, info: &VkMemoryAllocateInfo) -> Result<DeviceMemory, VkResult>
-	{
-		let mut obj: VkDeviceMemory = std::ptr::null_mut();
-		unsafe { vkAllocateMemory(self.obj, info, std::ptr::null(), &mut obj) }.to_result().map(|()| DeviceMemory { device_ref: self, obj: obj })
-	}
-	pub fn allocate_memory_for_buffer(&self, buffer: &Buffer, memory_property_mask: VkMemoryPropertyFlags) -> Result<DeviceMemory, VkResult>
-	{
-		let mut obj: VkDeviceMemory = std::ptr::null_mut();
-		let info = VkMemoryAllocateInfo
-		{
-			sType: VkStructureType::MemoryAllocateInfo, pNext: std::ptr::null(),
-			allocationSize: buffer.get_memory_requirements().size,
-			memoryTypeIndex: self.adapter_ref.get_memory_type_index(memory_property_mask).unwrap() as u32
-		};
-		if (memory_property_mask & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) == 0 { println!("-- Buffer Memory Consuming: {} bytes", info.allocationSize); }
-		unsafe { vkAllocateMemory(self.obj, &info, std::ptr::null(), &mut obj) }.to_result().map(|()| DeviceMemory { device_ref: self, obj: obj })
-	}
-	pub fn allocate_memory_for_image(&self, image: &Image, memory_property_mask: VkMemoryPropertyFlags) -> Result<DeviceMemory, VkResult>
-	{
-		let mut obj: VkDeviceMemory = std::ptr::null_mut();
-		let info = VkMemoryAllocateInfo
-		{
-			sType: VkStructureType::MemoryAllocateInfo, pNext: std::ptr::null(),
-			allocationSize: image.get_memory_requirements().size,
-			memoryTypeIndex: self.adapter_ref.get_memory_type_index(memory_property_mask).unwrap() as u32
-		};
-		if (memory_property_mask & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) == 0 { println!("-- Image Memory Consuming: {} bytes", info.allocationSize); }
-		unsafe { vkAllocateMemory(self.obj, &info, std::ptr::null(), &mut obj) }.to_result().map(|()| DeviceMemory { device_ref: self, obj: obj })
-	}
-	pub fn create_descriptor_set_layout(&self, bindings: &[VkDescriptorSetLayoutBinding]) -> Result<DescriptorSetLayout, VkResult>
-	{
-		let layout_info = VkDescriptorSetLayoutCreateInfo
+		let info = VkDescriptorSetLayoutCreateInfo
 		{
 			sType: VkStructureType::DescriptorSetLayoutCreateInfo, pNext: std::ptr::null(), flags: 0,
 			bindingCount: bindings.len() as u32, pBindings: bindings.as_ptr()
 		};
-		let mut obj: VkDescriptorSetLayout = std::ptr::null_mut();
-		unsafe { vkCreateDescriptorSetLayout(self.obj, &layout_info, std::ptr::null(), &mut obj) }.to_result().map(|()| DescriptorSetLayout { device_ref: self, obj: obj })
+		let mut dsl: VkDescriptorSetLayout = empty_handle();
+		unsafe { vkCreateDescriptorSetLayout(device.obj, &info, std::ptr::null(), &mut dsl) }
+			.map(move || DescriptorSetLayout { obj: dsl, parent: device.clone() })
 	}
-	pub fn create_descriptor_pool(&self, max_sets: u32, pool_sizes: &[VkDescriptorPoolSize]) -> Result<DescriptorPool, VkResult>
+}
+pub struct DescriptorPool { parent: Rc<Device>, obj: VkDescriptorPool }
+impl std::ops::Drop for DescriptorPool { fn drop(&mut self) { unsafe { vkDestroyDescriptorPool(self.parent.obj, self.obj, std::ptr::null()) }; } }
+impl DescriptorPool
+{
+	pub fn new(device: &Rc<Device>, max_sets: u32, pool_sizes: &[VkDescriptorPoolSize]) -> Result<Self, VkResult>
 	{
-		let mut obj: VkDescriptorPool = std::ptr::null_mut();
 		let info = VkDescriptorPoolCreateInfo
 		{
-			sType: VkStructureType::DescriptorPoolCreateInfo, pNext: std::ptr::null(),
-			flags: 0, maxSets: max_sets,
-			poolSizeCount: pool_sizes.len() as u32, pPoolSizes: pool_sizes.as_ptr()
+			sType: VkStructureType::DescriptorPoolCreateInfo, pNext: std::ptr::null(), flags: 0,
+			maxSets: max_sets, poolSizeCount: pool_sizes.len() as u32, pPoolSizes: pool_sizes.as_ptr()
 		};
-		unsafe { vkCreateDescriptorPool(self.obj, &info, std::ptr::null(), &mut obj) }.to_result().map(|()| DescriptorPool { device_ref: self, obj: obj })
+		let mut pool: VkDescriptorPool = empty_handle();
+		unsafe { vkCreateDescriptorPool(device.obj, &info, std::ptr::null(), &mut pool) }.map(move || DescriptorPool { obj: pool, parent: device.clone() })
 	}
-	pub fn create_sampler(&self, info: &VkSamplerCreateInfo) -> Result<Sampler, VkResult>
+	pub fn allocate_sets(&self, device: &Device, layouts: &[VkDescriptorSetLayout]) -> Result<Vec<VkDescriptorSet>, VkResult>
 	{
-		let mut obj: VkSampler = std::ptr::null_mut();
-		unsafe { vkCreateSampler(self.obj, info, std::ptr::null(), &mut obj) }.to_result().map(|()| Sampler { device_ref: self, obj: obj })
-	}
-
-	pub fn update_descriptor_sets(&self, write_infos: &[VkWriteDescriptorSet], copy_infos: &[VkCopyDescriptorSet])
-	{
-		unsafe { vkUpdateDescriptorSets(self.obj, write_infos.len() as u32, write_infos.as_ptr(), copy_infos.len() as u32, copy_infos.as_ptr()) };
-	}
-
-	pub fn wait_for_idle(&self) -> Result<(), VkResult> { unsafe { vkDeviceWaitIdle(self.obj) }.to_result() }
-}
-pub struct Queue<'d> { device_ref: &'d Device<'d>, obj: VkQueue, pub family_index: u32 }
-impl <'d> HasParent for Queue<'d> { type ParentRefType = &'d Device<'d>; fn parent(&self) -> &'d Device<'d> { self.device_ref } }
-impl <'d> NativeOwner<VkQueue> for Queue<'d>
-{
-	fn get(&self) -> VkQueue { self.obj }
-	fn release(mut self) -> VkQueue { self.obj }
-}
-impl <'d> Queue<'d>
-{
-	pub fn submit_commands(&self, buffers: &[VkCommandBuffer], device_synchronizer: &[VkSemaphore], device_signalizer: &[VkSemaphore], event_receiver: Option<&Fence>) -> Result<(), VkResult>
-	{
-		let pipeline_stage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
-		let submit_info = VkSubmitInfo
-		{
-			sType: VkStructureType::SubmitInfo, pNext: std::ptr::null(),
-			waitSemaphoreCount: device_synchronizer.len() as u32, pWaitSemaphores: device_synchronizer.as_ptr(), pWaitDstStageMask: &pipeline_stage,
-			commandBufferCount: buffers.len() as u32, pCommandBuffers: buffers.as_ptr(),
-			signalSemaphoreCount: device_signalizer.len() as u32, pSignalSemaphores: device_signalizer.as_ptr()
-		};
-		unsafe { vkQueueSubmit(self.obj, 1, &submit_info, event_receiver.map(|x| x.get()).unwrap_or(std::ptr::null_mut())) }.to_result()
-	}
-	pub fn wait_for_idle(&self) -> Result<(), VkResult>
-	{
-		unsafe { vkQueueWaitIdle(self.obj) }.to_result()
-	}
-}
-
-macro_rules! SafeObjectDerivedFromDevice
-{
-	($name: ident for $t: tt destructed by $dfn: ident) =>
-	{
-		SafeObjectDerivedFromDevice!($name for $t);
-		impl <'d> std::ops::Drop for $name<'d> { fn drop(&mut self) { if !self.obj.is_null() { unsafe { $dfn(self.device_ref.obj, self.obj, std::ptr::null()) }; } } }
-	};
-	($name: ident for $t: ident) =>
-	{
-		pub struct $name<'d> { device_ref: &'d Device<'d>, obj: $t }
-		impl <'d> HasParent for $name<'d> { type ParentRefType = &'d Device<'d>; fn parent(&self) -> &'d Device<'d> { self.device_ref } }
-		impl <'d> std::ops::Deref for $name<'d> { type Target = $t; fn deref(&self) -> &$t { &self.obj } }
-		impl <'d> NativeOwner<$t> for $name<'d>
-		{
-			fn release(mut self) -> $t { let o = self.obj; self.obj = std::ptr::null_mut(); o }
-			fn get(&self) -> $t { self.obj }
-		}
-	};
-}
-
-pub trait VkImageResource
-{
-	fn get(&self) -> VkImage;
-	fn create_view(&self, info: &VkImageViewCreateInfo) -> Result<ImageView, VkResult>;
-}
-SafeObjectDerivedFromDevice!(Image for VkImage destructed by vkDestroyImage);
-SafeObjectDerivedFromDevice!(ImageRef for VkImage);
-impl <'d> VkImageResource for ImageRef<'d>
-{
-	fn get(&self) -> VkImage { self.obj }
-	fn create_view(&self, info: &VkImageViewCreateInfo) -> Result<ImageView, VkResult>
-	{
-		let mut obj: VkImageView = std::ptr::null_mut();
-		unsafe { vkCreateImageView(self.device_ref.obj, info, std::ptr::null_mut(), &mut obj) }.to_result()
-			.map(|()| ImageView { device_ref: self.device_ref, obj: obj })
-	}
-}
-SafeObjectDerivedFromDevice!(ImageView for VkImageView destructed by vkDestroyImageView);
-SafeObjectDerivedFromDevice!(RenderPass for VkRenderPass destructed by vkDestroyRenderPass);
-SafeObjectDerivedFromDevice!(Framebuffer for VkFramebuffer destructed by vkDestroyFramebuffer);
-
-pub struct Surface<'a>
-{
-	instance_ref: &'a Instance,
-	obj: VkSurfaceKHR
-}
-impl <'a> Surface<'a>
-{
-	pub fn create(instance: &'a Instance, info: &VkXcbSurfaceCreateInfoKHR) -> Result<Self, VkResult>
-	{
-		let mut obj: VkSurfaceKHR = std::ptr::null_mut();
-		let res = unsafe { vkCreateXcbSurfaceKHR(instance.obj, info, std::ptr::null(), &mut obj) };
-		if res != VkResult::Success { Err(res) } else { Ok(Surface { instance_ref: instance, obj: obj }) }
-	}
-}
-impl <'a> std::ops::Drop for Surface<'a>
-{
-	fn drop(&mut self) { if !self.obj.is_null() { unsafe { vkDestroySurfaceKHR(self.instance_ref.obj, self.obj, std::ptr::null()) }; } }
-}
-impl <'a> NativeOwner<VkSurfaceKHR> for Surface<'a>
-{
-	fn get(&self) -> VkSurfaceKHR { self.obj }
-	fn release(mut self) -> VkSurfaceKHR { let o = self.obj; self.obj = std::ptr::null_mut(); o }
-}
-
-SafeObjectDerivedFromDevice!(Swapchain for VkSwapchainKHR destructed by vkDestroySwapchainKHR);
-impl <'a> Swapchain<'a>
-{
-	pub fn create(device_ref: &'a Device, info: &VkSwapchainCreateInfoKHR) -> Result<Self, VkResult>
-	{
-		let mut p: VkSwapchainKHR = std::ptr::null_mut();
-		let res = unsafe { vkCreateSwapchainKHR(device_ref.obj, info, std::ptr::null(), &mut p) };
-		if res == VkResult::Success { Ok(Swapchain { device_ref: device_ref, obj: p }) } else { Err(res) }
-	}
-	pub fn get_images<'i>(&self) -> Result<Vec<ImageRef>, VkResult>
-	{
-		let mut image_count: u32 = 0;
-		unsafe { vkGetSwapchainImagesKHR(self.device_ref.obj, self.obj, &mut image_count, std::ptr::null_mut()) }.to_result().and_then(|()|
-		{
-			let mut v: Vec<VkImage> = vec![std::ptr::null_mut(); image_count as usize];
-			unsafe { vkGetSwapchainImagesKHR(self.device_ref.obj, self.obj, &mut image_count, v.as_mut_ptr()) }.to_result()
-				.map(|()| v.into_iter().map(|x| ImageRef { device_ref: self.device_ref, obj: x }).collect::<Vec<_>>())
-		})
-	}
-	pub fn acquire_next_image(&self, device_synchronizer: &Semaphore) -> Result<u32, VkResult>
-	{
-		let mut index: u32 = 0;
-		unsafe { vkAcquireNextImageKHR(self.device_ref.obj, self.obj, std::u64::MAX, device_synchronizer.get(), std::ptr::null_mut(), &mut index) }
-			.to_result().map(|()| index)
-	}
-	pub fn present(&self, queue: &Queue, index: u32, device_synchronizer: &[VkSemaphore]) -> Result<(), VkResult>
-	{
-		let present_info = VkPresentInfoKHR
-		{
-			sType: VkStructureType::PresentInfoKHR, pNext: std::ptr::null(),
-			swapchainCount: 1, pSwapchains: &self.obj, pImageIndices: &index,
-			waitSemaphoreCount: device_synchronizer.len() as u32, pWaitSemaphores: device_synchronizer.as_ptr(), pResults: std::ptr::null_mut()
-		};
-		unsafe { vkQueuePresentKHR(queue.obj, &present_info) }.to_result()
-	}
-}
-
-SafeObjectDerivedFromDevice!(CommandPool for VkCommandPool destructed by vkDestroyCommandPool);
-SafeObjectDerivedFromDevice!(ShaderModule for VkShaderModule destructed by vkDestroyShaderModule);
-SafeObjectDerivedFromDevice!(PipelineLayout for VkPipelineLayout destructed by vkDestroyPipelineLayout);
-SafeObjectDerivedFromDevice!(PipelineCache for VkPipelineCache destructed by vkDestroyPipelineCache);
-SafeObjectDerivedFromDevice!(DescriptorSetLayout for VkDescriptorSetLayout destructed by vkDestroyDescriptorSetLayout);
-SafeObjectDerivedFromDevice!(Pipeline for VkPipeline destructed by vkDestroyPipeline);
-SafeObjectDerivedFromDevice!(Fence for VkFence destructed by vkDestroyFence);
-SafeObjectDerivedFromDevice!(Semaphore for VkSemaphore destructed by vkDestroySemaphore);
-SafeObjectDerivedFromDevice!(Buffer for VkBuffer destructed by vkDestroyBuffer);
-SafeObjectDerivedFromDevice!(DeviceMemory for VkDeviceMemory destructed by vkFreeMemory);
-SafeObjectDerivedFromDevice!(DescriptorPool for VkDescriptorPool destructed by vkDestroyDescriptorPool);
-SafeObjectDerivedFromDevice!(Sampler for VkSampler destructed by vkDestroySampler);
-
-impl <'d> CommandPool<'d>
-{
-	pub fn allocate_primary_buffers(&self, count: usize) -> Result<CommandBuffers, VkResult>
-	{
-		let allocate_info = VkCommandBufferAllocateInfo
-		{
-			sType: VkStructureType::CommandBufferAllocateInfo, pNext: std::ptr::null(),
-			commandPool: self.obj, level: VkCommandBufferLevel::Primary, commandBufferCount: count as u32
-		};
-		let mut objs: Vec<VkCommandBuffer> = vec![std::ptr::null_mut(); count];
-		unsafe { vkAllocateCommandBuffers(self.device_ref.obj, &allocate_info, objs.as_mut_ptr()) }.to_result()
-			.map(|()| CommandBuffers { allocator_ref: self, objects: objs })
-	}
-}
-impl <'d> Fence<'d>
-{
-	pub fn wait(&self) -> Result<(), VkResult>
-	{
-		unsafe { vkWaitForFences(self.device_ref.obj, 1, &self.obj, true as VkBool32, std::u64::MAX) }.to_result()
-	}
-	pub fn reset(&self) -> Result<(), VkResult>
-	{
-		unsafe { vkResetFences(self.device_ref.obj, 1, &self.obj) }.to_result()
-	}
-	pub fn get_status(&self) -> Result<(), VkResult>
-	{
-		unsafe { vkGetFenceStatus(self.device_ref.obj, self.obj) }.to_result()
-	}
-}
-impl <'d> MemoryAllocationRequired for Buffer<'d>
-{
-	fn get_memory_requirements(&self) -> VkMemoryRequirements
-	{
-		let mut memreq: VkMemoryRequirements = unsafe { std::mem::uninitialized() };
-		unsafe { vkGetBufferMemoryRequirements(self.device_ref.obj, self.obj, &mut memreq) };
-		memreq
-	}
-}
-impl <'d> MemoryAllocationRequired for Image<'d>
-{
-	fn get_memory_requirements(&self) -> VkMemoryRequirements
-	{
-		let mut memreq: VkMemoryRequirements = unsafe { std::mem::uninitialized() };
-		unsafe { vkGetImageMemoryRequirements(self.device_ref.obj, self.obj, &mut memreq) };
-		memreq
-	}
-}
-pub struct MemoryMappedRange<'b>
-{
-	memory_ref: &'b DeviceMemory<'b>, ptr: *mut c_void
-}
-#[derive(Clone, Copy)]
-pub struct SendableMemoryMappedRange<'d>
-{
-	memory_ref: &'d DeviceMemory<'d>, ptr: usize
-}
-unsafe impl <'d> std::marker::Send for SendableMemoryMappedRange<'d> {}
-impl <'d> DeviceMemory<'d>
-{
-	pub fn map(&'d self, range: std::ops::Range<VkDeviceSize>) -> Result<MemoryMappedRange<'d>, VkResult>
-	{
-		let mut data_ptr: *mut c_void = std::ptr::null_mut();
-		unsafe { vkMapMemory(self.device_ref.obj, self.obj, range.start, range.end - range.start, 0, std::mem::transmute(&mut data_ptr)) }
-			.to_result().map(|()| MemoryMappedRange { memory_ref: self, ptr: data_ptr })
-	}
-	pub fn bind_buffer(&self, buffer: &Buffer, offset: VkDeviceSize) -> Result<(), VkResult>
-	{
-		unsafe { vkBindBufferMemory(self.device_ref.obj, buffer.obj, self.obj, offset) }.to_result()
-	}
-	pub fn bind_image(&self, image: &Image, offset: VkDeviceSize) -> Result<(), VkResult>
-	{
-		unsafe { vkBindImageMemory(self.device_ref.obj, image.obj, self.obj, offset) }.to_result()
-	}
-}
-impl <'b> MemoryMappedRange<'b>
-{
-	pub fn range_mut<T>(&self, offset: VkDeviceSize, elements: usize) -> &mut [T]
-	{
-		unsafe
-		{
-			std::slice::from_raw_parts_mut::<T>(std::mem::transmute(std::mem::transmute::<_, VkDeviceSize>(self.ptr) + offset), elements)
-		}
-	}
-	pub fn map_mut<T>(&self, offset: VkDeviceSize) -> &mut T
-	{
-		let r: &mut T = unsafe { std::mem::transmute(std::mem::transmute::<_, VkDeviceSize>(self.ptr) + offset) };
-		r
-	}
-	pub fn as_sendable(&self) -> SendableMemoryMappedRange
-	{
-		SendableMemoryMappedRange { memory_ref: self.memory_ref, ptr: unsafe { std::mem::transmute(self.ptr) } }
-	}
-}
-impl <'b> SendableMemoryMappedRange<'b>
-{
-	pub fn range_mut<T>(&self, offset: VkDeviceSize, elements: usize) -> &mut [T]
-	{
-		unsafe
-		{
-			std::slice::from_raw_parts_mut::<T>(std::mem::transmute(std::mem::transmute::<_, VkDeviceSize>(self.ptr) + offset), elements)
-		}
-	}
-	pub fn map_mut<T>(&self, offset: VkDeviceSize) -> &mut T
-	{
-		let r: &mut T = unsafe { std::mem::transmute(std::mem::transmute::<_, VkDeviceSize>(self.ptr) + offset) };
-		r
-	}
-}
-impl <'b> std::ops::Drop for MemoryMappedRange<'b>
-{
-	fn drop(&mut self) { unsafe { vkUnmapMemory(self.memory_ref.device_ref.obj, self.memory_ref.obj) }; }
-}
-impl <'d> OnDeviceMemory for Buffer<'d>
-{
-	type RangeType = std::ops::Range<VkDeviceSize>;
-	type StructureType = VkBufferMemoryBarrier;
-	fn memory_barrier(&self, range: Self::RangeType, src_access_mask: VkAccessFlags, dst_access_mask: VkAccessFlags) -> Self::StructureType
-	{
-		VkBufferMemoryBarrier
-		{
-			sType: VkStructureType::BufferMemoryBarrier, pNext: std::ptr::null(),
-			srcQueueFamilyIndex: VK_QUEUE_FAMILY_IGNORED, dstQueueFamilyIndex: VK_QUEUE_FAMILY_IGNORED,
-			buffer: self.obj, offset: range.start, size: range.end - range.start,
-			srcAccessMask: src_access_mask, dstAccessMask: dst_access_mask
-		}
-	}
-}
-pub struct ImageMemoryBarrierUnlayouted
-{
-	obj: VkImage, range: VkImageSubresourceRange, src_am: VkAccessFlags, dst_am: VkAccessFlags
-}
-impl ImageMemoryBarrierUnlayouted
-{
-	pub fn layout(self, src_layout: VkImageLayout, dst_layout: VkImageLayout) -> VkImageMemoryBarrier
-	{
-		VkImageMemoryBarrier
-		{
-			sType: VkStructureType::ImageMemoryBarrier, pNext: std::ptr::null(),
-			srcAccessMask: self.src_am, dstAccessMask: self.dst_am,
-			oldLayout: src_layout, newLayout: dst_layout,
-			srcQueueFamilyIndex: VK_QUEUE_FAMILY_IGNORED, dstQueueFamilyIndex: VK_QUEUE_FAMILY_IGNORED,
-			image: self.obj, subresourceRange: self.range
-		}
-	}
-}
-impl <'d> OnDeviceMemory for Image<'d>
-{
-	type RangeType = VkImageSubresourceRange;
-	type StructureType = ImageMemoryBarrierUnlayouted;
-	fn memory_barrier(&self, range: Self::RangeType, src_access_mask: VkAccessFlags, dst_access_mask: VkAccessFlags) -> Self::StructureType
-	{
-		ImageMemoryBarrierUnlayouted { obj: self.obj, range: range, src_am: src_access_mask, dst_am: dst_access_mask }
-	}
-}
-impl <'d> OnDeviceMemory for ImageRef<'d>
-{
-	type RangeType = VkImageSubresourceRange;
-	type StructureType = ImageMemoryBarrierUnlayouted;
-	fn memory_barrier(&self, range: Self::RangeType, src_access_mask: VkAccessFlags, dst_access_mask: VkAccessFlags) -> Self::StructureType
-	{
-		ImageMemoryBarrierUnlayouted { obj: self.obj, range: range, src_am: src_access_mask, dst_am: dst_access_mask }
-	}
-}
-
-impl <'d> DescriptorPool<'d>
-{
-	pub fn allocate_sets(&self, layouts: &[VkDescriptorSetLayout]) -> Result<DescriptorSets<'d>, VkResult>
-	{
-		let mut objs: Vec<VkDescriptorSet> = vec![unsafe { std::mem::uninitialized() }; layouts.len()];
 		let info = VkDescriptorSetAllocateInfo
 		{
 			sType: VkStructureType::DescriptorSetAllocateInfo, pNext: std::ptr::null(),
 			descriptorPool: self.obj, descriptorSetCount: layouts.len() as u32, pSetLayouts: layouts.as_ptr()
 		};
-		unsafe { vkAllocateDescriptorSets(self.device_ref.obj, &info, objs.as_mut_ptr()) }.to_result().map(|()| DescriptorSets { device_ref: self.device_ref, objs: objs })
+		let mut objs: Vec<VkDescriptorSet> = vec![unsafe { std::mem::uninitialized() }; layouts.len()];
+		unsafe { vkAllocateDescriptorSets(device.obj, &info, objs.as_mut_ptr()) }.map(move || objs)
 	}
 }
 
-// Set of Command Buffers and Reference //
-pub struct CommandBuffers<'d>
+pub struct Sampler { parent: Rc<Device>, obj: VkSampler }
+impl std::ops::Drop for Sampler { fn drop(&mut self) { unsafe { vkDestroySampler(self.parent.obj, self.obj, std::ptr::null()) }; } }
+impl Sampler
 {
-	allocator_ref: &'d CommandPool<'d>, objects: Vec<VkCommandBuffer>
-}
-pub struct CommandBufferRef { obj: VkCommandBuffer }
-impl <'d> std::ops::Drop for CommandBuffers<'d>
-{
-	fn drop(&mut self) { unsafe { vkFreeCommandBuffers(self.allocator_ref.device_ref.obj, self.allocator_ref.obj, self.objects.len() as u32, self.objects.as_ptr()) }; }
-}
-impl <'d> CommandBuffers<'d>
-{
-	pub fn begin(&self, i: usize) -> Result<CommandBufferRef, VkResult>
+	pub fn new(device: &Rc<Device>, info: &VkSamplerCreateInfo) -> Result<Self, VkResult>
 	{
-		let begin_info = VkCommandBufferBeginInfo
+		let mut sampler: VkSampler = empty_handle();
+		unsafe { vkCreateSampler(device.obj, info, std::ptr::null(), &mut sampler) }.map(move || Sampler { obj: sampler, parent: device.clone() })
+	}
+}
+
+pub struct Surface { parent: Rc<Instance>, obj: VkSurfaceKHR }
+impl std::ops::Drop for Surface { fn drop(&mut self) { unsafe { vkDestroySurfaceKHR(self.parent.obj, self.obj, std::ptr::null()) }; } }
+impl Surface
+{
+	pub fn new_xcb(instance: &Rc<Instance>, info: &VkXcbSurfaceCreateInfoKHR) -> Result<Surface, VkResult>
+	{
+		let mut surf: VkSurfaceKHR = empty_handle();
+		unsafe { vkCreateXcbSurfaceKHR(instance.obj, info, std::ptr::null(), &mut surf) }.map(move || Surface { obj: surf, parent: instance.clone() })
+	}
+}
+pub struct Swapchain { parent: Rc<Device>, obj: VkSwapchainKHR }
+impl std::ops::Drop for Swapchain { fn drop(&mut self) { unsafe { vkDestroySwapchainKHR(self.parent.obj, self.obj, std::ptr::null()) }; } }
+impl Swapchain
+{
+	pub fn new(device: &Rc<Device>, info: &VkSwapchainCreateInfoKHR) -> Result<Self, VkResult>
+	{
+		let mut sc: VkSwapchainKHR = empty_handle();
+		unsafe { vkCreateSwapchainKHR(device.obj, info, std::ptr::null(), &mut sc) }.map(move || Swapchain { obj: sc, parent: device.clone() })
+	}
+	pub fn acquire_next_image(&self, parent: &Device, device_synchronizer: &Semaphore) -> Result<u32, VkResult>
+	{
+		let mut index: u32 = 0;
+		unsafe { vkAcquireNextImageKHR(parent.obj, self.obj, std::u64::MAX, device_synchronizer.obj, std::ptr::null_mut(), &mut index) }
+			.map(move || index)
+	}
+	pub fn present(&self, queue: &Queue, index: u32, device_synchronizer: &[VkSemaphore]) -> Result<(), VkResult>
+	{
+		let info = VkPresentInfoKHR
 		{
-			sType: VkStructureType::CommandBufferBeginInfo, pNext: std::ptr::null(),
-			flags: 0, pInheritanceInfo: std::ptr::null()
+			sType: VkStructureType::PresentInfoKHR, pNext: std::ptr::null(),
+			swapchainCount: 1, pSwapchains: &self.obj, pImageIndices: &index,
+			waitSemaphoreCount: device_synchronizer.len() as u32, pWaitSemaphores: device_synchronizer.as_ptr(), pResults: std::ptr::null_mut()
 		};
-		unsafe { vkBeginCommandBuffer(self.objects[i], &begin_info) }.to_result().map(|()| CommandBufferRef { obj: self.objects[i] })
+		unsafe { vkQueuePresentKHR(queue.obj, &info) }.to_result()
 	}
 }
-impl <'d> std::ops::Index<usize> for CommandBuffers<'d>
+/* Binary Loading
+	std::fs::File::open(path_to_spirv).and_then(|fp|
+	{
+		let mut bin: Vec<u8> = Vec::new();
+		fp.read_to_end(&mut bin).map(|_| bin).expect("Unable to read from binary_file")
+	}).expect("Shader binary not found");
+*/
+impl MemoryAllocationRequired for Buffer
 {
-	type Output = VkCommandBuffer;
-
-	fn index(&self, i: usize) -> &VkCommandBuffer { &self.objects[i] }
-}
-impl CommandBufferRef
-{
-	pub fn begin_render_pass(self, fb: &Framebuffer, rp: &RenderPass, area: VkRect2D, clear_values: &[VkClearValue], use_secondary_buffers: bool) -> Self
+	fn get_memory_requirements(&self, device: &Device) -> VkMemoryRequirements
 	{
-		let rp_begin_info = VkRenderPassBeginInfo
-		{
-			sType: VkStructureType::RenderPassBeginInfo, pNext: std::ptr::null(),
-			framebuffer: fb.get(), renderPass: rp.get(), renderArea: area,
-			clearValueCount: clear_values.len() as u32, pClearValues: clear_values.as_ptr()
-		};
-		let content_flag = if use_secondary_buffers { VkSubpassContents::SecondaryCommandBuffers } else { VkSubpassContents::Inline };
-		unsafe { vkCmdBeginRenderPass(self.obj, &rp_begin_info, content_flag) };
-		self
-	}
-	pub fn end_render_pass(self) -> Self
-	{
-		unsafe { vkCmdEndRenderPass(self.obj) };
-		self
-	}
-	pub fn resource_barrier(self, src_stage: VkPipelineStageFlags, dst_stage: VkPipelineStageFlags,
-		memory_barriers: &[VkMemoryBarrier], buffer_barriers: &[VkBufferMemoryBarrier], image_barriers: &[VkImageMemoryBarrier]) -> Self
-	{
-		unsafe
-		{
-			vkCmdPipelineBarrier(self.obj, src_stage, dst_stage, 0,
-				memory_barriers.len() as u32, memory_barriers.as_ptr(), buffer_barriers.len() as u32, buffer_barriers.as_ptr(),
-				image_barriers.len() as u32, image_barriers.as_ptr())
-		};
-		self
-	}
-	pub fn bind_pipeline(self, pipeline: &Pipeline) -> Self
-	{
-		unsafe { vkCmdBindPipeline(self.obj, VkPipelineBindPoint::Graphics, pipeline.get()) };
-		self
-	}
-	pub fn bind_descriptor_sets(self, layout: &PipelineLayout, sets: &[VkDescriptorSet], dynamic_offsets: &[u32]) -> Self
-	{
-		unsafe { vkCmdBindDescriptorSets(self.obj, VkPipelineBindPoint::Graphics, layout.get(), 0, sets.len() as u32, sets.as_ptr(),
-			dynamic_offsets.len() as u32, dynamic_offsets.as_ptr()) };
-		self
-	}
-	pub fn bind_vertex_buffers(self, buffers: &[VkBuffer], offsets: &[VkDeviceSize]) -> Self
-	{
-		unsafe { vkCmdBindVertexBuffers(self.obj, 0, buffers.len() as u32, buffers.as_ptr(), offsets.as_ptr()) };
-		self
-	}
-	pub fn bind_vertex_buffers_partial(self, first_binding: u32, buffers: &[VkBuffer], offsets: &[VkDeviceSize]) -> Self
-	{
-		unsafe { vkCmdBindVertexBuffers(self.obj, first_binding, buffers.len() as u32, buffers.as_ptr(), offsets.as_ptr()) };
-		self
-	}
-	pub fn bind_index_buffer(self, buffer: &Buffer, offset: VkDeviceSize) -> Self
-	{
-		unsafe { vkCmdBindIndexBuffer(self.obj, buffer.get(), offset, VkIndexType::U16) };
-		self
-	}
-	pub fn draw(self, vertex_count: u32, instance_count: u32, vertex_offset: u32) -> Self
-	{
-		unsafe { vkCmdDraw(self.obj, vertex_count, instance_count, vertex_offset, 0) };
-		self
-	}
-	pub fn draw_indexed(self, vertex_count: u32, instance_count: u32, instance_start_index: u32) -> Self
-	{
-		unsafe { vkCmdDrawIndexed(self.obj, vertex_count, instance_count, 0, 0, instance_start_index) };
-		self
-	}
-	pub fn draw_indexed_indirect(self, buffer: &VkBuffer, offset: VkDeviceSize) -> Self
-	{
-		unsafe { vkCmdDrawIndexedIndirect(self.obj, *buffer, offset, 1, std::mem::size_of::<VkDrawIndexedIndirectCommand>() as u32) };
-		self
-	}
-	pub fn push_constants<T: std::marker::Sized>(self, layout: &PipelineLayout, stage: VkShaderStageFlags, offset: u32, values: &[T]) -> Self
-	{
-		unsafe { vkCmdPushConstants(self.obj, layout.get(), stage, offset, (std::mem::size_of::<T>() * values.len()) as u32, std::mem::transmute(values.as_ptr())) };
-		self
-	}
-
-	// Copy Commands //
-	pub fn copy_buffer(self, src: &Buffer, dst: &Buffer, regions: &[VkBufferCopy]) -> Self
-	{
-		unsafe { vkCmdCopyBuffer(self.obj, src.get(), dst.get(), regions.len() as u32, regions.as_ptr()) };
-		self
-	}
-	pub fn copy_image(self, src: &Image, src_layout: VkImageLayout, dst: &Image, dst_layout: VkImageLayout, regions: &[VkImageCopy]) -> Self
-	{
-		unsafe { vkCmdCopyImage(self.obj, src.get(), src_layout, dst.get(), dst_layout, regions.len() as u32, regions.as_ptr()) };
-		self
+		let mut memreq: VkMemoryRequirements = unsafe { std::mem::uninitialized() };
+		unsafe { vkGetBufferMemoryRequirements(device.obj, self.obj, &mut memreq) };
+		memreq
 	}
 }
-impl std::ops::Drop for CommandBufferRef
+impl MemoryAllocationRequired for Image
 {
-	fn drop(&mut self) { unsafe { vkEndCommandBuffer(self.obj) }.to_result().unwrap() }
-}
-
-pub struct DescriptorSets<'d>
-{
-	#[allow(dead_code)] device_ref: &'d Device<'d>, objs: Vec<VkDescriptorSet>
-}
-impl <'d> std::ops::Index<usize> for DescriptorSets<'d>
-{
-	type Output = VkDescriptorSet;
-	fn index<'a>(&'a self, index: usize) -> &'a VkDescriptorSet { &self.objs[index] }
+	fn get_memory_requirements(&self, device: &Device) -> VkMemoryRequirements
+	{
+		let mut memreq: VkMemoryRequirements = unsafe { std::mem::uninitialized() };
+		unsafe { vkGetImageMemoryRequirements(device.obj, self.obj, &mut memreq) };
+		memreq
+	}
 }
 
 pub enum ImageSubresourceRange {}

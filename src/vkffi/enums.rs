@@ -640,12 +640,8 @@ pub const VK_COMPOSSITE_ALPHA_INHERIT: VkFlags              = 0x08;
 {
 	_None = 0, CallbackRef = 1
 }
-#[derive(Debug)]
-#[repr(C)] pub enum VkDebugReportFlagBitsEXT
-{
-	Information = 0x00000001,
-	Warning = 0x00000002,
-	PerformanceWarning = 0x00000004,
-	Error = 0x00000008,
-	Debug = 0x00000010
-}
+pub const VK_DEBUG_REPORT_INFORMATION_BIT_EXT: VkFlags			= 0x01;
+pub const VK_DEBUG_REPORT_WARNING_BIT_EXT: VkFlags				= 0x02;
+pub const VK_DEBUG_REPORT_PERFORMANCE_WARNING_BIT_EXT: VkFlags	= 0x04;
+pub const VK_DEBUG_REPORT_ERROR_BIT_EXT: VkFlags				= 0x08;
+pub const VK_DEBUG_REPORT_DEBUG_BIT_EXT: VkFlags				= 0x10;

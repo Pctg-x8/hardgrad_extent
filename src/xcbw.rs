@@ -91,7 +91,7 @@ impl XServerConnection
 	}
 	pub fn is_vk_presentation_support(&self, adapter: &vk::PhysicalDevice, queue_index: u32) -> bool
 	{
-		unsafe { vkGetPhysicalDeviceXcbPresentationSupportKHR(adapter.get(), queue_index, self.con.get_raw_conn(), self.root_visual) == 1 }
+		adapter.is_xcb_presentation_support(queue_index, self.con.get_raw_conn(), self.root_visual)
 	}
 	pub fn flush(&self) { self.con.flush(); }
 	pub fn poll_event(&self) -> Option<xcb::GenericEvent> { self.con.poll_for_event() }
@@ -101,9 +101,9 @@ impl XServerConnection
 		unsafe { std::mem::transmute::<_, [u32; 5]>((*event_ptr).data)[0] == self.delete_window_atom }
 	}
 }
-impl <'s> WindowProvider<'s, XWindow<'s>> for XServerConnection
+impl <'s> WindowProvider<XWindowHandle> for XServerConnection
 {
-	fn create_unresizable_window(&'s self, size: VkExtent2D, title: &str) -> XWindow<'s>
+	fn create_unresizable_window(&self, size: VkExtent2D, title: &str) -> XWindowHandle
 	{
 		let window_id = self.con.generate_id();
 		let VkExtent2D(width, height) = size;
@@ -125,7 +125,11 @@ impl <'s> WindowProvider<'s, XWindow<'s>> for XServerConnection
 		unsafe { xcb::ffi::xproto::xcb_change_property(self.con.get_raw_conn(), xcb::ffi::xproto::XCB_PROP_MODE_REPLACE as u8, window_id,
 			xcb::xproto::ATOM_WM_NORMAL_HINTS, xcb::xproto::ATOM_WM_SIZE_HINTS, 32, 1, std::mem::transmute(&size_hints)) };
 
-		XWindow { con_ref: self, internal: window_id }
+		window_id
+	}
+	fn show_window(&self, handle: XWindowHandle)
+	{
+		unsafe { xcb::ffi::xproto::xcb_map_window(self.con.get_raw_conn(), handle) };
 	}
 }
 impl MessageHandler for XServerConnection
@@ -159,24 +163,5 @@ impl MessageHandler for XServerConnection
 		recursive_process(self)
 	}
 }
-pub struct XWindow<'c>
-{
-	con_ref: &'c XServerConnection, internal: xcb::ffi::xcb_window_t
-}
-impl <'p> XWindow<'p>
-{
-	pub fn map(&self)
-	{
-		unsafe { xcb::ffi::xproto::xcb_map_window(self.con_ref.con.get_raw_conn(), self.internal) };
-	}
-}
-impl <'p> NativeOwner<xcb::ffi::xcb_window_t> for XWindow<'p>
-{
-	fn get(&self) -> xcb::ffi::xcb_window_t { self.internal }
-	fn release(mut self) -> xcb::ffi::xcb_window_t { panic!("Releasing ownership of XWindow is not allowed"); }
-}
-impl <'p> HasParent for XWindow<'p>
-{
-	type ParentRefType = &'p XServerConnection;
-	fn parent(&self) -> &'p XServerConnection { self.con_ref }
-}
+
+pub type XWindowHandle = xcb::ffi::xcb_window_t;

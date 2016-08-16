@@ -1,15 +1,17 @@
 use std;
 use vkffi::*;
+use render_vk::wrap as vk;
 
-pub trait ResultValueToObject where Self: std::marker::Sized { fn to_result(self) -> Result<(), Self>; }
-
-pub trait CreationObject<StructureT> where Self: std::marker::Sized
+pub trait ResultValueToObject where Self: std::marker::Sized
 {
-	fn create(info: &StructureT) -> Result<Self, VkResult>;
+	fn to_result(self) -> Result<(), Self>;
+	fn and_then<F, T>(self, f: F) -> Result<T, Self> where F: FnOnce() -> Result<T, Self>;
+	fn map<F, T>(self, f: F) -> Result<T, Self> where F: FnOnce() -> T;
 }
+
 pub trait MemoryAllocationRequired
 {
-	fn get_memory_requirements(&self) -> VkMemoryRequirements;
+	fn get_memory_requirements(&self, device: &vk::Device) -> VkMemoryRequirements;
 }
 pub trait OnDeviceMemory
 {
