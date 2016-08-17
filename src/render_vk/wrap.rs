@@ -199,10 +199,27 @@ pub struct Device { obj: VkDevice, #[allow(dead_code)] parent: Rc<PhysicalDevice
 impl std::ops::Drop for Device { fn drop(&mut self) { unsafe { vkDestroyDevice(self.obj, std::ptr::null()) }; } }
 impl Device
 {
-	pub fn new(adapter: &Rc<PhysicalDevice>, info: &VkDeviceCreateInfo) -> Result<Self, VkResult>
+	pub fn new(adapter: &Rc<PhysicalDevice>, queue: &[VkDeviceQueueCreateInfo],
+		layers: &[&str], extensions: &[&str], enabled_features: &VkPhysicalDeviceFeatures) -> Result<Self, VkResult>
 	{
+		let (layers_c, extensions_c): (Vec<CString>, Vec<CString>) = (
+			layers.into_iter().map(|&x| CString::new(x).unwrap()).collect(),
+			extensions.into_iter().map(|&x| CString::new(x).unwrap()).collect()
+		);
+		let (layers_ptr_c, extensions_ptr_c) = (
+			layers_c.iter().map(|x| x.as_ptr()).collect::<Vec<_>>(),
+			extensions_c.iter().map(|x| x.as_ptr()).collect::<Vec<_>>()
+		);
+		let info = VkDeviceCreateInfo
+		{
+			sType: VkStructureType::DeviceCreateInfo, pNext: std::ptr::null(), flags: 0,
+			queueCreateInfoCount: queue.len() as u32, pQueueCreateInfos: queue.as_ptr(),
+			enabledLayerCount: layers_ptr_c.len() as u32, ppEnabledLayerNames: layers_ptr_c.as_ptr(),
+			enabledExtensionCount: extensions_ptr_c.len() as u32, ppEnabledExtensionNames: extensions_ptr_c.as_ptr(),
+			pEnabledFeatures: enabled_features
+		};
 		let mut dev: VkDevice = empty_handle();
-		unsafe { vkCreateDevice(adapter.obj, info, std::ptr::null(), &mut dev) }.map(move || Device { obj: dev, parent: adapter.clone() })
+		unsafe { vkCreateDevice(adapter.obj, &info, std::ptr::null(), &mut dev) }.map(move || Device { obj: dev, parent: adapter.clone() })
 	}
 	pub fn get_queue(&self, family_index: u32, index: u32) -> Queue
 	{
@@ -288,6 +305,7 @@ impl Image
 }
 pub struct ImageView { #[allow(dead_code)] parent: Rc<Device>, obj: VkImageView }
 impl std::ops::Drop for ImageView { fn drop(&mut self) { unsafe { vkDestroyImageView(self.parent.obj, self.obj, std::ptr::null()) }; } }
+impl NativeOwner<VkImageView> for ImageView { fn get(&self) -> VkImageView { self.obj } }
 impl ImageView
 {
 	pub fn new(device: &Rc<Device>, info: &VkImageViewCreateInfo) -> Result<Self, VkResult>
@@ -298,6 +316,7 @@ impl ImageView
 }
 pub struct RenderPass { #[allow(dead_code)] parent: Rc<Device>, obj: VkRenderPass }
 impl std::ops::Drop for RenderPass { fn drop(&mut self) { unsafe { vkDestroyRenderPass(self.parent.obj, self.obj, std::ptr::null()) }; } }
+impl NativeOwner<VkRenderPass> for RenderPass { fn get(&self) -> VkRenderPass { self.obj } }
 impl RenderPass
 {
 	pub fn new(device: &Rc<Device>, info: &VkRenderPassCreateInfo) -> Result<Self, VkResult>

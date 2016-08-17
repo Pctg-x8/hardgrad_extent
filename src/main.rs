@@ -202,6 +202,23 @@ fn app_main() -> Result<(), prelude::EngineError>
 
 	let prelude = try!(prelude::Engine::new("HardGrad->Extent", VK_MAKE_VERSION!(0, 0, 1)));
 	let main_frame = try!(prelude.create_render_window(VkExtent2D(640, 480), "HardGrad -> Extent"));
+	let VkExtent2D(frame_width, frame_height) = main_frame.get_extent();
+	let execution_coordinator = try!(prelude.create_queue_fence());
+
+	let rp_attachment_descs =
+	[
+		prelude::AttachmentDesc
+		{
+			format: main_frame.get_format(),
+			initial_layout: VkImageLayout::ColorAttachmentOptimal, final_layout: VkImageLayout::PresentSrcKHR,
+			.. Default::default()
+		}
+	];
+	let render_passes = [prelude::PassDesc::single_fragment_output(0)];
+	let rp_framebuffer_form = try!(prelude.create_render_pass(&rp_attachment_descs, &render_passes, &[]));
+	let framebuffers = try!(main_frame.get_back_images().iter()
+		.map(|ref x| prelude.create_framebuffer(&rp_framebuffer_form, &[&x.view], VkExtent3D(frame_width, frame_height, 1)))
+		.collect::<Result<Vec<_>, _>>());
 
 	while prelude.process_messages()
 	{
@@ -211,88 +228,6 @@ fn app_main() -> Result<(), prelude::EngineError>
 	Ok(())
 
 	/*
-	// init vulkan
-	let instance = create_instance();
-	let adapter = vk::PhysicalDevice::wrap(instance.enumerate_adapters().unwrap()[0]);
-
-	// Create Device and Queues //
-	let queue_indices = adapter.get_queue_family_indices();
-	let mut queue_indices_iter = queue_indices.into_iter().enumerate();
-	let gqf_index = queue_indices_iter.by_ref().filter(|&(_, ref x)| (x.queueFlags & VK_QUEUE_GRAPHICS_BIT) != 0)
-		.map(|(i, _)| i as u32).next().expect("unable to find queue for graphics on device");
-	let tqf_index = queue_indices_iter.by_ref().filter(|&(_, ref x)| (x.queueFlags & VK_QUEUE_TRANSFER_BIT) != 0)
-		.map(|(i, _)| i as u32).next().unwrap_or(gqf_index);
-	diagnose_adapter(&xcon, &adapter, gqf_index);
-	let queue_properties = adapter.enumerate_queue_family_properties();
-	println!("=== Device Queue Family Properties ===");
-	for (i, qp) in queue_properties.iter().enumerate()
-	{
-		println!("-- Queue #{}", i);
-		println!("---- QueueCount: {}", qp.queueCount);
-	}
-
-	let dev_layers = [DEBUG_LAYER_NAME.as_ptr()];
-	let dev_extensions = [SWAPCHAIN_EXTENSION_NAME.as_ptr()];
-	let features = VkPhysicalDeviceFeatures
-	{
-		geometryShader: 1,
-		.. Default::default()
-	};
-	let (device, transfer_queue_index) = if gqf_index == tqf_index
-	{
-		// Use same queue
-		println!("-- Using same queue family: {}", gqf_index);
-		let q_priorities = [0.0f32, 0.0f32];
-		let queue_count = std::cmp::min(2, queue_properties[gqf_index as usize].queueCount);
-		let queue_infos = [VkDeviceQueueCreateInfo
-		{
-			sType: VkStructureType::DeviceQueueCreateInfo, pNext: std::ptr::null(), flags: 0,
-			queueCount: queue_count, queueFamilyIndex: gqf_index, pQueuePriorities: q_priorities.as_ptr()
-		}];
-		let device_info = VkDeviceCreateInfo
-		{
-			sType: VkStructureType::DeviceCreateInfo, pNext: std::ptr::null(), flags: 0,
-			queueCreateInfoCount: queue_infos.len() as u32, pQueueCreateInfos: queue_infos.as_ptr(),
-			enabledLayerCount: dev_layers.len() as u32, ppEnabledLayerNames: dev_layers.as_ptr() as *const *const i8,
-			enabledExtensionCount: dev_extensions.len() as u32, ppEnabledExtensionNames: dev_extensions.as_ptr() as *const *const i8,
-			pEnabledFeatures: &features
-		};
-		(adapter.create_device(&device_info).unwrap(), queue_count - 1)
-	}
-	else
-	{
-		// Use different queue
-		println!("-- Using difference queue family: graphics = {} / transfer = {}", gqf_index, tqf_index);
-		let q_priorities = [0.0f32];
-		let queue_infos = [
-			VkDeviceQueueCreateInfo
-			{
-				sType: VkStructureType::DeviceQueueCreateInfo, pNext: std::ptr::null(), flags: 0,
-				queueCount: 1, queueFamilyIndex: gqf_index, pQueuePriorities: q_priorities.as_ptr()
-			},
-			VkDeviceQueueCreateInfo
-			{
-				sType: VkStructureType::DeviceQueueCreateInfo, pNext: std::ptr::null(), flags: 0,
-				queueCount: 1, queueFamilyIndex: tqf_index, pQueuePriorities: q_priorities.as_ptr()
-			}
-		];
-		let device_info = VkDeviceCreateInfo
-		{
-			sType: VkStructureType::DeviceCreateInfo, pNext: std::ptr::null(), flags: 0,
-			queueCreateInfoCount: queue_infos.len() as u32, pQueueCreateInfos: queue_infos.as_ptr(),
-			enabledLayerCount: dev_layers.len() as u32, ppEnabledLayerNames: dev_layers.as_ptr() as *const *const i8,
-			enabledExtensionCount: dev_extensions.len() as u32, ppEnabledExtensionNames: dev_extensions.as_ptr() as *const *const i8,
-			pEnabledFeatures: &features
-		};
-		(adapter.create_device(&device_info).unwrap(), 0)
-	};
-	let graphics_queue = device.get_queue(gqf_index, 0);
-	let transfer_queue = device.get_queue(tqf_index, transfer_queue_index);
-
-	// init display
-	let window = xcon.new_unresizable_window(VkExtent2D(640, 480), APP_NAME);
-	window.map();
-	xcon.flush();
 
 	// Device to Device and Resource to Resource Synchronization //
 	let render_target_sem = device.create_semaphore().unwrap();
@@ -516,14 +451,15 @@ mod prelude
 	}
 	pub trait RenderWindow : Window
 	{
-		fn get_back_images(&self) -> Vec<&VkImage>;
-		fn get_back_image_views(&self) -> Vec<&vk::ImageView>;
+		fn get_back_images(&self) -> Vec<&EntireImage>;
+		fn get_format(&self) -> VkFormat;
+		fn get_extent(&self) -> VkExtent2D;
 	}
-	pub struct EntireImage(VkImage, vk::ImageView);
+	pub struct EntireImage { pub resource: VkImage, pub view: vk::ImageView }
 	pub struct XcbWindow
 	{
 		server: Rc<XServerConnection>, native: XWindowHandle,
-		device_obj: Rc<vk::Surface>, swapchain: Rc<vk::Swapchain>, rt: Vec<EntireImage>,
+		#[allow(dead_code)] device_obj: Rc<vk::Surface>, swapchain: Rc<vk::Swapchain>, rt: Vec<EntireImage>,
 		format: VkFormat, extent: VkExtent2D, has_vsync: bool
 	}
 	impl InternalWindow for XcbWindow
@@ -556,59 +492,48 @@ mod prelude
 				// Making desired parameters //
 				let formats = engine.device.adapter.enumerate_surface_formats(&surface);
 				let present_modes = engine.device.adapter.enumerate_present_modes(&surface);
-				let format = formats.iter().find(|&x| x.format == VkFormat::R8G8B8A8_SRGB || x.format == VkFormat::B8G8R8A8_SRGB);
-				let present_mode = present_modes.iter().find(|&&x| x == VkPresentModeKHR::FIFO)
-					.or_else(|| present_modes.iter().find(|&&x| x == VkPresentModeKHR::Mailbox));
+				let format = try!(formats.iter().find(|&x| x.format == VkFormat::R8G8B8A8_SRGB || x.format == VkFormat::B8G8R8A8_SRGB)
+					.ok_or(EngineError::GenericError("Desired Format(32bpp SRGB) is not supported")));
+				let present_mode = try!(present_modes.iter().find(|&&x| x == VkPresentModeKHR::FIFO)
+					.or_else(|| present_modes.iter().find(|&&x| x == VkPresentModeKHR::Mailbox))
+					.ok_or(EngineError::GenericError("Desired Present Mode is not found")));
 				let extent = match surface_caps.currentExtent
 				{
 					VkExtent2D(std::u32::MAX, _) | VkExtent2D(_, std::u32::MAX) => VkExtent2D(640, 480),
 					ce => ce
 				};
 
-				match (format, present_mode)
+				// set information and create //
+				let queue_family_indices = [engine.device.graphics_queue.family_index];
+				let scinfo = VkSwapchainCreateInfoKHR
 				{
-					(None, _) => Err(EngineError::GenericError("Desired Format(32bpp SRGB) is not supported")),
-					(_, None) => Err(EngineError::GenericError("Desired Present Mode is not found")),
-					(Some(f), Some(&p)) =>
+					sType: VkStructureType::SwapchainCreateInfoKHR, pNext: std::ptr::null(),
+					minImageCount: std::cmp::max(surface_caps.minImageCount, 2), imageFormat: format.format, imageColorSpace: format.colorSpace,
+					imageExtent: extent, imageArrayLayers: 1, imageUsage: VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
+					imageSharingMode: VkSharingMode::Exclusive, compositeAlpha: VK_COMPOSITE_ALPHA_OPAQUE_BIT,
+					preTransform: VK_SURFACE_TRANSFORM_IDENTITY_BIT, presentMode: *present_mode, clipped: true as VkBool32,
+					pQueueFamilyIndices: queue_family_indices.as_ptr(), queueFamilyIndexCount: queue_family_indices.len() as u32,
+					oldSwapchain: std::ptr::null_mut(), flags: 0, surface: surface.get()
+				};
+				let sc = try!(vk::Swapchain::new(&engine.device, &surface, &scinfo).map(|x| Rc::new(x)));
+				let rt_images = try!(sc.get_images());
+				let rt = try!(rt_images.iter().map(|&res|
+				{
+					vk::ImageView::new(&engine.device, &VkImageViewCreateInfo
 					{
-						// set information and create //
-						let queue_family_indices = [engine.device.graphics_queue.family_index];
-						let scinfo = VkSwapchainCreateInfoKHR
-						{
-							sType: VkStructureType::SwapchainCreateInfoKHR, pNext: std::ptr::null(),
-							minImageCount: std::cmp::max(surface_caps.minImageCount, 2), imageFormat: f.format, imageColorSpace: f.colorSpace,
-							imageExtent: extent, imageArrayLayers: 1, imageUsage: VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
-							imageSharingMode: VkSharingMode::Exclusive, compositeAlpha: VK_COMPOSITE_ALPHA_OPAQUE_BIT,
-							preTransform: VK_SURFACE_TRANSFORM_IDENTITY_BIT, presentMode: p, clipped: true as VkBool32,
-							pQueueFamilyIndices: queue_family_indices.as_ptr(), queueFamilyIndexCount: queue_family_indices.len() as u32,
-							oldSwapchain: std::ptr::null_mut(), flags: 0, surface: surface.get()
-						};
-						let sc = Rc::new(try!(vk::Swapchain::new(&engine.device, &surface, &scinfo)));
-						let rt_images = try!(sc.get_images());
-						let rt =
-						{
-							let mut temp: Vec<EntireImage> = Vec::new();
-							for img in rt_images
-							{
-								let info = VkImageViewCreateInfo
-								{
-									sType: VkStructureType::ImageViewCreateInfo, pNext: std::ptr::null(), flags: 0,
-									image: img, subresourceRange: vk::ImageSubresourceRange::default_color(),
-									format: f.format, viewType: VkImageViewType::Dim2,
-									components: VkComponentMapping::default()
-								};
-								temp.push(EntireImage(img, try!(vk::ImageView::new(&engine.device, &info))));
-							}
-							temp
-						};
-						Ok(Box::new(XcbWindow
-						{
-							server: engine.window_system.clone(),
-							native: native, device_obj: surface, swapchain: sc, rt: rt,
-							format: f.format, extent: extent, has_vsync: p == VkPresentModeKHR::FIFO
-						}))
-					}
-				}
+						sType: VkStructureType::ImageViewCreateInfo, pNext: std::ptr::null(), flags: 0,
+						image: res, subresourceRange: vk::ImageSubresourceRange::default_color(),
+						format: format.format, viewType: VkImageViewType::Dim2,
+						components: VkComponentMapping::default()
+					}).map(|v| EntireImage { resource: res, view: v })
+				}).collect::<Result<Vec<_>, _>>());
+				info!(target: "Prelude", "Swapchain Backbuffer Count: {}", rt.len());
+				Ok(Box::new(XcbWindow
+				{
+					server: engine.window_system.clone(),
+					native: native, device_obj: surface, swapchain: sc, rt: rt,
+					format: format.format, extent: extent, has_vsync: *present_mode == VkPresentModeKHR::FIFO
+				}))
 			}
 		}
 	}
@@ -622,9 +547,139 @@ mod prelude
 	}
 	impl RenderWindow for XcbWindow
 	{
-		fn get_back_images(&self) -> Vec<&VkImage> { self.rt.iter().map(|&EntireImage(ref i, _)| i).collect() }
-		fn get_back_image_views(&self) -> Vec<&vk::ImageView> { self.rt.iter().map(|&EntireImage(_, ref v)| v).collect() }
+		fn get_back_images(&self) -> Vec<&EntireImage> { self.rt.iter().collect() }
+		fn get_format(&self) -> VkFormat { self.format }
+		fn get_extent(&self) -> VkExtent2D { self.extent }
 	}
+	pub struct QueueFence { internal: vk::Semaphore }
+	pub struct Fence { internal: vk::Fence }
+
+	pub struct AttachmentDesc
+	{
+		pub format: VkFormat, pub samples: VkSampleCountFlagBits,
+		pub clear_on_load: Option<bool>, pub preserve_stored_value: bool,
+		pub stencil_clear_on_load: Option<bool>, pub preserve_stored_stencil_value: bool,
+		pub initial_layout: VkImageLayout, pub final_layout: VkImageLayout
+	}
+	impl std::default::Default for AttachmentDesc
+	{
+		fn default() -> Self
+		{
+			AttachmentDesc
+			{
+				format: VkFormat::UNDEFINED, samples: VK_SAMPLE_COUNT_1_BIT,
+				clear_on_load: None, preserve_stored_value: false,
+				stencil_clear_on_load: None, preserve_stored_stencil_value: false,
+				initial_layout: VkImageLayout::Undefined, final_layout: VkImageLayout::Undefined
+			}
+		}
+	}
+	impl <'a> std::convert::Into<VkAttachmentDescription> for &'a AttachmentDesc
+	{
+		fn into(self) -> VkAttachmentDescription
+		{
+			VkAttachmentDescription
+			{
+				flags: 0, format: self.format, samples: self.samples,
+				loadOp: self.clear_on_load.map(|b| if b { VkAttachmentLoadOp::Clear } else { VkAttachmentLoadOp::Load })
+					.unwrap_or(VkAttachmentLoadOp::DontCare),
+				stencilLoadOp: self.stencil_clear_on_load.map(|b| if b { VkAttachmentLoadOp::Clear } else { VkAttachmentLoadOp::Load })
+					.unwrap_or(VkAttachmentLoadOp::DontCare),
+				storeOp: if self.preserve_stored_value { VkAttachmentStoreOp::Store } else { VkAttachmentStoreOp::DontCare },
+				stencilStoreOp: if self.preserve_stored_stencil_value { VkAttachmentStoreOp::Store } else { VkAttachmentStoreOp::DontCare },
+				initialLayout: self.initial_layout, finalLayout: self.final_layout
+			}
+		}
+	}
+	pub type AttachmentRef = VkAttachmentReference;
+	impl AttachmentRef
+	{
+		pub fn color(index: u32) -> Self { VkAttachmentReference(index, VkImageLayout::ColorAttachmentOptimal) }
+	}
+	pub struct PassDesc
+	{
+		pub input_attachment_indices: Vec<AttachmentRef>,
+		pub color_attachment_indices: Vec<AttachmentRef>,
+		pub resolved_attachment_indices: Option<Vec<AttachmentRef>>,
+		pub depth_stencil_attachment_index: Option<AttachmentRef>,
+		pub preserved_attachment_indices: Vec<u32>
+	}
+	impl std::default::Default for PassDesc
+	{
+		fn default() -> Self
+		{
+			PassDesc
+			{
+				input_attachment_indices: Vec::new(),
+				color_attachment_indices: Vec::new(),
+				resolved_attachment_indices: None,
+				depth_stencil_attachment_index: None,
+				preserved_attachment_indices: Vec::new()
+			}
+		}
+	}
+	impl PassDesc
+	{
+		pub fn single_fragment_output(index: u32) -> PassDesc
+		{
+			PassDesc { color_attachment_indices: vec![AttachmentRef::color(index)], .. Default::default() }
+		}
+	}
+	impl <'a> std::convert::Into<VkSubpassDescription> for &'a PassDesc
+	{
+		fn into(self) -> VkSubpassDescription
+		{
+			VkSubpassDescription
+			{
+				flags: 0, pipelineBindPoint: VkPipelineBindPoint::Graphics,
+				inputAttachmentCount: self.input_attachment_indices.len() as u32,
+				pInputAttachments: self.input_attachment_indices.as_ptr(),
+				colorAttachmentCount: self.color_attachment_indices.len() as u32,
+				pColorAttachments: self.color_attachment_indices.as_ptr(),
+				pResolveAttachments: self.resolved_attachment_indices.as_ref().map(|x| x.as_ptr()).unwrap_or(std::ptr::null()),
+				pDepthStencilAttachment: self.depth_stencil_attachment_index.as_ref().map(|x| x as *const AttachmentRef).unwrap_or(std::ptr::null_mut()),
+				preserveAttachmentCount: self.preserved_attachment_indices.len() as u32,
+				pPreserveAttachments: self.preserved_attachment_indices.as_ptr()
+			}
+		}
+	}
+	pub struct PassDependency
+	{
+		pub src: u32, pub dst: u32,
+		pub src_stage_mask: VkPipelineStageFlags, pub dst_stage_mask: VkPipelineStageFlags,
+		pub src_access_mask: VkAccessFlags, pub dst_access_mask: VkAccessFlags,
+		pub depend_by_region: bool
+	}
+	impl std::default::Default for PassDependency
+	{
+		fn default() -> Self
+		{
+			PassDependency
+			{
+				src: 0, dst: 0,
+				src_stage_mask: VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
+				dst_stage_mask: VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+				src_access_mask: VK_ACCESS_MEMORY_READ_BIT,
+				dst_access_mask: VK_ACCESS_MEMORY_READ_BIT,
+				depend_by_region: false
+			}
+		}
+	}
+	impl <'a> std::convert::Into<VkSubpassDependency> for &'a PassDependency
+	{
+		fn into(self) -> VkSubpassDependency
+		{
+			VkSubpassDependency
+			{
+				srcSubpass: self.src, dstSubpass: self.dst,
+				srcStageMask: self.src_stage_mask, dstStageMask: self.dst_stage_mask,
+				srcAccessMask: self.src_access_mask, dstAccessMask: self.dst_access_mask,
+				dependencyFlags: if self.depend_by_region { VK_DEPENDENCY_BY_REGION_BIT } else { 0 }
+			}
+		}
+	}
+	pub struct RenderPass { internal: Rc<vk::RenderPass> }
+	pub struct Framebuffer { mold: Rc<vk::RenderPass>, internal: vk::Framebuffer }
 
 	pub struct Device
 	{
@@ -633,63 +688,38 @@ mod prelude
 	impl std::ops::Deref for Device { type Target = Rc<vk::Device>; fn deref(&self) -> &Self::Target { &self.internal } }
 	impl Device
 	{
-		fn create_with_shared_queue(adapter_ref: &Rc<vk::PhysicalDevice>, features: VkPhysicalDeviceFeatures,
-			queue_family: (u32, &VkQueueFamilyProperties)) -> Result<Self, VkResult>
+		fn new(adapter: &Rc<vk::PhysicalDevice>, features: &VkPhysicalDeviceFeatures,
+			graphics_qf: u32, transfer_qf: Option<u32>, qf_props: &VkQueueFamilyProperties) -> Result<Self, EngineError>
 		{
-			let (qf_index, family_properties) = queue_family;
-			info!(target: "Prelude", "Sharing queue family: {}", qf_index);
-
-			let qp = [0.0f32; 2];
-			let queue_count = std::cmp::min(2, family_properties.queueCount);
-			let queue_info = VkDeviceQueueCreateInfo
+			fn device_queue_create_info(family_index: u32, count: u32, priorities: &[f32]) -> VkDeviceQueueCreateInfo
 			{
-				sType: VkStructureType::DeviceQueueCreateInfo, pNext: std::ptr::null(), flags: 0,
-				queueCount: queue_count, queueFamilyIndex: qf_index, pQueuePriorities: qp.as_ptr()
+				VkDeviceQueueCreateInfo
+				{
+					sType: VkStructureType::DeviceQueueCreateInfo, pNext: std::ptr::null(), flags: 0,
+					queueFamilyIndex: family_index, queueCount: count, pQueuePriorities: priorities.as_ptr()
+				}
+			}
+			// Ready Parameters //
+			static QUEUE_PRIORITIES: [f32; 2] = [0.0f32; 2];
+			match transfer_qf
+			{
+				Some(t) => info!(target: "Prelude", "Not sharing queue family: g={}, t={}", graphics_qf, t),
+				None => info!(target: "Prelude", "Sharing queue family: {}", graphics_qf)
 			};
-			let device = try!(Self::create_internal(adapter_ref, &[queue_info], &["VK_LAYER_LUNARG_standard_validation"], &["VK_KHR_swapchain"], features));
-			Ok(Device
+			let queue_info = match transfer_qf
 			{
-				graphics_queue: device.get_queue(qf_index, 0),
-				transfer_queue: device.get_queue(qf_index, queue_count - 1),
-				internal: device, adapter: adapter_ref.clone()
-			})
-		}
-		fn create_with_exclusive_queue(adapter_ref: &Rc<vk::PhysicalDevice>, features: VkPhysicalDeviceFeatures,
-			qf_indices: [u32; 2]) -> Result<Self, VkResult>
-		{
-			info!(target: "Prelude", "-- Not sharing queue family: g={}, t={}", qf_indices[0], qf_indices[1]);
-
-			let qp = [0.0f32; 1];
-			let qinfos = qf_indices.into_iter().map(|&x| VkDeviceQueueCreateInfo
+				Some(transfer_qf) => vec![
+					device_queue_create_info(graphics_qf, 1, &QUEUE_PRIORITIES[0..1]),
+					device_queue_create_info(transfer_qf, 1, &QUEUE_PRIORITIES[1..2])
+				],
+				None => vec![device_queue_create_info(graphics_qf, std::cmp::min(qf_props.queueCount, 2), &QUEUE_PRIORITIES)]
+			};
+			vk::Device::new(adapter, &queue_info, &["VK_LAYER_LUNARG_standard_validation"], &["VK_KHR_swapchain"], features).map(|device| Device
 			{
-				sType: VkStructureType::DeviceQueueCreateInfo, pNext: std::ptr::null(), flags: 0,
-				queueCount: 1, queueFamilyIndex: x, pQueuePriorities: qp.as_ptr()
-			}).collect::<Vec<_>>();
-			let device = try!(Self::create_internal(adapter_ref, &qinfos[..], &["VK_LAYER_LUNARG_standard_validation"], &["VK_KHR_swapchain"], features));
-			Ok(Device
-			{
-				graphics_queue: device.get_queue(qf_indices[0], 0),
-				transfer_queue: device.get_queue(qf_indices[1], 0),
-				internal: device, adapter: adapter_ref.clone()
-			})
-		}
-
-		fn create_internal<'a>(adapter_ref: &Rc<vk::PhysicalDevice>, qinfos: &[VkDeviceQueueCreateInfo], layers: &[&str], extensions: &[&str],
-			enabled_features: VkPhysicalDeviceFeatures) -> Result<Rc<vk::Device>, VkResult>
-		{
-			let layers_c = layers.into_iter().map(|&x| std::ffi::CString::new(x).unwrap()).collect::<Vec<_>>();
-			let extensions_c = extensions.into_iter().map(|&x| std::ffi::CString::new(x).unwrap()).collect::<Vec<_>>();
-			let layers_ptr_c = layers_c.iter().map(|x| x.as_ptr()).collect::<Vec<_>>();
-			let extensions_ptr_c = extensions_c.iter().map(|x| x.as_ptr()).collect::<Vec<_>>();
-
-			vk::Device::new(&adapter_ref, &VkDeviceCreateInfo
-			{
-				sType: VkStructureType::DeviceCreateInfo, pNext: std::ptr::null(), flags: 0,
-				queueCreateInfoCount: qinfos.len() as u32, pQueueCreateInfos: qinfos.as_ptr(),
-				enabledLayerCount: layers_ptr_c.len() as u32, ppEnabledLayerNames: layers_ptr_c.as_ptr(),
-				enabledExtensionCount: extensions_ptr_c.len() as u32, ppEnabledExtensionNames: extensions_ptr_c.as_ptr(),
-				pEnabledFeatures: &enabled_features
-			}).map(|x| Rc::new(x))
+				graphics_queue: device.get_queue(graphics_qf, 0),
+				transfer_queue: device.get_queue(transfer_qf.unwrap_or(graphics_qf), queue_info[0].queueCount - 1),
+				internal: Rc::new(device), adapter: adapter.clone()
+			}).map_err(|e| EngineError::from(e))
 		}
 	}
 
@@ -774,29 +804,22 @@ mod prelude
 			// ready for window system //
 			let window_server = Rc::new(XServerConnection::connect());
 
-			let instance = Rc::new(try!(vk::Instance::new(app_name, app_version, "Prelude Computer-Graphics Engine", VK_MAKE_VERSION!(0, 0, 1),
-				&["VK_LAYER_LUNARG_standard_validation"], &["VK_KHR_surface", "VK_KHR_xcb_surface", "VK_EXT_debug_report"])));
+			let instance = try!(vk::Instance::new(app_name, app_version, "Prelude Computer-Graphics Engine", VK_MAKE_VERSION!(0, 0, 1),
+				&["VK_LAYER_LUNARG_standard_validation"], &["VK_KHR_surface", "VK_KHR_xcb_surface", "VK_EXT_debug_report"]).map(|x| Rc::new(x)));
 			let dbg_callback = try!(vk::DebugReportCallback::new(&instance, device_report_callback));
-			let adapter = try!
+			let adapter = try!(instance.enumerate_adapters().map_err(|e| EngineError::from(e))
+				.and_then(|aa| aa.into_iter().next().ok_or(EngineError::GenericError("PhysicalDevices are not found")))
+				.map(|a| Rc::new(vk::PhysicalDevice::from(a, &instance))));
+			let device =
 			{
-				instance.enumerate_adapters().map_err(|e| EngineError::from(e))
-					.and_then(|aa| aa.into_iter().next().ok_or(EngineError::GenericError("PhysicalDevices are not found")))
-					.map(|a| Rc::new(vk::PhysicalDevice::from(a, &instance)))
-			};
-			let queue_family_properties = adapter.enumerate_queue_family_properties();
-			let (gqf_index, tqf_index) = try!(Self::find_queue_family(&queue_family_properties));
-			Self::diagnose_adapter(&window_server, &adapter, gqf_index);
-			let device_features = VkPhysicalDeviceFeatures { geometryShader: 1, .. Default::default() };
-			let device = try!
-			{
-				if gqf_index == tqf_index
-				{
-					Device::create_with_shared_queue(&adapter, device_features, (gqf_index, &queue_family_properties[gqf_index as usize]))
-				}
-				else
-				{
-					Device::create_with_exclusive_queue(&adapter, device_features, [gqf_index, tqf_index])
-				}
+				let queue_family_properties = adapter.enumerate_queue_family_properties();
+				let graphics_qf = try!(queue_family_properties.iter().enumerate().find(|&(_, fp)| (fp.queueFlags & VK_QUEUE_GRAPHICS_BIT) != 0)
+					.map(|(i, _)| i as u32).ok_or(EngineError::GenericError("Unable to find Graphics Queue")));
+				let transfer_qf = queue_family_properties.iter().enumerate().filter(|&(i, _)| i as u32 != graphics_qf)
+					.find(|&(_, fp)| (fp.queueFlags & VK_QUEUE_TRANSFER_BIT) != 0).map(|(i, _)| i as u32);
+				Self::diagnose_adapter(&window_server, &adapter, graphics_qf);
+				let device_features = VkPhysicalDeviceFeatures { geometryShader: 1, .. Default::default() };
+				try!(Device::new(&adapter, &device_features, graphics_qf, transfer_qf, &queue_family_properties[graphics_qf as usize]))
 			};
 
 			Ok(Engine
@@ -813,14 +836,44 @@ mod prelude
 		{
 			self.window_system.process_messages()
 		}
-
-		fn find_queue_family(family_properties: &[VkQueueFamilyProperties]) -> Result<(u32, u32), EngineError>
+		
+		pub fn create_fence(&self) -> Result<Fence, EngineError>
 		{
-			let mut iter = family_properties.into_iter().enumerate();
-			let g = iter.by_ref().filter(|&(_, ref x)| (x.queueFlags & VK_QUEUE_GRAPHICS_BIT) != 0).map(|(i, _)| i as u32).next();
-			let t = iter.by_ref().filter(|&(_, ref x)| (x.queueFlags & VK_QUEUE_TRANSFER_BIT) != 0).map(|(i, _)| i as u32).next();
-			g.map(|x| (x, t.unwrap_or(x))).ok_or(EngineError::GenericError("Unable to find queue for graphics on device"))
+			vk::Fence::new(&self.device).map(|f| Fence { internal: f }).map_err(EngineError::from)
 		}
+		pub fn create_queue_fence(&self) -> Result<QueueFence, EngineError>
+		{
+			vk::Semaphore::new(&self.device).map(|f| QueueFence { internal: f }).map_err(EngineError::from)
+		}
+		pub fn create_render_pass(&self, attachments: &[AttachmentDesc], passes: &[PassDesc], deps: &[PassDependency])
+			-> Result<RenderPass, EngineError>
+		{
+			let attachments_native = attachments.into_iter().map(|x| x.into()).collect::<Vec<_>>();
+			let subpasses_native = passes.into_iter().map(|x| x.into()).collect::<Vec<_>>();
+			let deps_native = deps.into_iter().map(|x| x.into()).collect::<Vec<_>>();
+			let rp_info = VkRenderPassCreateInfo
+			{
+				sType: VkStructureType::RenderPassCreateInfo, pNext: std::ptr::null(), flags: 0,
+				attachmentCount: attachments_native.len() as u32, pAttachments: attachments_native.as_ptr(),
+				subpassCount: subpasses_native.len() as u32, pSubpasses: subpasses_native.as_ptr(),
+				dependencyCount: deps_native.len() as u32, pDependencies: deps_native.as_ptr()
+			};
+			vk::RenderPass::new(&self.device, &rp_info).map(|p| RenderPass { internal: Rc::new(p) }).map_err(EngineError::from)
+		}
+		pub fn create_framebuffer(&self, mold: &RenderPass, attachments: &[&vk::ImageView], form: VkExtent3D) -> Result<Framebuffer, EngineError>
+		{
+			let attachments_native = attachments.into_iter().map(|x| x.get()).collect::<Vec<_>>();
+			let VkExtent3D(width, height, layers) = form;
+			let info = VkFramebufferCreateInfo
+			{
+				sType: VkStructureType::FramebufferCreateInfo, pNext: std::ptr::null(), flags: 0,
+				renderPass: mold.internal.get(),
+				attachmentCount: attachments_native.len() as u32, pAttachments: attachments_native.as_ptr(),
+				width: width, height: height, layers: layers
+			};
+			vk::Framebuffer::new(&self.device, &info).map(|f| Framebuffer { mold: mold.internal.clone(), internal: f }).map_err(EngineError::from)
+		}
+
 		fn diagnose_adapter(server_con: &XServerConnection, adapter: &vk::PhysicalDevice, queue_index: u32)
 		{
 			// Feature Check //
