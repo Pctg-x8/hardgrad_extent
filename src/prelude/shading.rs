@@ -314,9 +314,10 @@ impl <'a> GraphicsPipelineBuilder<'a>
 pub struct IntoNativeGraphicsPipelineCreateInfoStruct<'a>
 {
 	base: &'a GraphicsPipelineBuilder<'a>,
-	viewports: Vec<VkViewport>, scissors: Vec<VkRect2D>, attachment_blend_states: Vec<VkPipelineColorBlendAttachmentState>,
+	#[allow(dead_code)] viewports: Vec<VkViewport>, #[allow(dead_code)] scissors: Vec<VkRect2D>,
+	#[allow(dead_code)] attachment_blend_states: Vec<VkPipelineColorBlendAttachmentState>,
+	#[allow(dead_code)] into_vertex_input_state: IntoNativeVertexInputState,
 	shader_stage: Vec<VkPipelineShaderStageCreateInfo>,
-	into_vertex_input_state: IntoNativeVertexInputState,
 	vertex_input_state: VkPipelineVertexInputStateCreateInfo,
 	input_assembly_state: VkPipelineInputAssemblyStateCreateInfo,
 	viewport_state: VkPipelineViewportStateCreateInfo,
