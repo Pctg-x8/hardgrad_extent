@@ -1,0 +1,25 @@
+// Prelude: Synchronize Primitives(Fence and QueueFence(Semaphore))
+
+use prelude::internals::*;
+use render_vk::wrap as vk;
+
+pub trait QueueFenceInternals
+{
+	fn new(sem: vk::Semaphore) -> Self;
+}
+pub trait FenceInternals
+{
+	fn new(fen: vk::Fence) -> Self;
+}
+
+pub struct QueueFence { internal: vk::Semaphore }
+pub struct Fence { internal: vk::Fence }
+
+impl QueueFenceInternals for QueueFence
+{
+	fn new(sem: vk::Semaphore) -> Self { QueueFence { internal: sem } }
+}
+impl FenceInternals for Fence
+{
+	fn new(fen: vk::Fence) -> Self { Fence { internal: fen } }
+}

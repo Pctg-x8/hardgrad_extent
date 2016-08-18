@@ -197,6 +197,7 @@ impl PhysicalDevice
 */
 pub struct Device { obj: VkDevice, #[allow(dead_code)] parent: Rc<PhysicalDevice> }
 impl std::ops::Drop for Device { fn drop(&mut self) { unsafe { vkDestroyDevice(self.obj, std::ptr::null()) }; } }
+impl NativeOwner<VkDevice> for Device { fn get(&self) -> VkDevice { self.obj } }
 impl Device
 {
 	pub fn new(adapter: &Rc<PhysicalDevice>, queue: &[VkDeviceQueueCreateInfo],
@@ -285,6 +286,7 @@ impl DeviceMemory
 }
 pub struct Buffer { #[allow(dead_code)] parent: Rc<Device>, obj: VkBuffer }
 impl std::ops::Drop for Buffer { fn drop(&mut self) { unsafe { vkDestroyBuffer(self.parent.obj, self.obj, std::ptr::null()) }; } }
+impl NativeOwner<VkBuffer> for Buffer { fn get(&self) -> VkBuffer { self.obj } }
 impl Buffer
 {
 	pub fn new(device: &Rc<Device>, info: &VkBufferCreateInfo) -> Result<Self, VkResult>
@@ -295,6 +297,7 @@ impl Buffer
 }
 pub struct Image { #[allow(dead_code)] parent: Rc<Device>, obj: VkImage }
 impl std::ops::Drop for Image { fn drop(&mut self) { unsafe { vkDestroyImage(self.parent.obj, self.obj, std::ptr::null()) }; } }
+impl NativeOwner<VkImage> for Image { fn get(&self) -> VkImage { self.obj } }
 impl Image
 {
 	pub fn new(device: &Rc<Device>, info: &VkImageCreateInfo) -> Result<Self, VkResult>
@@ -338,6 +341,8 @@ impl Framebuffer
 
 pub struct CommandPool { #[allow(dead_code)] parent: Rc<Device>, obj: VkCommandPool }
 impl std::ops::Drop for CommandPool { fn drop(&mut self) { unsafe { vkDestroyCommandPool(self.parent.obj, self.obj, std::ptr::null()) }; } }
+impl NativeOwner<VkCommandPool> for CommandPool { fn get(&self) -> VkCommandPool { self.obj } }
+impl HasParent for CommandPool { type ParentRefType = Rc<Device>; fn parent(&self) -> &Rc<Device> { &self.parent } }
 impl CommandPool
 {
 	pub fn new(device: &Rc<Device>, queue: &Queue, transient: bool) -> Result<Self, VkResult>
