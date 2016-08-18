@@ -10,6 +10,7 @@ use traits::*;
 use libc::size_t;
 use std::os::raw::*;
 use std::ffi::CStr;
+use std::io::prelude::*;
 
 // Platform Depends //
 use xcbw::XServerConnection;
@@ -43,7 +44,8 @@ pub trait EngineExports
 pub struct Engine
 {
 	window_system: Rc<XServerConnection>, instance: Rc<vk::Instance>, #[allow(dead_code)] debug_callback: vk::DebugReportCallback,
-	device: Device, pools: CommandPool
+	device: Device, pools: CommandPool, pipeline_cache: Rc<vk::PipelineCache>,
+	asset_dir: std::path::PathBuf
 }
 impl std::ops::Drop for Engine
 {
@@ -84,20 +86,28 @@ impl Engine
 			try!(Device::new(&adapter, &device_features, graphics_qf, transfer_qf, &queue_family_properties[graphics_qf as usize]))
 		};
 		let pools = try!(CommandPool::new(&device));
+		let pipeline_cache = Rc::new(try!(vk::PipelineCache::new_empty(&device)));
 
 		Ok(Engine
 		{
-			window_system: window_server, instance: instance, debug_callback: dbg_callback, device: device, pools: pools
+			window_system: window_server, instance: instance, debug_callback: dbg_callback, device: device, pools: pools,
+			pipeline_cache: pipeline_cache,
+			asset_dir: std::env::current_exe().unwrap().parent().unwrap().to_path_buf().join("assets")
 		})
+	}
+	pub fn with_assets_in(mut self, asset_dir_base: std::path::PathBuf) -> Self
+	{
+		self.asset_dir = asset_dir_base.join("assets");
+		self
+	}
+	pub fn process_messages(&self) -> bool
+	{
+		self.window_system.process_messages()
 	}
 	pub fn create_render_window(&self, size: VkExtent2D, title: &str) -> Result<Box<RenderWindow>, EngineError>
 	{
 		info!(target: "Prelude", "Creating Render Window \"{}\" ({}x{})", title, size.0, size.1);
 		XcbWindow::create_unresizable(self, size, title).map(|x| x as Box<RenderWindow>)
-	}
-	pub fn process_messages(&self) -> bool
-	{
-		self.window_system.process_messages()
 	}
 	
 	pub fn create_fence(&self) -> Result<Fence, EngineError>
@@ -150,6 +160,60 @@ impl Engine
 	{
 		self.pools.for_transient().allocate_buffers(&self.device, VkCommandBufferLevel::Primary, count).map_err(EngineError::from)
 			.map(|v| TransientTransferCommandBuffers::new(self.pools.for_transient(), self.device.get_transfer_queue(), v))
+	}
+	pub fn create_vertex_shader_from_asset(&self, asset_path: &str, entry_point: &str,
+		vertex_bindings: &[VertexBinding], vertex_attributes: &[VertexAttribute]) -> Result<ShaderProgram, EngineError>
+	{
+		let entity_path = self.parse_asset(asset_path, "spv");
+		info!(target: "Prelude", "Loading Vertex Shader {:?}", entity_path);
+		std::fs::File::open(entity_path).map_err(EngineError::from).and_then(|mut fp|
+		{
+			let mut bin: Vec<u8> = Vec::new();
+			fp.read_to_end(&mut bin).map(move |_| bin).map_err(EngineError::from)
+		}).and_then(|b| vk::ShaderModule::new(self.device.get_internal(), &b).map_err(EngineError::from))
+		.map(|m| ShaderProgram::new_vertex(m, entry_point, vertex_bindings, vertex_attributes))
+	}
+	pub fn create_geometry_shader_from_asset(&self, asset_path: &str, entry_point: &str) -> Result<ShaderProgram, EngineError>
+	{
+		let entity_path = self.parse_asset(asset_path, "spv");
+		info!(target: "Prelude", "Loading Geometry Shader {:?}", entity_path);
+		std::fs::File::open(entity_path).map_err(EngineError::from).and_then(|mut fp|
+		{
+			let mut bin: Vec<u8> = Vec::new();
+			fp.read_to_end(&mut bin).map(move |_| bin).map_err(EngineError::from)
+		}).and_then(|b| vk::ShaderModule::new(self.device.get_internal(), &b).map_err(EngineError::from))
+		.map(|m| ShaderProgram::new_geometry(m, entry_point))
+	}
+	pub fn create_fragment_shader_from_asset(&self, asset_path: &str, entry_point: &str) -> Result<ShaderProgram, EngineError>
+	{
+		let entity_path = self.parse_asset(asset_path, "spv");
+		info!(target: "Prelude", "Loading Fragment Shader {:?}", entity_path);
+		std::fs::File::open(entity_path).map_err(EngineError::from).and_then(|mut fp|
+		{
+			let mut bin: Vec<u8> = Vec::new();
+			fp.read_to_end(&mut bin).map(|_| bin).map_err(EngineError::from)
+		}).and_then(|b| vk::ShaderModule::new(self.device.get_internal(), &b).map_err(EngineError::from))
+		.map(|m| ShaderProgram::new_fragment(m, entry_point))
+	}
+	pub fn create_pipeline_layout(&self, descriptor_sets: &[DescriptorSetLayout], push_constants: &[PushConstantDesc])
+		-> Result<PipelineLayout, EngineError>
+	{
+		vk::PipelineLayout::new(self.device.get_internal(),
+			&descriptor_sets.into_iter().map(|x| x.get_internal().get()).collect::<Vec<_>>(),
+			&push_constants.into_iter().map(|x| x.into()).collect::<Vec<_>>()).map(PipelineLayout::new).map_err(EngineError::from)
+	}
+	pub fn create_graphics_pipelines(&self, builders: &[&GraphicsPipelineBuilder]) -> Result<Vec<GraphicsPipeline>, EngineError>
+	{
+		let builder_into_natives = builders.into_iter().map(|&x| x.into()).collect::<Vec<IntoNativeGraphicsPipelineCreateInfoStruct>>();
+		vk::Pipeline::new(self.device.get_internal(), &self.pipeline_cache,
+			&builder_into_natives.iter().map(|x| x.into()).collect::<Vec<_>>())
+			.map(|v| v.into_iter().map(GraphicsPipeline::new).collect::<Vec<_>>()).map_err(EngineError::from)
+	}
+
+	fn parse_asset(&self, asset_path: &str, extension: &str) -> std::ffi::OsString
+	{
+		// ident ("." ident)* -> ident ("/" ident)*
+		self.asset_dir.join(asset_path.replace(".", "/")).with_extension(extension).into()
 	}
 
 	pub fn submit_graphics_commands(&self, commands: &GraphicsCommandBuffers, wait_for_execute: &[(&QueueFence, VkPipelineStageFlags)],

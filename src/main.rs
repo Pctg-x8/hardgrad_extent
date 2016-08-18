@@ -18,7 +18,7 @@ mod traits;
 use traits::*;
 mod xcbw;
 use xcbw::*;
-// mod vertex_formats;
+mod vertex_formats;
 // mod device_resources;
 // mod structures;
 // mod logical_resources;
@@ -203,7 +203,7 @@ fn app_main() -> Result<(), prelude::EngineError>
 {
 	utils::memory_management_test();
 
-	let prelude = try!(prelude::Engine::new("HardGrad->Extent", VK_MAKE_VERSION!(0, 0, 1)));
+	let prelude = try!(prelude::Engine::new("HardGrad->Extent", VK_MAKE_VERSION!(0, 0, 1))).with_assets_in(std::env::current_dir().unwrap());
 	let main_frame = try!(prelude.create_render_window(VkExtent2D(640, 480), "HardGrad -> Extent"));
 	let VkExtent2D(frame_width, frame_height) = main_frame.get_extent();
 	let execute_next_signal = try!(prelude.create_fence());
@@ -222,6 +222,24 @@ fn app_main() -> Result<(), prelude::EngineError>
 	let framebuffers = try!(main_frame.get_back_images().iter()
 		.map(|x| prelude.create_framebuffer(&rp_framebuffer_form, &[&x.view], VkExtent3D(frame_width, frame_height, 1)))
 		.collect::<Result<Vec<_>, _>>());
+	
+	// Shading Structures //
+	let raw_output_vert = try!(prelude.create_vertex_shader_from_asset("shaders.RawOutput", "main", &[
+		prelude::VertexBinding::PerVertex(std::mem::size_of::<vertex_formats::Position>() as u32),
+		prelude::VertexBinding::PerInstance(std::mem::size_of::<u32>() as u32)
+		], &[prelude::VertexAttribute(0, VkFormat::R32G32B32A32_SFLOAT, 0), prelude::VertexAttribute(1, VkFormat::R32_UINT, 0)]));
+	let backline_duplicator = try!(prelude.create_geometry_shader_from_asset("shaders.BackLineDuplicator", "main"));
+	let through_color_frag = try!(prelude.create_fragment_shader_from_asset("shaders.ThroughColor", "main"));
+
+	let swapchain_viewport = VkViewport(0.0f32, 0.0f32, frame_width as f32, frame_height as f32, 0.0f32, 1.0f32);
+	let background_render_layout = try!(prelude.create_pipeline_layout(&[], &[prelude::PushConstantDesc(VK_SHADER_STAGE_GEOMETRY_BIT, 0 .. 4)]));
+	let background_render_state = prelude::GraphicsPipelineBuilder::new(&background_render_layout, &rp_framebuffer_form, 0)
+		.vertex_shader(&raw_output_vert).geometry_shader(&backline_duplicator).fragment_shader(&through_color_frag)
+		.primitive_topology(prelude::PrimitiveTopology::LineStrip(true))
+		.viewport_scissors(&[prelude::ViewportWithScissorRect::default_scissor(swapchain_viewport)])
+		.blend_state(&[prelude::AttachmentBlendState::PremultipliedAlphaBlend]);
+	let pipeline_states = try!(prelude.create_graphics_pipelines(&[&background_render_state]));
+	let ref background_render_state = pipeline_states[0];
 	
 	// Initial Layouting for Swapchain Backbuffer Images //
 	try!(prelude.allocate_transient_transfer_command_buffers(1).and_then(|setup_commands|

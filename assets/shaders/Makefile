@@ -9,6 +9,8 @@ ALL_OUTS = $(VERT_OUTS) $(FRAG_OUTS) $(GEOM_OUTS)
 
 all: $(ALL_OUTS)
 
+clean:
+	rm *.spv
 
 .vert.spv:
 	$(CC_GLSL) $< -o $@

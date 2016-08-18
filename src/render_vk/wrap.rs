@@ -371,6 +371,7 @@ impl CommandPool
 
 pub struct ShaderModule { #[allow(dead_code)] parent: Rc<Device>, obj: VkShaderModule }
 impl std::ops::Drop for ShaderModule { fn drop(&mut self) { unsafe { vkDestroyShaderModule(self.parent.obj, self.obj, std::ptr::null()) }; } }
+impl NativeOwner<VkShaderModule> for ShaderModule { fn get(&self) -> VkShaderModule { self.obj } }
 impl ShaderModule
 {
 	pub fn new(device: &Rc<Device>, binary: &[u8]) -> Result<Self, VkResult>
@@ -378,7 +379,7 @@ impl ShaderModule
 		let info = VkShaderModuleCreateInfo
 		{
 			sType: VkStructureType::ShaderModuleCreateInfo, pNext: std::ptr::null(),
-			flags: 0, codeSize: binary.len() as size_t, pCode: binary.as_ptr() as *const u32
+			flags: 0, codeSize: binary.len() as size_t, pCode: unsafe { std::mem::transmute(binary.as_ptr()) }
 		};
 		let mut m: VkShaderModule = empty_handle();
 		unsafe { vkCreateShaderModule(device.obj, &info, std::ptr::null(), &mut m) }.map(move || ShaderModule { obj: m, parent: device.clone() })
@@ -386,6 +387,7 @@ impl ShaderModule
 }
 pub struct PipelineLayout { #[allow(dead_code)] parent: Rc<Device>, obj: VkPipelineLayout }
 impl std::ops::Drop for PipelineLayout { fn drop(&mut self) { unsafe { vkDestroyPipelineLayout(self.parent.obj, self.obj, std::ptr::null()) }; } }
+impl NativeOwner<VkPipelineLayout> for PipelineLayout { fn get(&self) -> VkPipelineLayout { self.obj } }
 impl PipelineLayout
 {
 	pub fn new(device: &Rc<Device>, descriptor_set_layouts: &[VkDescriptorSetLayout], push_constants: &[VkPushConstantRange]) -> Result<Self, VkResult>
@@ -403,6 +405,7 @@ impl PipelineLayout
 }
 pub struct PipelineCache { #[allow(dead_code)] parent: Rc<Device>, obj: VkPipelineCache }
 impl std::ops::Drop for PipelineCache { fn drop(&mut self) { unsafe { vkDestroyPipelineCache(self.parent.obj, self.obj, std::ptr::null()) }; } }
+impl NativeOwner<VkPipelineCache> for PipelineCache { fn get(&self) -> VkPipelineCache { self.obj } }
 impl PipelineCache
 {
 	pub fn new_empty(device: &Rc<Device>) -> Result<Self, VkResult>
@@ -466,6 +469,7 @@ impl Semaphore
 
 pub struct DescriptorSetLayout { parent: Rc<Device>, obj: VkDescriptorSetLayout }
 impl std::ops::Drop for DescriptorSetLayout { fn drop(&mut self) { unsafe { vkDestroyDescriptorSetLayout(self.parent.obj, self.obj, std::ptr::null()) }; } }
+impl NativeOwner<VkDescriptorSetLayout> for DescriptorSetLayout { fn get(&self) -> VkDescriptorSetLayout { self.obj } }
 impl DescriptorSetLayout
 {
 	pub fn new(device: &Rc<Device>, bindings: &[VkDescriptorSetLayoutBinding]) -> Result<Self, VkResult>
@@ -565,13 +569,6 @@ impl Swapchain
 		unsafe { vkQueuePresentKHR(queue.obj, &info) }.to_result()
 	}
 }
-/* Binary Loading
-	std::fs::File::open(path_to_spirv).and_then(|fp|
-	{
-		let mut bin: Vec<u8> = Vec::new();
-		fp.read_to_end(&mut bin).map(|_| bin).expect("Unable to read from binary_file")
-	}).expect("Shader binary not found");
-*/
 impl MemoryAllocationRequired for Buffer
 {
 	fn get_memory_requirements(&self, device: &Device) -> VkMemoryRequirements

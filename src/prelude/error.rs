@@ -5,11 +5,15 @@ use vkffi::*;
 
 pub enum EngineError
 {
-	DeviceError(VkResult), GenericError(&'static str)
+	DeviceError(VkResult), IOError(std::io::Error), GenericError(&'static str)
 }
 impl std::convert::From<VkResult> for EngineError
 {
 	fn from(res: VkResult) -> EngineError { EngineError::DeviceError(res) }
+}
+impl std::convert::From<std::io::Error> for EngineError
+{
+	fn from(ie: std::io::Error) -> EngineError { EngineError::IOError(ie) }
 }
 impl std::fmt::Debug for EngineError
 {
@@ -18,7 +22,8 @@ impl std::fmt::Debug for EngineError
 		match self
 		{
 			&EngineError::DeviceError(ref r) => write!(formatter, "DeviceError: {:?}", r),
-			&EngineError::GenericError(ref e) => write!(formatter, "GenericError: {}", e),
+			&EngineError::IOError(ref e) => write!(formatter, "IOError: {:?}", e),
+			&EngineError::GenericError(ref e) => write!(formatter, "GenericError: {}", e)
 		}
 	}
 }
@@ -28,6 +33,7 @@ pub fn crash(err: EngineError) -> !
 	panic!("Application has exited due to {}", match err
 	{
 		EngineError::DeviceError(_) => "DeviceError",
+		EngineError::IOError(_) => "Input/Output Error",
 		EngineError::GenericError(_) => "GenericError"
 	})
 }

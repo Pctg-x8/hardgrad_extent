@@ -4,10 +4,10 @@
 
 layout(lines_adjacency, invocations = 10) in;
 layout(line_strip, max_vertices = 5) out;
-layout(constant_id = 10) const float r = 0.0f;
-layout(constant_id = 11) const float g = 0.0f;
-layout(constant_id = 12) const float b = 0.0f;
-layout(constant_id = 13) const float a = 0.0f;
+layout(push_constant) uniform PushConstant
+{
+	vec4 color;
+} pushed_values;
 
 layout(location = 0) in uint instance_id[];
 layout(location = 0) out vec4 color;
@@ -25,16 +25,17 @@ void main()
 {
 	if(instance_id[0] > 0)
 	{
-		BackgroundInstance instance_data = background_instance_data[instance_id[0] - 1];
-		if(instance_data.offset.w > gl_InvocationID)
+		vec4 instance_offset = background_instance_data[instance_id[0] - 1].offset;
+		vec4 instance_scale = background_instance_data[instance_id[0] - 1].scale;
+		if(instance_offset.w > gl_InvocationID)
 		{
-			vec4 offsetter = vec4(0.0f, 0.0f, gl_InvocationID * 1.25f, 0.0f) + vec4(instance_data.offset.xyz, 0.0f);
-			color = vec4(r, g, b, a);
-			gl_Position = vertex_transform(gl_in[0].gl_Position, offsetter, instance_data.scale); EmitVertex();
-			gl_Position = vertex_transform(gl_in[1].gl_Position, offsetter, instance_data.scale); EmitVertex();
-			gl_Position = vertex_transform(gl_in[2].gl_Position, offsetter, instance_data.scale); EmitVertex();
-			gl_Position = vertex_transform(gl_in[3].gl_Position, offsetter, instance_data.scale); EmitVertex();
-			gl_Position = vertex_transform(gl_in[0].gl_Position, offsetter, instance_data.scale); EmitVertex();
+			vec4 offsetter = vec4(0.0f, 0.0f, gl_InvocationID * 1.25f, 0.0f) + vec4(instance_offset.xyz, 0.0f);
+			color = pushed_values.color;
+			gl_Position = vertex_transform(gl_in[0].gl_Position, offsetter, instance_scale); EmitVertex();
+			gl_Position = vertex_transform(gl_in[1].gl_Position, offsetter, instance_scale); EmitVertex();
+			gl_Position = vertex_transform(gl_in[2].gl_Position, offsetter, instance_scale); EmitVertex();
+			gl_Position = vertex_transform(gl_in[3].gl_Position, offsetter, instance_scale); EmitVertex();
+			gl_Position = vertex_transform(gl_in[0].gl_Position, offsetter, instance_scale); EmitVertex();
 			EndPrimitive();
 		}
 	}
