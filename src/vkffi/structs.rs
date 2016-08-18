@@ -520,9 +520,9 @@ impl VkComponentMapping
 	pub renderArea: VkRect2D, pub clearValueCount: u32,
 	pub pClearValues: *const VkClearValue
 }
-#[repr(C)] pub struct VkClearColorValue(pub f32, pub f32, pub f32, pub f32);
-#[repr(C)] pub struct VkClearDepthStencilValue(pub f32, pub u32);
-#[repr(C)] pub struct VkClearValue(pub VkClearColorValue);
+#[repr(C)] #[derive(Clone, Copy)] pub struct VkClearColorValue(pub f32, pub f32, pub f32, pub f32);
+#[repr(C)] #[derive(Clone, Copy)] pub struct VkClearDepthStencilValue(pub f32, pub u32);
+#[repr(C)] #[derive(Clone, Copy)] pub struct VkClearValue(pub VkClearColorValue);
 
 #[repr(C)] pub struct VkFenceCreateInfo
 {

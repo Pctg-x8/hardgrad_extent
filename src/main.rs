@@ -206,7 +206,7 @@ fn app_main() -> Result<(), prelude::EngineError>
 	let prelude = try!(prelude::Engine::new("HardGrad->Extent", VK_MAKE_VERSION!(0, 0, 1)));
 	let main_frame = try!(prelude.create_render_window(VkExtent2D(640, 480), "HardGrad -> Extent"));
 	let VkExtent2D(frame_width, frame_height) = main_frame.get_extent();
-	let execution_coordinator = try!(prelude.create_queue_fence());
+	let execute_next_signal = try!(prelude.create_fence());
 
 	let rp_attachment_descs =
 	[
@@ -236,13 +236,34 @@ fn app_main() -> Result<(), prelude::EngineError>
 
 	// Rendering Commands //
 	let framebuffer_commands = try!(prelude.allocate_graphics_command_buffers(main_frame.get_back_images().len() as u32));
-	try!(framebuffer_commands.begin_all().and_then(|iter| iter.map(|(_, recorder)|
-		recorder.end()
-	).fold(Ok(()), |e, x| match (&e, &x) { (&Err(_), _) => e, (_, &Err(_)) => x, _ => Ok(()) })));
+	try!(framebuffer_commands.begin_all().and_then(|iter| iter.map(|(i, recorder)|
+	{
+		let color_output_barrier = prelude::ImageMemoryBarrier::hold_ownership(
+			main_frame.get_back_images()[i], prelude::ImageSubresourceRange::base_color(),
+			VK_ACCESS_MEMORY_READ_BIT, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+			VkImageLayout::PresentSrcKHR, VkImageLayout::ColorAttachmentOptimal);
+		
+		recorder
+			.pipeline_barrier(VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, false, &[], &[],
+				&[color_output_barrier])
+			.begin_render_pass(&framebuffers[i], &[prelude::AttachmentClearValue::Color(1.0f32, 1.0f32, 1.0f32, 1.0f32)], false)
+			.end_render_pass()
+		.end()
+	}).fold(Ok(()), |e, x| match (&e, &x) { (&Err(_), _) => e, (_, &Err(_)) => x, _ => Ok(()) })));
+
+	let mut frame_index = try!(main_frame.execute_rendering(&prelude, &framebuffer_commands, None, &execute_next_signal));
 
 	while prelude.process_messages()
 	{
 		// Render code...
+		if execute_next_signal.get_status().is_ok()
+		{
+			frame_index = try!
+			{
+				main_frame.present(&prelude, frame_index).and_then(|()|
+					main_frame.execute_rendering(&prelude, &framebuffer_commands, None, &execute_next_signal))
+			};
+		}
 	}
 
 	Ok(())

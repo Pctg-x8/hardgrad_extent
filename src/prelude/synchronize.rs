@@ -15,6 +15,9 @@ pub trait FenceInternals
 pub struct QueueFence { internal: vk::Semaphore }
 pub struct Fence { internal: vk::Fence }
 
+impl InternalExports<vk::Semaphore> for QueueFence { fn get_internal(&self) -> &vk::Semaphore { &self.internal } }
+impl InternalExports<vk::Fence> for Fence { fn get_internal(&self) -> &vk::Fence { &self.internal } }
+
 impl QueueFenceInternals for QueueFence
 {
 	fn new(sem: vk::Semaphore) -> Self { QueueFence { internal: sem } }
@@ -22,4 +25,12 @@ impl QueueFenceInternals for QueueFence
 impl FenceInternals for Fence
 {
 	fn new(fen: vk::Fence) -> Self { Fence { internal: fen } }
+}
+
+impl Fence
+{
+	pub fn get_status(&self) -> Result<(), EngineError>
+	{
+		self.internal.get_status().map_err(EngineError::from)
+	}
 }

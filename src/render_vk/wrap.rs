@@ -330,6 +330,7 @@ impl RenderPass
 }
 pub struct Framebuffer { #[allow(dead_code)] parent: Rc<Device>, obj: VkFramebuffer }
 impl std::ops::Drop for Framebuffer { fn drop(&mut self) { unsafe { vkDestroyFramebuffer(self.parent.obj, self.obj, std::ptr::null()) }; } }
+impl NativeOwner<VkFramebuffer> for Framebuffer { fn get(&self) -> VkFramebuffer { self.obj } }
 impl Framebuffer
 {
 	pub fn new(device: &Rc<Device>, info: &VkFramebufferCreateInfo) -> Result<Self, VkResult>
@@ -445,13 +446,14 @@ impl Fence
 	{
 		unsafe { vkResetFences(parent.obj, 1, &self.obj) }.to_result()
 	}
-	pub fn get_status(&self, parent: &Device) -> Result<(), VkResult>
+	pub fn get_status(&self) -> Result<(), VkResult>
 	{
-		unsafe { vkGetFenceStatus(parent.obj, self.obj) }.to_result()
+		unsafe { vkGetFenceStatus(self.parent.obj, self.obj) }.to_result()
 	}
 }
 pub struct Semaphore { parent: Rc<Device>, obj: VkSemaphore }
 impl std::ops::Drop for Semaphore { fn drop(&mut self) { unsafe { vkDestroySemaphore(self.parent.obj, self.obj, std::ptr::null()) }; } }
+impl NativeOwner<VkSemaphore> for Semaphore { fn get(&self) -> VkSemaphore { self.obj } }
 impl Semaphore
 {
 	pub fn new(device: &Rc<Device>) -> Result<Self, VkResult>
@@ -528,6 +530,7 @@ impl Surface
 }
 pub struct Swapchain { parent: Rc<Device>, #[allow(dead_code)] base: Rc<Surface>, obj: VkSwapchainKHR }
 impl std::ops::Drop for Swapchain { fn drop(&mut self) { unsafe { vkDestroySwapchainKHR(self.parent.obj, self.obj, std::ptr::null()) }; } }
+impl HasParent for Swapchain { type ParentRefType = Rc<Device>; fn parent(&self) -> &Rc<Device> { &self.parent } }
 impl Swapchain
 {
 	pub fn new(device: &Rc<Device>, surface: &Rc<Surface>, info: &VkSwapchainCreateInfoKHR) -> Result<Self, VkResult>
@@ -545,10 +548,10 @@ impl Swapchain
 			unsafe { vkGetSwapchainImagesKHR(self.parent.obj, self.obj, &mut image_count, images.as_mut_ptr()) }.map(move || images)
 		})
 	}
-	pub fn acquire_next_image(&self, parent: &Device, device_synchronizer: &Semaphore) -> Result<u32, VkResult>
+	pub fn acquire_next_image(&self, device_synchronizer: &Semaphore) -> Result<u32, VkResult>
 	{
 		let mut index: u32 = 0;
-		unsafe { vkAcquireNextImageKHR(parent.obj, self.obj, std::u64::MAX, device_synchronizer.obj, std::ptr::null_mut(), &mut index) }
+		unsafe { vkAcquireNextImageKHR(self.parent.obj, self.obj, std::u64::MAX, device_synchronizer.obj, std::ptr::null_mut(), &mut index) }
 			.map(move || index)
 	}
 	pub fn present(&self, queue: &Queue, index: u32, device_synchronizer: &[VkSemaphore]) -> Result<(), VkResult>

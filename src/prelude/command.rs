@@ -132,6 +132,7 @@ impl std::ops::Drop for GraphicsCommandBuffers
 		unsafe { vkFreeCommandBuffers(self.parent.parent().get(), self.parent.get(), self.internal.len() as u32, self.internal.as_ptr()) };
 	}
 }
+impl InternalExports<Vec<VkCommandBuffer>> for GraphicsCommandBuffers { fn get_internal(&self) -> &Vec<VkCommandBuffer> { &self.internal } }
 pub trait GraphicsCommandBuffersInternals { fn new(parent: &Rc<vk::CommandPool>, cbs: Vec<VkCommandBuffer>) -> Self; }
 impl GraphicsCommandBuffersInternals for GraphicsCommandBuffers
 {
@@ -148,6 +149,7 @@ impl std::ops::Drop for TransferCommandBuffers
 		unsafe { vkFreeCommandBuffers(self.parent.parent().get(), self.parent.get(), self.internal.len() as u32, self.internal.as_ptr()) };
 	}
 }
+impl InternalExports<Vec<VkCommandBuffer>> for TransferCommandBuffers { fn get_internal(&self) -> &Vec<VkCommandBuffer> { &self.internal } }
 pub trait TransferCommandBuffersInternals { fn new(parent: &Rc<vk::CommandPool>, cbs: Vec<VkCommandBuffer>) -> Self; }
 impl TransferCommandBuffersInternals for TransferCommandBuffers
 {
@@ -290,6 +292,26 @@ impl <'a> GraphicsCommandRecorder<'a>
 	pub fn end(mut self) -> Result<(), EngineError>
 	{
 		unsafe { vkEndCommandBuffer(*self.buffer_ref.unwrap()) }.and_then(|| { self.buffer_ref = None; Ok(()) }).map_err(EngineError::from)
+	}
+
+	pub fn begin_render_pass(self, framebuffer: &Framebuffer, clear_values: &[AttachmentClearValue], use_bundles: bool) -> Self
+	{
+		let clear_values_native = clear_values.into_iter().map(|x| x.into()).collect::<Vec<_>>();
+		let begin_info = VkRenderPassBeginInfo
+		{
+			sType: VkStructureType::RenderPassBeginInfo, pNext: std::ptr::null(),
+			renderPass: framebuffer.get_mold().get(), framebuffer: framebuffer.get_internal().get(),
+			renderArea: VkRect2D(VkOffset2D(0, 0), framebuffer.get_area()),
+			clearValueCount: clear_values_native.len() as u32, pClearValues: clear_values_native.as_ptr()
+		};
+		unsafe { vkCmdBeginRenderPass(*self.buffer_ref.unwrap(), &begin_info,
+			if use_bundles { VkSubpassContents::SecondaryCommandBuffers } else { VkSubpassContents::Inline }) };
+		self
+	}
+	pub fn end_render_pass(self) -> Self
+	{
+		unsafe { vkCmdEndRenderPass(*self.buffer_ref.unwrap()) };
+		self
 	}
 }
 impl <'a> TransferCommandRecorder<'a>

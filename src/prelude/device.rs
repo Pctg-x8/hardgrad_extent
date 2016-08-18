@@ -67,4 +67,8 @@ impl Device
 			internal: Rc::new(device), adapter: adapter.clone()
 		}).map_err(|e| EngineError::from(e))
 	}
+	pub fn wait_for_idle(&self) -> Result<(), EngineError>
+	{
+		self.internal.wait_for_idle().map_err(EngineError::from)
+	}
 }

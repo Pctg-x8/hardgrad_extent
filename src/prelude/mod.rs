@@ -13,7 +13,7 @@ mod internal_traits;
 pub use self::error::*;
 pub use self::engine::Engine;
 pub use self::synchronize::{QueueFence, Fence};
-pub use self::framebuffer::{AttachmentDesc, PassDesc, PassDependency};
+pub use self::framebuffer::{AttachmentDesc, PassDesc, PassDependency, AttachmentClearValue};
 pub use self::command::{MemoryBarrier, BufferMemoryBarrier, ImageMemoryBarrier};
 pub use self::resource::{ImageSubresourceRange};
 pub mod traits

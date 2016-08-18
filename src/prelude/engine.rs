@@ -25,7 +25,11 @@ impl log::Log for EngineLogger
 	{
 		if self.enabled(record.metadata())
 		{
-			println!("{}", Style::new().bold().paint(format!("** [{}:{}]{}", record.target(), record.level(), record.args())));
+			println!("{}", match record.level()
+			{
+				log::LogLevel::Error => Style::new().bold().fg(Color::Red).paint(format!("!! [{}:{}] {}", record.target(), record.level(), record.args())),
+				_ => Style::new().bold().paint(format!("** [{}:{}] {}", record.target(), record.level(), record.args()))
+			});
 		}
 	}
 }
@@ -40,6 +44,10 @@ pub struct Engine
 {
 	window_system: Rc<XServerConnection>, instance: Rc<vk::Instance>, #[allow(dead_code)] debug_callback: vk::DebugReportCallback,
 	device: Device, pools: CommandPool
+}
+impl std::ops::Drop for Engine
+{
+	fn drop(&mut self) { self.device.wait_for_idle().unwrap(); }
 }
 impl EngineExports for Engine
 {
@@ -126,7 +134,7 @@ impl Engine
 			attachmentCount: attachments_native.len() as u32, pAttachments: attachments_native.as_ptr(),
 			width: width, height: height, layers: layers
 		};
-		vk::Framebuffer::new(&self.device, &info).map(|f| Framebuffer::new(f, mold.get_internal())).map_err(EngineError::from)
+		vk::Framebuffer::new(&self.device, &info).map(|f| Framebuffer::new(f, mold.get_internal(), VkExtent2D(width, height))).map_err(EngineError::from)
 	}
 	pub fn allocate_graphics_command_buffers(&self, count: u32) -> Result<GraphicsCommandBuffers, EngineError>
 	{
@@ -142,6 +150,25 @@ impl Engine
 	{
 		self.pools.for_transient().allocate_buffers(&self.device, VkCommandBufferLevel::Primary, count).map_err(EngineError::from)
 			.map(|v| TransientTransferCommandBuffers::new(self.pools.for_transient(), self.device.get_transfer_queue(), v))
+	}
+
+	pub fn submit_graphics_commands(&self, commands: &GraphicsCommandBuffers, wait_for_execute: &[(&QueueFence, VkPipelineStageFlags)],
+		signal_on_complete: Option<&QueueFence>, signal_on_complete_host: Option<&Fence>) -> Result<(), EngineError>
+	{
+		self.device.get_graphics_queue().submit_commands(commands.get_internal(),
+			&wait_for_execute.into_iter().map(|&(q, _)| q.get_internal().get()).collect::<Vec<_>>(),
+			&wait_for_execute.into_iter().map(|&(_, s)| s).collect::<Vec<_>>(),
+			&signal_on_complete.map(|q| vec![q.get_internal().get()]).unwrap_or(vec![]), signal_on_complete_host.map(|f| f.get_internal()))
+			.map_err(EngineError::from)
+	}
+	pub fn submit_transfer_commands(&self, commands: &TransferCommandBuffers, wait_for_execute: &[(&QueueFence, VkPipelineStageFlags)],
+		signal_on_complete: Option<&QueueFence>, signal_on_complete_host: Option<&Fence>) -> Result<(), EngineError>
+	{
+		self.device.get_transfer_queue().submit_commands(commands.get_internal(),
+			&wait_for_execute.into_iter().map(|&(q, _)| q.get_internal().get()).collect::<Vec<_>>(),
+			&wait_for_execute.into_iter().map(|&(_, s)| s).collect::<Vec<_>>(),
+			&signal_on_complete.map(|q| vec![q.get_internal().get()]).unwrap_or(vec![]), signal_on_complete_host.map(|f| f.get_internal()))
+			.map_err(EngineError::from)
 	}
 
 	fn diagnose_adapter(server_con: &XServerConnection, adapter: &vk::PhysicalDevice, queue_index: u32)

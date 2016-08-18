@@ -5,6 +5,7 @@ use std;
 use vkffi::*;
 use render_vk::wrap as vk;
 use std::rc::Rc;
+use traits::*;
 
 pub struct AttachmentDesc
 {
@@ -130,8 +131,27 @@ impl <'a> std::convert::Into<VkSubpassDependency> for &'a PassDependency
 		}
 	}
 }
+pub enum AttachmentClearValue
+{
+	Color(f32, f32, f32, f32), DepthStencil(f32, u32)
+}
+impl <'a> std::convert::Into<VkClearValue> for &'a AttachmentClearValue
+{
+	fn into(self) -> VkClearValue
+	{
+		VkClearValue(match self
+		{
+			&AttachmentClearValue::Color(r, g, b, a) => VkClearColorValue(r, g, b, a),
+			&AttachmentClearValue::DepthStencil(d, s) => unsafe
+			{
+				*std::mem::transmute::<_, &VkClearColorValue>(&VkClearDepthStencilValue(d, s))
+			}
+		})
+	}
+}
+
 pub struct RenderPass { internal: Rc<vk::RenderPass> }
-pub struct Framebuffer { #[allow(dead_code)] mold: Rc<vk::RenderPass>, internal: vk::Framebuffer }
+pub struct Framebuffer { mold: Rc<vk::RenderPass>, internal: vk::Framebuffer, area: VkExtent2D }
 impl InternalExports<Rc<vk::RenderPass>> for RenderPass { fn get_internal(&self) -> &Rc<vk::RenderPass> { &self.internal } }
 impl InternalExports<vk::Framebuffer> for Framebuffer { fn get_internal(&self) -> &vk::Framebuffer { &self.internal } }
 pub trait RenderPassInternals
@@ -144,12 +164,16 @@ impl RenderPassInternals for RenderPass
 }
 pub trait FramebufferInternals
 {
-	fn new(fb: vk::Framebuffer, mold: &Rc<vk::RenderPass>) -> Self;
+	fn new(fb: vk::Framebuffer, mold: &Rc<vk::RenderPass>, area: VkExtent2D) -> Self;
+	fn get_mold(&self) -> &Rc<vk::RenderPass>;
+	fn get_area(&self) -> VkExtent2D;
 }
 impl FramebufferInternals for Framebuffer
 {
-	fn new(fb: vk::Framebuffer, mold: &Rc<vk::RenderPass>) -> Self
+	fn new(fb: vk::Framebuffer, mold: &Rc<vk::RenderPass>, area: VkExtent2D) -> Self
 	{
-		Framebuffer { internal: fb, mold: mold.clone() }
+		Framebuffer { internal: fb, mold: mold.clone(), area: area }
 	}
+	fn get_mold(&self) -> &Rc<vk::RenderPass> { &self.mold }
+	fn get_area(&self) -> VkExtent2D { self.area }
 }
