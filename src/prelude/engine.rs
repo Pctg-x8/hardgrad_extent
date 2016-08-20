@@ -208,7 +208,7 @@ impl Engine
 		}).and_then(|b| vk::ShaderModule::new(self.device.get_internal(), &b).map_err(EngineError::from))
 		.map(|m| ShaderProgram::new_fragment(m, entry_point))
 	}
-	pub fn create_pipeline_layout(&self, descriptor_sets: &[DescriptorSetLayout], push_constants: &[PushConstantDesc])
+	pub fn create_pipeline_layout(&self, descriptor_sets: &[&DescriptorSetLayout], push_constants: &[PushConstantDesc])
 		-> Result<PipelineLayout, EngineError>
 	{
 		vk::PipelineLayout::new(self.device.get_internal(),
@@ -224,6 +224,7 @@ impl Engine
 	}
 	pub fn create_double_buffer(&self, preallocator: &MemoryPreallocator) -> Result<(DeviceBuffer, StagingBuffer), EngineError>
 	{
+		info!(target: "Prelude", "Allocated device memory: {} bytes(double-buffered)", preallocator.get_total_size());
 		DeviceBuffer::new(self, preallocator.get_total_size(), preallocator.get_usage()).and_then(|db|
 		StagingBuffer::new(self, preallocator.get_total_size()).map(|sb| (db, sb)))
 	}
@@ -233,7 +234,7 @@ impl Engine
 		vk::DescriptorSetLayout::new(self.device.get_internal(), &native)
 			.map(|d| DescriptorSetLayout::new(d, bindings)).map_err(EngineError::from)
 	}
-	pub fn preallocate_all_descriptor_sets(&self, layouts: &[DescriptorSetLayout]) -> Result<DescriptorSets, EngineError>
+	pub fn preallocate_all_descriptor_sets(&self, layouts: &[&DescriptorSetLayout]) -> Result<DescriptorSets, EngineError>
 	{
 		let set_count = layouts.len();
 		let (uniform_total, combined_sampler_total) = layouts.iter().map(|x| x.descriptors().into_iter().fold((0, 0), |(u, cs), desc| match desc

@@ -115,3 +115,8 @@ impl DescriptorSetsInternals for DescriptorSets
 		DescriptorSets { pool: pool, sets: sets }
 	}
 }
+impl std::ops::Index<usize> for DescriptorSets
+{
+	type Output = VkDescriptorSet;
+	fn index<'a>(&'a self, idx: usize) -> &'a Self::Output { &self.sets[idx] }
+}

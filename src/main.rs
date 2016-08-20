@@ -233,18 +233,19 @@ fn app_main() -> Result<(), prelude::EngineError>
 	let dslayout_u1 = try!(engine.create_descriptor_set_layout(&[
 		prelude::Descriptor::Uniform(1, vec![prelude::ShaderStage::Vertex, prelude::ShaderStage::Geometry])
 	]));
-	let all_descriptors = try!(engine.preallocate_all_descriptor_sets(&[dslayout_u1]));
+	let all_descriptor_sets = try!(engine.preallocate_all_descriptor_sets(&[&dslayout_u1]));
+	let ref uniform_memory_descriptor_set = all_descriptor_sets[0];
 	
 	// Shading Structures //
 	let raw_output_vert = try!(engine.create_vertex_shader_from_asset("shaders.RawOutput", "main", &[
 		prelude::VertexBinding::PerVertex(std::mem::size_of::<vertex_formats::Position>() as u32),
 		prelude::VertexBinding::PerInstance(std::mem::size_of::<u32>() as u32)
-		], &[prelude::VertexAttribute(0, VkFormat::R32G32B32A32_SFLOAT, 0), prelude::VertexAttribute(1, VkFormat::R32_UINT, 0)]));
+	], &[prelude::VertexAttribute(0, VkFormat::R32G32B32A32_SFLOAT, 0), prelude::VertexAttribute(1, VkFormat::R32_UINT, 0)]));
 	let backline_duplicator = try!(engine.create_geometry_shader_from_asset("shaders.BackLineDuplicator", "main"));
 	let through_color_frag = try!(engine.create_fragment_shader_from_asset("shaders.ThroughColor", "main"));
 
 	let swapchain_viewport = VkViewport(0.0f32, 0.0f32, frame_width as f32, frame_height as f32, 0.0f32, 1.0f32);
-	let background_render_layout = try!(engine.create_pipeline_layout(&[], &[prelude::PushConstantDesc(VK_SHADER_STAGE_GEOMETRY_BIT, 0 .. 4)]));
+	let background_render_layout = try!(engine.create_pipeline_layout(&[&dslayout_u1], &[prelude::PushConstantDesc(VK_SHADER_STAGE_GEOMETRY_BIT, 0 .. 4)]));
 	let background_render_state = prelude::GraphicsPipelineBuilder::new(&background_render_layout, &rp_framebuffer_form, 0)
 		.vertex_shader(&raw_output_vert).geometry_shader(&backline_duplicator).fragment_shader(&through_color_frag)
 		.primitive_topology(prelude::PrimitiveTopology::LineStrip(true))
