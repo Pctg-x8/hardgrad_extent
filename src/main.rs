@@ -17,6 +17,7 @@ use constants::*;
 mod traits;
 use traits::*;
 mod vertex_formats;
+use vertex_formats::*;
 // mod device_resources;
 mod structures;
 // mod logical_resources;
@@ -24,7 +25,7 @@ mod utils;
 use nalgebra::*;
 use rand::distributions::*;
 
-use vkffi::*; use ansi_term::*;
+use vkffi::*;
 use render_vk::wrap as vk;
 use render_vk::traits::*;
 
@@ -227,7 +228,19 @@ fn app_main() -> Result<(), prelude::EngineError>
 		(std::mem::size_of::<structures::IndexMemory>(), prelude::BufferDataType::Index),
 		(std::mem::size_of::<structures::UniformMemory>(), prelude::BufferDataType::Uniform)
 	]);
-	let application_data = try!(engine.create_double_buffer(&application_data_prealloc));
+	let (application_data, appdata_stage) = try!(engine.create_double_buffer(&application_data_prealloc));
+
+	// setup initial data //
+	try!(appdata_stage.map().map(|mapped|
+	{
+		let vertices = mapped.map_mut::<structures::VertexMemoryForWireRender>(application_data_prealloc.offset(0));
+		vertices.unit_plane_source_vts = [
+			Position(-1.0f32, -1.0f32, 0.0f32, 1.0f32),
+			Position( 1.0f32, -1.0f32, 0.0f32, 1.0f32),
+			Position( 1.0f32,  1.0f32, 0.0f32, 1.0f32),
+			Position(-1.0f32,  1.0f32, 0.0f32, 1.0f32)
+		];
+	}));
 
 	// Descriptor Set //
 	let dslayout_u1 = try!(engine.create_descriptor_set_layout(&[
@@ -254,14 +267,32 @@ fn app_main() -> Result<(), prelude::EngineError>
 	let pipeline_states = try!(engine.create_graphics_pipelines(&[&background_render_state]));
 	let ref background_render_state = pipeline_states[0];
 	
-	// Initial Layouting for Swapchain Backbuffer Images //
+	// Initial Data Transmission, Layouting for Swapchain Backbuffer Images //
 	try!(engine.allocate_transient_transfer_command_buffers(1).and_then(|setup_commands|
 	{
+		let buffer_memory_barriers = [
+			prelude::BufferMemoryBarrier::hold_ownership(&appdata_stage, 0 .. application_data_prealloc.total_size(),
+				VK_ACCESS_MEMORY_READ_BIT, VK_ACCESS_TRANSFER_READ_BIT),
+			prelude::BufferMemoryBarrier::hold_ownership(&application_data, 0 .. application_data_prealloc.total_size(),
+				VK_ACCESS_MEMORY_READ_BIT, VK_ACCESS_TRANSFER_WRITE_BIT)
+		];
+		let buffer_memory_barriers_ret = [
+			prelude::BufferMemoryBarrier::hold_ownership(&appdata_stage, 0 .. application_data_prealloc.total_size(),
+				VK_ACCESS_TRANSFER_READ_BIT, VK_ACCESS_MEMORY_READ_BIT),
+			prelude::BufferMemoryBarrier::hold_ownership(&application_data, 0 .. application_data_prealloc.total_size(),
+				VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT | VK_ACCESS_INDEX_READ_BIT | VK_ACCESS_UNIFORM_READ_BIT)
+		];
 		let image_memory_barriers = main_frame.get_back_images().iter()
 			.map(|x| prelude::ImageMemoryBarrier::hold_ownership(*x, prelude::ImageSubresourceRange::base_color(),
 			0, VK_ACCESS_MEMORY_READ_BIT, VkImageLayout::Undefined, VkImageLayout::PresentSrcKHR)).collect::<Vec<_>>();
-		try!(setup_commands.begin(0)).pipeline_barrier(VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, false,
-			&[], &[], &image_memory_barriers);
+		
+		try!(setup_commands.begin(0).and_then(|recorder|
+			recorder.pipeline_barrier(VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, false,
+				&[], &buffer_memory_barriers, &image_memory_barriers)
+			.copy_buffer(&appdata_stage, &application_data, &[prelude::BufferCopyRegion(0, 0, application_data_prealloc.total_size() as usize)])
+			.pipeline_barrier(VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, false, &[], &buffer_memory_barriers_ret, &[])
+			.end()
+		));
 		setup_commands.execute()
 	}));
 

@@ -224,9 +224,9 @@ impl Engine
 	}
 	pub fn create_double_buffer(&self, preallocator: &MemoryPreallocator) -> Result<(DeviceBuffer, StagingBuffer), EngineError>
 	{
-		info!(target: "Prelude", "Allocated device memory: {} bytes(double-buffered)", preallocator.get_total_size());
-		DeviceBuffer::new(self, preallocator.get_total_size(), preallocator.get_usage()).and_then(|db|
-		StagingBuffer::new(self, preallocator.get_total_size()).map(|sb| (db, sb)))
+		info!(target: "Prelude", "Allocated device memory: {} bytes(double-buffered)", preallocator.total_size());
+		DeviceBuffer::new(self, preallocator.total_size(), preallocator.get_usage()).and_then(|db|
+		StagingBuffer::new(self, preallocator.total_size()).map(|sb| (db, sb)))
 	}
 	pub fn create_descriptor_set_layout(&self, bindings: &[Descriptor]) -> Result<DescriptorSetLayout, EngineError>
 	{

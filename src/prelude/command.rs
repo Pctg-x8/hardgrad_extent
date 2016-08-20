@@ -59,11 +59,11 @@ pub struct BufferMemoryBarrier<'a>
 {
 	pub src_access_mask: VkAccessFlags, pub dst_access_mask: VkAccessFlags,
 	pub src_queue_family_index: u32, pub dst_queue_family_index: u32,
-	pub buffer: &'a Buffer, pub range: std::ops::Range<VkDeviceSize>
+	pub buffer: &'a BufferResource, pub range: std::ops::Range<VkDeviceSize>
 }
 impl <'a> BufferMemoryBarrier<'a>
 {
-	pub fn hold_ownership(buf: &'a Buffer, range: std::ops::Range<VkDeviceSize>,
+	pub fn hold_ownership(buf: &'a BufferResource, range: std::ops::Range<VkDeviceSize>,
 		src_access_mask: VkAccessFlags, dst_access_mask: VkAccessFlags) -> Self
 	{
 		BufferMemoryBarrier
@@ -83,7 +83,7 @@ impl <'a> std::convert::Into<VkBufferMemoryBarrier> for &'a BufferMemoryBarrier<
 			sType: VkStructureType::BufferMemoryBarrier, pNext: std::ptr::null(),
 			srcAccessMask: self.src_access_mask, dstAccessMask: self.dst_access_mask,
 			srcQueueFamilyIndex: self.src_queue_family_index, dstQueueFamilyIndex: self.dst_queue_family_index,
-			buffer: self.buffer.internal.get(), offset: self.range.start, size: self.range.end - self.range.start
+			buffer: self.buffer.get_resource(), offset: self.range.start, size: self.range.end - self.range.start
 		}
 	}
 }
@@ -334,5 +334,24 @@ impl <'a> TransferCommandRecorder<'a>
 	pub fn end(mut self) -> Result<(), EngineError>
 	{
 		unsafe { vkEndCommandBuffer(*self.buffer_ref.unwrap()) }.and_then(|| { self.buffer_ref = None; Ok(()) }).map_err(EngineError::from)
+	}
+
+	pub fn copy_buffer(self, src: &BufferResource, dst: &BufferResource, regions: &[BufferCopyRegion]) -> Self
+	{
+		let regions_native = regions.into_iter().map(|&x| x.into()).collect::<Vec<_>>();
+		unsafe { vkCmdCopyBuffer(*self.buffer_ref.unwrap(), src.get_resource(), dst.get_resource(),
+			regions_native.len() as u32, regions_native.as_ptr()) };
+		self
+	}
+}
+
+#[derive(Clone, Copy)]
+pub struct BufferCopyRegion(pub usize, pub usize, pub usize);		// src, dst, size
+impl std::convert::Into<VkBufferCopy> for BufferCopyRegion
+{
+	fn into(self) -> VkBufferCopy
+	{
+		let BufferCopyRegion(src, dst, size) = self;
+		VkBufferCopy(src as VkDeviceSize, dst as VkDeviceSize, size as VkDeviceSize)
 	}
 }

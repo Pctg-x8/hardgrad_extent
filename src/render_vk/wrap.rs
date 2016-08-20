@@ -256,7 +256,7 @@ impl Queue
 		unsafe { vkQueueWaitIdle(self.obj) }.to_result()
 	}
 }
-pub struct DeviceMemory { #[allow(dead_code)] parent: Rc<Device>, obj: VkDeviceMemory }
+pub struct DeviceMemory { parent: Rc<Device>, obj: VkDeviceMemory }
 impl std::ops::Drop for DeviceMemory { fn drop(&mut self) { unsafe { vkFreeMemory(self.parent.obj, self.obj, std::ptr::null()) }; } }
 impl DeviceMemory
 {
@@ -265,23 +265,23 @@ impl DeviceMemory
 		let mut mem: VkDeviceMemory = empty_handle();
 		unsafe { vkAllocateMemory(device.obj, info, std::ptr::null(), &mut mem) }.map(move || DeviceMemory { obj: mem, parent: device.clone() })
 	}
-	pub fn map(&self, device: &Device, range: std::ops::Range<VkDeviceSize>) -> Result<*mut c_void, VkResult>
+	pub fn map(&self, range: std::ops::Range<VkDeviceSize>) -> Result<*mut c_void, VkResult>
 	{
 		let mut data_ptr: *mut c_void = std::ptr::null_mut();
-		unsafe { vkMapMemory(device.obj, self.obj, range.start, range.end - range.start, 0, std::mem::transmute(&mut data_ptr)) }
+		unsafe { vkMapMemory(self.parent.obj, self.obj, range.start, range.end - range.start, 0, std::mem::transmute(&mut data_ptr)) }
 			.map(move || data_ptr)
 	}
-	pub fn unmap(&self, device: &Device)
+	pub fn unmap(&self)
 	{
-		unsafe { vkUnmapMemory(device.obj, self.obj) };
+		unsafe { vkUnmapMemory(self.parent.obj, self.obj) };
 	}
-	pub fn bind_buffer(&self, device: &Device, buffer: &Buffer, offset: VkDeviceSize) -> Result<(), VkResult>
+	pub fn bind_buffer(&self, buffer: &Buffer, offset: VkDeviceSize) -> Result<(), VkResult>
 	{
-		unsafe { vkBindBufferMemory(device.obj, buffer.obj, self.obj, offset) }.to_result()
+		unsafe { vkBindBufferMemory(self.parent.obj, buffer.obj, self.obj, offset) }.to_result()
 	}
-	pub fn bind_image(&self, device: &Device, image: &Image, offset: VkDeviceSize) -> Result<(), VkResult>
+	pub fn bind_image(&self, image: &Image, offset: VkDeviceSize) -> Result<(), VkResult>
 	{
-		unsafe { vkBindImageMemory(device.obj, image.obj, self.obj, offset) }.to_result()
+		unsafe { vkBindImageMemory(self.parent.obj, image.obj, self.obj, offset) }.to_result()
 	}
 }
 pub struct Buffer { #[allow(dead_code)] parent: Rc<Device>, obj: VkBuffer }
