@@ -1,4 +1,4 @@
-// Prelude: Descriptor and its layouts in shader
+// Prelude: Descriptor and its layout in shader
 
 use prelude::internals::*;
 use std;
