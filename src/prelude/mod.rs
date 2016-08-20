@@ -17,12 +17,13 @@ pub use self::engine::Engine;
 pub use self::synchronize::{QueueFence, Fence};
 pub use self::framebuffer::{AttachmentDesc, PassDesc, PassDependency, AttachmentClearValue};
 pub use self::command::{MemoryBarrier, BufferMemoryBarrier, ImageMemoryBarrier};
-pub use self::resource::{ImageSubresourceRange};
+pub use self::resource::{ImageSubresourceRange, BufferDataType};
 pub use self::shading::{
 	VertexBinding, VertexAttribute, PushConstantDesc,
 	PrimitiveTopology, ViewportWithScissorRect, RasterizerState, AttachmentBlendState,
 	GraphicsPipelineBuilder
 };
+pub use self::descriptor::{ShaderStage, Descriptor};
 pub mod traits
 {
 	pub use super::command::{PrimaryCommandBuffers};

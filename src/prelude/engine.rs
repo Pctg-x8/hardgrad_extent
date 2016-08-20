@@ -12,9 +12,6 @@ use std::os::raw::*;
 use std::ffi::CStr;
 use std::io::prelude::*;
 
-// Platform Depends //
-use xcbw::XServerConnection;
-
 struct EngineLogger;
 impl log::Log for EngineLogger
 {
@@ -37,15 +34,19 @@ impl log::Log for EngineLogger
 
 pub trait EngineExports
 {
-	fn get_window_server(&self) -> &Rc<XServerConnection>;
+	fn get_window_server(&self) -> &Rc<WindowServer>;
 	fn get_instance(&self) -> &Rc<vk::Instance>;
 	fn get_device(&self) -> &DeviceExports;
+	fn get_memory_type_index_for_device_local(&self) -> u32;
+	fn get_memory_type_index_for_host_visible(&self) -> u32;
 }
 pub struct Engine
 {
-	window_system: Rc<XServerConnection>, instance: Rc<vk::Instance>, #[allow(dead_code)] debug_callback: vk::DebugReportCallback,
+	window_system: Rc<WindowServer>, instance: Rc<vk::Instance>, #[allow(dead_code)] debug_callback: vk::DebugReportCallback,
 	device: Device, pools: CommandPool, pipeline_cache: Rc<vk::PipelineCache>,
-	asset_dir: std::path::PathBuf
+	asset_dir: std::path::PathBuf,
+	physical_device_limits: VkPhysicalDeviceLimits,
+	memory_type_index_for_device_local: u32, memory_type_index_for_host_visible: u32
 }
 impl std::ops::Drop for Engine
 {
@@ -53,20 +54,21 @@ impl std::ops::Drop for Engine
 }
 impl EngineExports for Engine
 {
-	fn get_window_server(&self) -> &Rc<XServerConnection> { &self.window_system }
+	fn get_window_server(&self) -> &Rc<WindowServer> { &self.window_system }
 	fn get_instance(&self) -> &Rc<vk::Instance> { &self.instance }
 	fn get_device(&self) -> &DeviceExports { &self.device }
+	fn get_memory_type_index_for_device_local(&self) -> u32 { self.memory_type_index_for_device_local }
+	fn get_memory_type_index_for_host_visible(&self) -> u32 { self.memory_type_index_for_host_visible }
 }
 impl Engine
 {
-	pub fn new(app_name: &str, app_version: u32) -> Result<Engine, EngineError>
+	pub fn new(app_name: &str, app_version: u32) -> Result<Box<Engine>, EngineError>
 	{
 		// Setup Engine Logger //
 		log::set_logger(|max_log_level| { max_log_level.set(log::LogLevelFilter::Info); Box::new(EngineLogger) }).unwrap();
 		info!(target: "Prelude", "Initializing Engine...");
 
-		// ready for window system //
-		let window_server = Rc::new(XServerConnection::connect());
+		let window_server = try!(connect_to_window_server());
 
 		let instance = try!(vk::Instance::new(app_name, app_version, "Prelude Computer-Graphics Engine", VK_MAKE_VERSION!(0, 0, 1),
 			&["VK_LAYER_LUNARG_standard_validation"], &["VK_KHR_surface", "VK_KHR_xcb_surface", "VK_EXT_debug_report"]).map(|x| Rc::new(x)));
@@ -81,19 +83,30 @@ impl Engine
 				.map(|(i, _)| i as u32).ok_or(EngineError::GenericError("Unable to find Graphics Queue")));
 			let transfer_qf = queue_family_properties.iter().enumerate().filter(|&(i, _)| i as u32 != graphics_qf)
 				.find(|&(_, fp)| (fp.queueFlags & VK_QUEUE_TRANSFER_BIT) != 0).map(|(i, _)| i as u32);
-			Self::diagnose_adapter(&window_server, &adapter, graphics_qf);
+			Self::diagnose_adapter(&*window_server, &adapter, graphics_qf);
 			let device_features = VkPhysicalDeviceFeatures { geometryShader: 1, .. Default::default() };
 			try!(Device::new(&adapter, &device_features, graphics_qf, transfer_qf, &queue_family_properties[graphics_qf as usize]))
 		};
 		let pools = try!(CommandPool::new(&device));
 		let pipeline_cache = Rc::new(try!(vk::PipelineCache::new_empty(&device)));
 
-		Ok(Engine
+		let memory_types = adapter.get_memory_properties();
+		let mt_index_for_device_local = try!(memory_types.memoryTypes[..memory_types.memoryTypeCount as usize].iter()
+			.enumerate().find(|&(_, &VkMemoryType(flags, _))| (flags & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT) != 0)
+			.map(|(i, _)| i as u32).ok_or(EngineError::GenericError("Device Local Memory is not found")));
+		let mt_index_for_host_visible = try!(memory_types.memoryTypes[..memory_types.memoryTypeCount as usize].iter()
+			.enumerate().find(|&(_, &VkMemoryType(flags, _))| (flags & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) != 0)
+			.map(|(i, _)| i as u32).ok_or(EngineError::GenericError("Host Visible Memory is not found")));
+
+		Ok(Box::new(Engine
 		{
 			window_system: window_server, instance: instance, debug_callback: dbg_callback, device: device, pools: pools,
 			pipeline_cache: pipeline_cache,
-			asset_dir: std::env::current_exe().unwrap().parent().unwrap().to_path_buf().join("assets")
-		})
+			asset_dir: std::env::current_exe().unwrap().parent().unwrap().to_path_buf().join("assets"),
+			physical_device_limits: adapter.get_properties().limits,
+			memory_type_index_for_device_local: mt_index_for_device_local,
+			memory_type_index_for_host_visible: mt_index_for_host_visible
+		}))
 	}
 	pub fn with_assets_in(mut self, asset_dir_base: std::path::PathBuf) -> Self
 	{
@@ -102,12 +115,12 @@ impl Engine
 	}
 	pub fn process_messages(&self) -> bool
 	{
-		self.window_system.process_messages()
+		self.window_system.process_events() == ApplicationState::Continued
 	}
 	pub fn create_render_window(&self, size: VkExtent2D, title: &str) -> Result<Box<RenderWindow>, EngineError>
 	{
 		info!(target: "Prelude", "Creating Render Window \"{}\" ({}x{})", title, size.0, size.1);
-		XcbWindow::create_unresizable(self, size, title).map(|x| x as Box<RenderWindow>)
+		Window::create_unresizable(self, size, title).map(|x| x as Box<RenderWindow>)
 	}
 	
 	pub fn create_fence(&self) -> Result<Fence, EngineError>
@@ -209,11 +222,60 @@ impl Engine
 			&builder_into_natives.iter().map(|x| x.into()).collect::<Vec<_>>())
 			.map(|v| v.into_iter().map(GraphicsPipeline::new).collect::<Vec<_>>()).map_err(EngineError::from)
 	}
+	pub fn create_double_buffer(&self, preallocator: &MemoryPreallocator) -> Result<(DeviceBuffer, StagingBuffer), EngineError>
+	{
+		DeviceBuffer::new(self, preallocator.get_total_size(), preallocator.get_usage()).and_then(|db|
+		StagingBuffer::new(self, preallocator.get_total_size()).map(|sb| (db, sb)))
+	}
+	pub fn create_descriptor_set_layout(&self, bindings: &[Descriptor]) -> Result<DescriptorSetLayout, EngineError>
+	{
+		let native = bindings.into_iter().enumerate().map(|(i, x)| x.into_binding(i as u32)).collect::<Vec<_>>();
+		vk::DescriptorSetLayout::new(self.device.get_internal(), &native)
+			.map(|d| DescriptorSetLayout::new(d, bindings)).map_err(EngineError::from)
+	}
+	pub fn preallocate_all_descriptor_sets(&self, layouts: &[DescriptorSetLayout]) -> Result<DescriptorSets, EngineError>
+	{
+		let set_count = layouts.len();
+		let (uniform_total, combined_sampler_total) = layouts.iter().map(|x| x.descriptors().into_iter().fold((0, 0), |(u, cs), desc| match desc
+		{
+			&Descriptor::Uniform(n, _) => (u + n, cs),
+			&Descriptor::CombinedSampler(n, _) => (u, cs + n)
+		})).fold((0, 0), |(u, cs), (u2, cs2)| (u + u2, cs + cs2));
+		let pool_sizes = [Descriptor::Uniform(uniform_total, vec![]), Descriptor::CombinedSampler(combined_sampler_total, vec![])]
+			.into_iter().filter(|&desc| desc.count() != 0).map(|desc| desc.into_pool_size()).collect::<Vec<_>>();
+		
+		vk::DescriptorPool::new(self.device.get_internal(), set_count as u32, &pool_sizes).and_then(|pool|
+		pool.allocate_sets(self.device.get_internal(), &layouts.into_iter().map(|x| x.get_internal().get()).collect::<Vec<_>>())
+			.map(|sets| DescriptorSets::new(pool, sets))).map_err(EngineError::from)
+	}
 
 	fn parse_asset(&self, asset_path: &str, extension: &str) -> std::ffi::OsString
 	{
 		// ident ("." ident)* -> ident ("/" ident)*
 		self.asset_dir.join(asset_path.replace(".", "/")).with_extension(extension).into()
+	}
+
+	pub fn preallocate(&self, structure_sizes: &[(usize, BufferDataType)]) -> MemoryPreallocator
+	{
+		let uniform_alignment = self.physical_device_limits.minUniformBufferOffsetAlignment as usize;
+		let usage_flags = structure_sizes.iter().fold(0, |flags_accum, &(_, data_type)| match data_type
+		{
+			BufferDataType::Vertex => flags_accum | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+			BufferDataType::Index => flags_accum | VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
+			BufferDataType::Uniform => flags_accum | VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT
+		});
+		let offsets = structure_sizes.into_iter().chain(&[(0, BufferDataType::Vertex)]).scan(0usize, |offset_accum, &(size, data_type)|
+		{
+			let current = *offset_accum;
+			*offset_accum = match data_type
+			{
+				BufferDataType::Vertex | BufferDataType::Index => *offset_accum,
+				BufferDataType::Uniform => ((*offset_accum as f64 / uniform_alignment as f64).ceil() as usize) * uniform_alignment as usize
+			} + size;
+			Some(current)
+		}).collect::<Vec<_>>();
+
+		MemoryPreallocator::new(usage_flags, offsets)
 	}
 
 	pub fn submit_graphics_commands(&self, commands: &GraphicsCommandBuffers, wait_for_execute: &[(&QueueFence, VkPipelineStageFlags)],
@@ -235,7 +297,7 @@ impl Engine
 			.map_err(EngineError::from)
 	}
 
-	fn diagnose_adapter(server_con: &XServerConnection, adapter: &vk::PhysicalDevice, queue_index: u32)
+	fn diagnose_adapter(server_con: &WindowServer, adapter: &vk::PhysicalDevice, queue_index: u32)
 	{
 		// Feature Check //
 		let features = adapter.get_features();

@@ -1,9 +1,11 @@
 // Prelude: Resources(Buffer and Image)
 
+use prelude::internals::*;
 use std;
 use vkffi::*;
 use render_vk::wrap as vk;
 use traits::*;
+use render_vk::traits::*;
 
 pub trait ImageResource { fn get_resource(&self) -> VkImage; }
 
@@ -33,5 +35,84 @@ impl <'a> std::convert::Into<VkImageSubresourceRange> for &'a ImageSubresourceRa
 			baseMipLevel: base_mip, levelCount: level_count,
 			baseArrayLayer: base_array, layerCount: layer_count
 		}
+	}
+}
+
+#[derive(Clone, Copy)]
+pub enum BufferDataType
+{
+	Vertex, Index, Uniform
+}
+pub struct MemoryPreallocator
+{
+	usage_flags: VkBufferUsageFlags, offsets: Vec<usize>
+}
+pub trait MemoryPreallocatorInternals
+{
+	fn new(usage: VkBufferUsageFlags, offsets: Vec<usize>) -> Self;
+	fn get_usage(&self) -> VkBufferUsageFlags;
+	fn get_total_size(&self) -> VkDeviceSize;
+}
+impl MemoryPreallocatorInternals for MemoryPreallocator
+{
+	fn new(usage: VkBufferUsageFlags, offsets: Vec<usize>) -> Self { MemoryPreallocator { usage_flags: usage, offsets: offsets } }
+	fn get_usage(&self) -> VkBufferUsageFlags { self.usage_flags }
+	fn get_total_size(&self) -> VkDeviceSize { self.offsets.last().map(|&x| x).unwrap_or(0) as VkDeviceSize }
+}
+
+pub struct DeviceBuffer
+{
+	buffer: vk::Buffer, memory: vk::DeviceMemory
+}
+pub trait DeviceBufferInternals where Self: std::marker::Sized
+{
+	fn new(engine: &Engine, size: VkDeviceSize, usage: VkBufferUsageFlags) -> Result<Self, EngineError>;
+}
+impl DeviceBufferInternals for DeviceBuffer
+{
+	fn new(engine: &Engine, size: VkDeviceSize, usage: VkBufferUsageFlags) -> Result<Self, EngineError>
+	{
+		vk::Buffer::new(engine.get_device().get_internal(), &VkBufferCreateInfo
+		{
+			sType: VkStructureType::BufferCreateInfo, pNext: std::ptr::null(), flags: 0,
+			size: size, usage: usage | VK_BUFFER_USAGE_TRANSFER_DST_BIT, sharingMode: VkSharingMode::Exclusive,
+			queueFamilyIndexCount: 0, pQueueFamilyIndices: std::ptr::null()
+		}).and_then(|buffer|
+			vk::DeviceMemory::alloc(engine.get_device().get_internal(), &VkMemoryAllocateInfo
+			{
+				sType: VkStructureType::MemoryAllocateInfo, pNext: std::ptr::null(),
+				allocationSize: buffer.get_memory_requirements(engine.get_device().get_internal()).size,
+				memoryTypeIndex: engine.get_memory_type_index_for_device_local()
+			}).and_then(|memory| memory.bind_buffer(engine.get_device().get_internal(), &buffer, 0)
+				.map(|()| DeviceBuffer { buffer: buffer, memory: memory }))
+		).map_err(EngineError::from)
+	}
+}
+pub struct StagingBuffer
+{
+	buffer: vk::Buffer, memory: vk::DeviceMemory
+}
+pub trait StagingBufferInternals where Self: std::marker::Sized
+{
+	fn new(engine: &Engine, size: VkDeviceSize) -> Result<Self, EngineError>;
+}
+impl StagingBufferInternals for StagingBuffer
+{
+	fn new(engine: &Engine, size: VkDeviceSize) -> Result<Self, EngineError>
+	{
+		vk::Buffer::new(engine.get_device().get_internal(), &VkBufferCreateInfo
+		{
+			sType: VkStructureType::BufferCreateInfo, pNext: std::ptr::null(), flags: 0,
+			size: size, usage: VK_BUFFER_USAGE_TRANSFER_SRC_BIT, sharingMode: VkSharingMode::Exclusive,
+			queueFamilyIndexCount: 0, pQueueFamilyIndices: std::ptr::null()
+		}).and_then(|buffer|
+			vk::DeviceMemory::alloc(engine.get_device().get_internal(), &VkMemoryAllocateInfo
+			{
+				sType: VkStructureType::MemoryAllocateInfo, pNext: std::ptr::null(),
+				allocationSize: buffer.get_memory_requirements(engine.get_device().get_internal()).size,
+				memoryTypeIndex: engine.get_memory_type_index_for_host_visible()
+			}).and_then(|memory| memory.bind_buffer(&engine.get_device().get_internal(), &buffer, 0)
+				.map(|()| StagingBuffer { buffer: buffer, memory: memory }))
+		).map_err(EngineError::from)
 	}
 }

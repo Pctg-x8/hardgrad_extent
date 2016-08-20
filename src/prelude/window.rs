@@ -6,20 +6,207 @@ use std::rc::Rc;
 use vkffi::*;
 use render_vk::wrap as vk;
 use traits::*;
-use xcbw::*;
+use xcb::ffi::*;
+use std::os::raw::*;
+
+// Global Shared atomic value
+pub enum XInternAtom<'a>
+{
+	Requesting(&'a *mut xcb_connection_t, xcb_intern_atom_cookie_t), Arrived(xcb_atom_t)
+}
+impl <'a> XInternAtom<'a>
+{
+	fn request(con: &'a *mut xcb_connection_t, name: &str) -> Self
+	{
+		XInternAtom::Requesting(con, unsafe { xcb_intern_atom(*con, false as u8, name.len() as u16, name.as_ptr() as *const c_char) })
+	}
+	fn wait_reply(self) -> Self
+	{
+		match self
+		{
+			XInternAtom::Requesting(con, c) => XInternAtom::Arrived(unsafe { *xcb_intern_atom_reply(*con, c, std::ptr::null_mut()) }.atom),
+			_ => self
+		}
+	}
+	fn unwrap(&self) -> xcb_atom_t
+	{
+		match self { &XInternAtom::Arrived(a) => a, _ => panic!("Unwrapping Unarrived Data") }
+	}
+}
+
+#[derive(PartialEq)]
+pub enum ApplicationState
+{
+	Continued, Exited
+}
+pub trait NativeWindow
+{
+	fn xcb_show(&self, server: *mut xcb_connection_t);
+	fn xcb_surface_create_info(&self, server: *mut xcb_connection_t) -> VkXcbSurfaceCreateInfoKHR;
+}
+impl NativeWindow for xcb_window_t
+{
+	fn xcb_show(&self, server: *mut xcb_connection_t)
+	{
+		unsafe { xcb_map_window(server, *self) };
+	}
+	fn xcb_surface_create_info(&self, server: *mut xcb_connection_t) -> VkXcbSurfaceCreateInfoKHR
+	{
+		VkXcbSurfaceCreateInfoKHR
+		{
+			sType: VkStructureType::XcbSurfaceCreateInfoKHR, pNext: std::ptr::null(), flags: 0,
+			connection: server, window: *self
+		}
+	}
+}
+pub trait WindowServer
+{
+	fn create_unresizable_window(&self, size: VkExtent2D, title: &str) -> Result<Box<NativeWindow>, EngineError>;
+	fn show_window(&self, target: &NativeWindow);
+	fn flush(&self);
+	fn process_events(&self) -> ApplicationState;
+	fn is_vk_presentation_support(&self, adapter: &vk::PhysicalDevice, qf_index: u32) -> bool;
+	fn make_vk_surface(&self, target: &NativeWindow, instance: &Rc<vk::Instance>) -> Result<vk::Surface, EngineError>;
+}
+pub struct XServer
+{
+	internal: *mut xcb_connection_t,
+	root_depth: u8, root_visual: xcb_visualid_t, root_window: xcb_window_t,
+	atom_protocols: xcb_atom_t, atom_delete_window: xcb_atom_t
+}
+impl InternalExports<*mut xcb_connection_t> for XServer
+{
+	fn get_internal(&self) -> &*mut xcb_connection_t { &self.internal }
+}
+impl XServer
+{
+	pub fn connect() -> Result<Rc<WindowServer>, EngineError>
+	{
+		let mut screen_num = 0i32;
+		let con_ptr = unsafe { xcb_connect(std::ptr::null(), &mut screen_num) };
+		let con_err = unsafe { xcb_connection_has_error(con_ptr) };
+		if con_err > 0 { return Err(EngineError::XServerError(con_err)); }
+		let setup = unsafe { xcb_get_setup(con_ptr) };
+		fn recursive(mut iter: xcb_screen_iterator_t, iterate_rest: i32) -> Option<*mut xcb_screen_t>
+		{
+			if iterate_rest <= 0 { Some(iter.data) }
+			else if iter.rem == 0 { None }
+			else { recursive(unsafe { xcb_screen_next(&mut iter); iter }, iterate_rest - 1) }
+		}
+		let root_scr = try!(recursive(unsafe { xcb_setup_roots_iterator(setup) }, screen_num).ok_or(EngineError::GenericError("XServer Root Screen not found")));
+		let rd = unsafe { (*root_scr).root_depth };
+		let rv = unsafe { (*root_scr).root_visual };
+		let rw = unsafe { (*root_scr).root };
+
+		// Register callback on Window Destroy //
+		let protocols_atom = XInternAtom::request(&con_ptr, "WM_PROTOCOLS");
+		let delete_window_atom = XInternAtom::request(&con_ptr, "WM_DELETE_WINDOW");
+
+		Ok(Rc::new(XServer
+		{
+			internal: con_ptr,
+			root_depth: rd, root_visual: rv, root_window: rw,
+			atom_protocols: protocols_atom.wait_reply().unwrap(), atom_delete_window: delete_window_atom.wait_reply().unwrap()
+		}))
+	}
+}
+impl WindowServer for XServer
+{
+	fn create_unresizable_window(&self, size: VkExtent2D, title: &str) -> Result<Box<NativeWindow>, EngineError>
+	{
+		let object_id = unsafe { xcb_generate_id(self.internal) };
+		let VkExtent2D(width, height) = size;
+		unsafe { xcb_create_window(self.internal, self.root_depth, object_id, self.root_window,
+			0, 0, width as u16, height as u16, 0, XCB_WINDOW_CLASS_INPUT_OUTPUT as u16,
+			self.root_visual, 0, std::ptr::null()) };
+		let window_size_hint_params = [
+			16 | 32, 0, 0, 0, 0, // PMinSize | PMaxSize, pad1, pad2, pad3, pad4
+			width as i32, height as i32, 0, 0, 0, 0	// max_width, max_height, width_inc, height_inc, max_aspect[2]
+		];
+		unsafe { xcb_change_property(self.internal, XCB_PROP_MODE_REPLACE as u8, object_id, XCB_ATOM_WM_NAME, XCB_ATOM_STRING, 8, title.len() as u32, std::mem::transmute(title.as_ptr())) };
+		unsafe { xcb_change_property(self.internal, XCB_PROP_MODE_REPLACE as u8, object_id, self.atom_protocols, 4, 32, 1, std::mem::transmute(&self.atom_delete_window)) };
+		unsafe { xcb_change_property(self.internal, XCB_PROP_MODE_REPLACE as u8, object_id, XCB_ATOM_WM_NORMAL_HINTS, XCB_ATOM_WM_SIZE_HINTS, 32, window_size_hint_params.len() as u32 * 4, std::mem::transmute(window_size_hint_params.as_ptr())) };
+
+		Ok(Box::new(object_id))
+	}
+	fn show_window(&self, target: &NativeWindow)
+	{
+		target.xcb_show(self.internal);
+	}
+	fn flush(&self)
+	{
+		unsafe { xcb_flush(self.internal) };
+	}
+	fn process_events(&self) -> ApplicationState
+	{
+		fn recursive(this: &XServer, event_obj: *mut xcb_generic_event_t) -> ApplicationState
+		{
+			if !event_obj.is_null()
+			{
+				let event = &unsafe { *event_obj };
+				match event.response_type & 0x7f
+				{
+					XCB_CLIENT_MESSAGE =>
+					{
+						let cm_event: &xcb_client_message_event_t = unsafe { std::mem::transmute(event) };
+						let event_data: [u32; 5] = unsafe { std::mem::transmute(cm_event.data) };
+						if event_data[0] == this.atom_delete_window
+						{
+							ApplicationState::Exited
+						}
+						else { recursive(this, unsafe { xcb_poll_for_event(this.internal) }) }
+					},
+					_ =>
+					{
+						info!(target: "Prelude <- XServer", "xcb_event_response: {}", event.response_type);
+						recursive(this, unsafe { xcb_poll_for_event(this.internal) })
+					}
+				}
+			}
+			else { ApplicationState::Continued }
+		}
+
+		recursive(self, unsafe { xcb_poll_for_event(self.internal) })
+	}
+	fn is_vk_presentation_support(&self, adapter: &vk::PhysicalDevice, qf_index: u32) -> bool
+	{
+		adapter.is_xcb_presentation_support(qf_index, self.internal, self.root_visual)
+	}
+	fn make_vk_surface(&self, target: &NativeWindow, instance: &Rc<vk::Instance>) -> Result<vk::Surface, EngineError>
+	{
+		vk::Surface::new_xcb(instance, &target.xcb_surface_create_info(self.internal)).map_err(EngineError::from)
+	}
+}
+impl std::ops::Drop for XServer
+{
+	fn drop(&mut self)
+	{
+		unsafe { xcb_disconnect(self.internal) };
+	}
+}
+pub fn connect_to_window_server() -> Result<Rc<WindowServer>, EngineError>
+{
+	XServer::connect()
+}
+/*
+pub struct WaylandServer
+{
+
+}
+impl WindowServer for WaylandServer
+{
+	fn connect() -> Result<Self, EngineError>
+	{
+		Ok(WaylandServer {})
+	}
+}
+*/
 
 pub trait InternalWindow where Self: std::marker::Sized
 {
-	type NativeWindow;
-	type WindowServer: WindowProvider<Self::NativeWindow>;
-
 	fn create_unresizable(engine: &Engine, size: VkExtent2D, title: &str) -> Result<Box<Self>, EngineError>;
 }
-pub trait Window
-{
-	fn show(&self);
-}
-pub trait RenderWindow : Window
+pub trait RenderWindow
 {
 	fn get_back_images(&self) -> Vec<&EntireImage>;
 	fn get_format(&self) -> VkFormat;
@@ -31,101 +218,86 @@ pub trait RenderWindow : Window
 }
 pub struct EntireImage { pub resource: VkImage, pub view: vk::ImageView }
 impl ImageResource for EntireImage { fn get_resource(&self) -> VkImage { self.resource } }
-pub struct XcbWindow
+pub struct Window
 {
-	server: Rc<XServerConnection>, native: XWindowHandle,
-	#[allow(dead_code)] device_obj: Rc<vk::Surface>, swapchain: Rc<vk::Swapchain>, rt: Vec<EntireImage>,
+	#[allow(dead_code)] server: Rc<WindowServer>, #[allow(dead_code)] native: Box<NativeWindow>,
+	#[allow(dead_code)] device_obj: Rc<vk::Surface>, swapchain: Rc<vk::Swapchain>, render_targets: Vec<EntireImage>,
 	format: VkFormat, extent: VkExtent2D, has_vsync: bool,
 	backbuffer_available_signal: QueueFence, transfer_complete_signal: QueueFence
 }
-impl InternalWindow for XcbWindow
+impl Window
 {
-	type NativeWindow = XWindowHandle;
-	type WindowServer = XServerConnection;
-
-	fn create_unresizable(engine: &Engine, size: VkExtent2D, title: &str) -> Result<Box<Self>, EngineError>
+	pub fn create_unresizable(engine: &Engine, size: VkExtent2D, title: &str) -> Result<Box<Self>, EngineError>
 	{
 		let server = engine.get_window_server();
-		let native = server.create_unresizable_window(size, title);
-		server.show_window(native);
+		let native_w = try!(server.create_unresizable_window(size, title));
+		server.show_window(&*native_w);
 		server.flush();
-
-		let surface_info = VkXcbSurfaceCreateInfoKHR
-		{
-			sType: VkStructureType::XcbSurfaceCreateInfoKHR, pNext: std::ptr::null(), flags: 0,
-			connection: server.get_raw(), window: native
-		};
-		let surface = Rc::new(try!(vk::Surface::new_xcb(engine.get_instance(), &surface_info)));
-
+		let surface = Rc::new(try!(server.make_vk_surface(&*native_w, engine.get_instance())));
 		let adapter = engine.get_device().get_adapter();
 
-		// capabilities check //
-		if !engine.get_device().is_surface_support(&surface) { Err(EngineError::GenericError("Unsupported Surface")) }
-		else
+		// caps check //
+		if !engine.get_device().is_surface_support(&surface) { return Err(EngineError::GenericError("Unsupported Surface")); }
+		let surface_caps = adapter.get_surface_caps(&surface);
+
+		// making desired parameters //
+		let format = try!
 		{
-			let surface_caps = adapter.get_surface_caps(&surface);
-
-			// Making desired parameters //
-			let format = try!(adapter.enumerate_surface_formats(&surface).into_iter()
+			adapter.enumerate_surface_formats(&surface).into_iter()
 				.find(|x| x.format == VkFormat::R8G8B8A8_SRGB || x.format == VkFormat::B8G8R8A8_SRGB)
-				.ok_or(EngineError::GenericError("Desired Format(32bpp SRGB) is not supported")));
-			let present_modes = adapter.enumerate_present_modes(&surface);
-			let present_mode = try!(present_modes.iter().find(|&&x| x == VkPresentModeKHR::FIFO)
+				.ok_or(EngineError::GenericError("Desired Format(32bpp SRGB) is not supported"))
+		};
+		let present_modes = adapter.enumerate_present_modes(&surface);
+		let present_mode = try!
+		{
+			present_modes.iter().find(|&&x| x == VkPresentModeKHR::FIFO)
 				.or_else(|| present_modes.iter().find(|&&x| x == VkPresentModeKHR::Mailbox))
-				.ok_or(EngineError::GenericError("Desired Present Mode is not found")));
-			let extent = match surface_caps.currentExtent
-			{
-				VkExtent2D(std::u32::MAX, _) | VkExtent2D(_, std::u32::MAX) => VkExtent2D(640, 480),
-				ce => ce
-			};
+				.ok_or(EngineError::GenericError("Desired Present Mode is not found"))
+		};
+		let extent = match surface_caps.currentExtent
+		{
+			VkExtent2D(std::u32::MAX, _) | VkExtent2D(_, std::u32::MAX) => size,
+			_ => surface_caps.currentExtent
+		};
 
-			// set information and create //
-			let queue_family_indices = [engine.get_device().get_graphics_queue().family_index];
-			let scinfo = VkSwapchainCreateInfoKHR
+		// set information and create //
+		let queue_family_indices = [engine.get_device().get_graphics_queue().family_index];
+		let scinfo = VkSwapchainCreateInfoKHR
+		{
+			sType: VkStructureType::SwapchainCreateInfoKHR, pNext: std::ptr::null(),
+			minImageCount: std::cmp::max(surface_caps.minImageCount, 2), imageFormat: format.format, imageColorSpace: format.colorSpace,
+			imageExtent: extent, imageArrayLayers: 1, imageUsage: VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
+			imageSharingMode: VkSharingMode::Exclusive, compositeAlpha: VK_COMPOSITE_ALPHA_OPAQUE_BIT,
+			preTransform: VK_SURFACE_TRANSFORM_IDENTITY_BIT, presentMode: *present_mode, clipped: true as VkBool32,
+			pQueueFamilyIndices: queue_family_indices.as_ptr(), queueFamilyIndexCount: queue_family_indices.len() as u32,
+			oldSwapchain: std::ptr::null_mut(), flags: 0, surface: surface.get()
+		};
+		let sc = try!(vk::Swapchain::new(engine.get_device().get_internal(), &surface, &scinfo).map(|x| Rc::new(x)));
+		let rt_images = try!(sc.get_images());
+		let rt = try!(rt_images.iter().map(|&res|
+		{
+			vk::ImageView::new(engine.get_device().get_internal(), &VkImageViewCreateInfo
 			{
-				sType: VkStructureType::SwapchainCreateInfoKHR, pNext: std::ptr::null(),
-				minImageCount: std::cmp::max(surface_caps.minImageCount, 2), imageFormat: format.format, imageColorSpace: format.colorSpace,
-				imageExtent: extent, imageArrayLayers: 1, imageUsage: VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
-				imageSharingMode: VkSharingMode::Exclusive, compositeAlpha: VK_COMPOSITE_ALPHA_OPAQUE_BIT,
-				preTransform: VK_SURFACE_TRANSFORM_IDENTITY_BIT, presentMode: *present_mode, clipped: true as VkBool32,
-				pQueueFamilyIndices: queue_family_indices.as_ptr(), queueFamilyIndexCount: queue_family_indices.len() as u32,
-				oldSwapchain: std::ptr::null_mut(), flags: 0, surface: surface.get()
-			};
-			let sc = try!(vk::Swapchain::new(engine.get_device().get_internal(), &surface, &scinfo).map(|x| Rc::new(x)));
-			let rt_images = try!(sc.get_images());
-			let rt = try!(rt_images.iter().map(|&res|
-			{
-				vk::ImageView::new(engine.get_device().get_internal(), &VkImageViewCreateInfo
-				{
-					sType: VkStructureType::ImageViewCreateInfo, pNext: std::ptr::null(), flags: 0,
-					image: res, subresourceRange: vk::ImageSubresourceRange::default_color(),
-					format: format.format, viewType: VkImageViewType::Dim2,
-					components: VkComponentMapping::default()
-				}).map(|v| EntireImage { resource: res, view: v })
-			}).collect::<Result<Vec<_>, _>>());
-			info!(target: "Prelude", "Swapchain Backbuffer Count: {}", rt.len());
-			Ok(Box::new(XcbWindow
-			{
-				server: engine.get_window_server().clone(),
-				native: native, device_obj: surface, swapchain: sc, rt: rt,
-				format: format.format, extent: extent, has_vsync: *present_mode == VkPresentModeKHR::FIFO,
-				backbuffer_available_signal: try!(engine.create_queue_fence()),
-				transfer_complete_signal: try!(engine.create_queue_fence())
-			}))
-		}
+				sType: VkStructureType::ImageViewCreateInfo, pNext: std::ptr::null(), flags: 0,
+				image: res, subresourceRange: vk::ImageSubresourceRange::default_color(),
+				format: format.format, viewType: VkImageViewType::Dim2,
+				components: VkComponentMapping::default()
+			}).map(|v| EntireImage { resource: res, view: v })
+		}).collect::<Result<Vec<_>, _>>());
+		
+		engine.create_queue_fence().and_then(|backbuffer_available_signal|
+		engine.create_queue_fence().map(|transfer_complete_signal| Box::new(Window
+		{
+			server: server.clone(), native: native_w, device_obj: surface, swapchain: sc, render_targets: rt,
+			format: format.format, extent: extent, has_vsync: *present_mode == VkPresentModeKHR::FIFO,
+			backbuffer_available_signal: backbuffer_available_signal,
+			transfer_complete_signal: transfer_complete_signal
+		})))
 	}
 }
-impl Window for XcbWindow
+impl RenderWindow for Window
 {
-	fn show(&self)
-	{
-		self.server.show_window(self.native);
-		self.server.flush();
-	}
-}
-impl RenderWindow for XcbWindow
-{
-	fn get_back_images(&self) -> Vec<&EntireImage> { self.rt.iter().collect() }
+	fn get_back_images(&self) -> Vec<&EntireImage> { self.render_targets.iter().collect() }
 	fn get_format(&self) -> VkFormat { self.format }
 	fn get_extent(&self) -> VkExtent2D { self.extent }
 	fn execute_rendering(&self, engine: &Engine, g_commands: &GraphicsCommandBuffers, t_commands: Option<&TransferCommandBuffers>, signal_on_complete: &Fence)

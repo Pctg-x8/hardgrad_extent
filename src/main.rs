@@ -16,11 +16,9 @@ mod constants;
 use constants::*;
 mod traits;
 use traits::*;
-mod xcbw;
-use xcbw::*;
 mod vertex_formats;
 // mod device_resources;
-// mod structures;
+mod structures;
 // mod logical_resources;
 mod utils;
 use nalgebra::*;
@@ -203,10 +201,10 @@ fn app_main() -> Result<(), prelude::EngineError>
 {
 	utils::memory_management_test();
 
-	let prelude = try!(prelude::Engine::new("HardGrad->Extent", VK_MAKE_VERSION!(0, 0, 1))).with_assets_in(std::env::current_dir().unwrap());
-	let main_frame = try!(prelude.create_render_window(VkExtent2D(640, 480), "HardGrad -> Extent"));
+	let engine = try!(prelude::Engine::new("HardGrad->Extent", VK_MAKE_VERSION!(0, 0, 1))).with_assets_in(std::env::current_dir().unwrap());
+	let main_frame = try!(engine.create_render_window(VkExtent2D(640, 480), "HardGrad -> Extent"));
 	let VkExtent2D(frame_width, frame_height) = main_frame.get_extent();
-	let execute_next_signal = try!(prelude.create_fence());
+	let execute_next_signal = try!(engine.create_fence());
 
 	let rp_attachment_descs =
 	[
@@ -218,31 +216,45 @@ fn app_main() -> Result<(), prelude::EngineError>
 		}
 	];
 	let render_passes = [prelude::PassDesc::single_fragment_output(0)];
-	let rp_framebuffer_form = try!(prelude.create_render_pass(&rp_attachment_descs, &render_passes, &[]));
+	let rp_framebuffer_form = try!(engine.create_render_pass(&rp_attachment_descs, &render_passes, &[]));
 	let framebuffers = try!(main_frame.get_back_images().iter()
-		.map(|x| prelude.create_framebuffer(&rp_framebuffer_form, &[&x.view], VkExtent3D(frame_width, frame_height, 1)))
+		.map(|x| engine.create_framebuffer(&rp_framebuffer_form, &[&x.view], VkExtent3D(frame_width, frame_height, 1)))
 		.collect::<Result<Vec<_>, _>>());
+
+	// Resources //
+	let application_data_prealloc = engine.preallocate(&[
+		(std::mem::size_of::<structures::VertexMemoryForWireRender>(), prelude::BufferDataType::Vertex),
+		(std::mem::size_of::<structures::IndexMemory>(), prelude::BufferDataType::Index),
+		(std::mem::size_of::<structures::UniformMemory>(), prelude::BufferDataType::Uniform)
+	]);
+	let application_data = try!(engine.create_double_buffer(&application_data_prealloc));
+
+	// Descriptor Set //
+	let dslayout_u1 = try!(engine.create_descriptor_set_layout(&[
+		prelude::Descriptor::Uniform(1, vec![prelude::ShaderStage::Vertex, prelude::ShaderStage::Geometry])
+	]));
+	let all_descriptors = try!(engine.preallocate_all_descriptor_sets(&[dslayout_u1]));
 	
 	// Shading Structures //
-	let raw_output_vert = try!(prelude.create_vertex_shader_from_asset("shaders.RawOutput", "main", &[
+	let raw_output_vert = try!(engine.create_vertex_shader_from_asset("shaders.RawOutput", "main", &[
 		prelude::VertexBinding::PerVertex(std::mem::size_of::<vertex_formats::Position>() as u32),
 		prelude::VertexBinding::PerInstance(std::mem::size_of::<u32>() as u32)
 		], &[prelude::VertexAttribute(0, VkFormat::R32G32B32A32_SFLOAT, 0), prelude::VertexAttribute(1, VkFormat::R32_UINT, 0)]));
-	let backline_duplicator = try!(prelude.create_geometry_shader_from_asset("shaders.BackLineDuplicator", "main"));
-	let through_color_frag = try!(prelude.create_fragment_shader_from_asset("shaders.ThroughColor", "main"));
+	let backline_duplicator = try!(engine.create_geometry_shader_from_asset("shaders.BackLineDuplicator", "main"));
+	let through_color_frag = try!(engine.create_fragment_shader_from_asset("shaders.ThroughColor", "main"));
 
 	let swapchain_viewport = VkViewport(0.0f32, 0.0f32, frame_width as f32, frame_height as f32, 0.0f32, 1.0f32);
-	let background_render_layout = try!(prelude.create_pipeline_layout(&[], &[prelude::PushConstantDesc(VK_SHADER_STAGE_GEOMETRY_BIT, 0 .. 4)]));
+	let background_render_layout = try!(engine.create_pipeline_layout(&[], &[prelude::PushConstantDesc(VK_SHADER_STAGE_GEOMETRY_BIT, 0 .. 4)]));
 	let background_render_state = prelude::GraphicsPipelineBuilder::new(&background_render_layout, &rp_framebuffer_form, 0)
 		.vertex_shader(&raw_output_vert).geometry_shader(&backline_duplicator).fragment_shader(&through_color_frag)
 		.primitive_topology(prelude::PrimitiveTopology::LineStrip(true))
 		.viewport_scissors(&[prelude::ViewportWithScissorRect::default_scissor(swapchain_viewport)])
 		.blend_state(&[prelude::AttachmentBlendState::PremultipliedAlphaBlend]);
-	let pipeline_states = try!(prelude.create_graphics_pipelines(&[&background_render_state]));
+	let pipeline_states = try!(engine.create_graphics_pipelines(&[&background_render_state]));
 	let ref background_render_state = pipeline_states[0];
 	
 	// Initial Layouting for Swapchain Backbuffer Images //
-	try!(prelude.allocate_transient_transfer_command_buffers(1).and_then(|setup_commands|
+	try!(engine.allocate_transient_transfer_command_buffers(1).and_then(|setup_commands|
 	{
 		let image_memory_barriers = main_frame.get_back_images().iter()
 			.map(|x| prelude::ImageMemoryBarrier::hold_ownership(*x, prelude::ImageSubresourceRange::base_color(),
@@ -253,7 +265,7 @@ fn app_main() -> Result<(), prelude::EngineError>
 	}));
 
 	// Rendering Commands //
-	let framebuffer_commands = try!(prelude.allocate_graphics_command_buffers(main_frame.get_back_images().len() as u32));
+	let framebuffer_commands = try!(engine.allocate_graphics_command_buffers(main_frame.get_back_images().len() as u32));
 	try!(framebuffer_commands.begin_all().and_then(|iter| iter.map(|(i, recorder)|
 	{
 		let color_output_barrier = prelude::ImageMemoryBarrier::hold_ownership(
@@ -269,17 +281,17 @@ fn app_main() -> Result<(), prelude::EngineError>
 		.end()
 	}).fold(Ok(()), |e, x| match (&e, &x) { (&Err(_), _) => e, (_, &Err(_)) => x, _ => Ok(()) })));
 
-	let mut frame_index = try!(main_frame.execute_rendering(&prelude, &framebuffer_commands, None, &execute_next_signal));
+	let mut frame_index = try!(main_frame.execute_rendering(&engine, &framebuffer_commands, None, &execute_next_signal));
 
-	while prelude.process_messages()
+	while engine.process_messages()
 	{
 		// Render code...
 		if execute_next_signal.get_status().is_ok()
 		{
 			frame_index = try!
 			{
-				main_frame.present(&prelude, frame_index).and_then(|()|
-					main_frame.execute_rendering(&prelude, &framebuffer_commands, None, &execute_next_signal))
+				main_frame.present(&engine, frame_index).and_then(|()|
+					main_frame.execute_rendering(&engine, &framebuffer_commands, None, &execute_next_signal))
 			};
 		}
 	}
