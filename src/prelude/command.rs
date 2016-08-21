@@ -124,6 +124,9 @@ impl <'a> std::convert::Into<VkImageMemoryBarrier> for &'a ImageMemoryBarrier<'a
 	}
 }
 
+pub type GraphicsCommandBuffer = VkCommandBuffer;
+pub type GraphicsCommandBuffersView = [GraphicsCommandBuffer];
+
 pub struct GraphicsCommandBuffers { parent: Rc<vk::CommandPool>, internal: Vec<VkCommandBuffer> }
 impl std::ops::Drop for GraphicsCommandBuffers
 {
@@ -131,6 +134,11 @@ impl std::ops::Drop for GraphicsCommandBuffers
 	{
 		unsafe { vkFreeCommandBuffers(self.parent.parent().get(), self.parent.get(), self.internal.len() as u32, self.internal.as_ptr()) };
 	}
+}
+impl std::ops::Deref for GraphicsCommandBuffers
+{
+	type Target = GraphicsCommandBuffersView;
+	fn deref(&self) -> &Self::Target { &self.internal }
 }
 impl InternalExports<Vec<VkCommandBuffer>> for GraphicsCommandBuffers { fn get_internal(&self) -> &Vec<VkCommandBuffer> { &self.internal } }
 pub trait GraphicsCommandBuffersInternals { fn new(parent: &Rc<vk::CommandPool>, cbs: Vec<VkCommandBuffer>) -> Self; }
@@ -311,6 +319,36 @@ impl <'a> GraphicsCommandRecorder<'a>
 	pub fn end_render_pass(self) -> Self
 	{
 		unsafe { vkCmdEndRenderPass(*self.buffer_ref.unwrap()) };
+		self
+	}
+
+	pub fn bind_pipeline(self, pipeline: &GraphicsPipeline) -> Self
+	{
+		unsafe { vkCmdBindPipeline(*self.buffer_ref.unwrap(), VkPipelineBindPoint::Graphics, pipeline.get_internal().get()) };
+		self
+	}
+	pub fn bind_descriptor_sets(self, layout: &PipelineLayout, sets: &DescriptorSetArrayView) -> Self
+	{
+		unsafe { vkCmdBindDescriptorSets(*self.buffer_ref.unwrap(), VkPipelineBindPoint::Graphics, layout.get_internal().get(), 0,
+			sets.len() as u32, sets.as_ptr(), 0, std::ptr::null()) };
+		self
+	}
+	pub fn bind_vertex_buffers(self, buffer_offsets: &[(&BufferResource, usize)]) -> Self
+	{
+		let (buffer_native, offsets_native): (Vec<_>, Vec<_>) = buffer_offsets.into_iter()
+			.map(|&(b, v)| (b.get_resource(), v as VkDeviceSize)).unzip();
+		unsafe { vkCmdBindVertexBuffers(*self.buffer_ref.unwrap(), 0, buffer_native.len() as u32, buffer_native.as_ptr(), offsets_native.as_ptr()) };
+		self
+	}
+	pub fn bind_index_buffer(self, buffer: &BufferResource, offset: usize) -> Self
+	{
+		unsafe { vkCmdBindIndexBuffer(*self.buffer_ref.unwrap(), buffer.get_resource(), offset as VkDeviceSize, VkIndexType::U16) };
+		self
+	}
+
+	pub fn draw(self, vertex_count: u32, instance_count: u32) -> Self
+	{
+		unsafe { vkCmdDraw(*self.buffer_ref.unwrap(), vertex_count, instance_count, 0, 0) };
 		self
 	}
 }

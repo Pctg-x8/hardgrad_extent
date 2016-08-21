@@ -184,19 +184,8 @@ impl PhysicalDevice
 		modes
 	}
 }
-/*
-impl PhysicalDevice
-{
-	pub fn get_memory_type_index(&self, desired_property_flags: VkMemoryPropertyFlags) -> Option<usize>
-	{
-		self.memory_props.memoryTypes[0 .. self.memory_props.memoryTypeCount as usize]
-			.iter().enumerate().find(|&(_, &VkMemoryType(property_flags, _))| (property_flags & desired_property_flags) != 0)
-			.map(|(i, _)| i)
-	}
-}
-*/
 pub struct Device { obj: VkDevice, #[allow(dead_code)] parent: Rc<PhysicalDevice> }
-impl std::ops::Drop for Device { fn drop(&mut self) { unsafe { vkDestroyDevice(self.obj, std::ptr::null()) }; } }
+impl std::ops::Drop for Device { fn drop(&mut self) { self.wait_for_idle().unwrap(); unsafe { vkDestroyDevice(self.obj, std::ptr::null()) }; } }
 impl NativeOwner<VkDevice> for Device { fn get(&self) -> VkDevice { self.obj } }
 impl Device
 {
@@ -421,6 +410,7 @@ impl PipelineCache
 }
 pub struct Pipeline { parent: Rc<Device>, obj: VkPipeline }
 impl std::ops::Drop for Pipeline { fn drop(&mut self) { unsafe { vkDestroyPipeline(self.parent.obj, self.obj, std::ptr::null()) }; } }
+impl NativeOwner<VkPipeline> for Pipeline { fn get(&self) -> VkPipeline { self.obj } }
 impl Pipeline
 {
 	pub fn new(device: &Rc<Device>, cache: &PipelineCache, infos: &[VkGraphicsPipelineCreateInfo]) -> Result<Vec<Self>, VkResult>
@@ -441,13 +431,13 @@ impl Fence
 		let mut fence: VkFence = empty_handle();
 		unsafe { vkCreateFence(device.obj, &info, std::ptr::null(), &mut fence) }.map(move || Fence { obj: fence, parent: device.clone() })
 	}
-	pub fn wait(&self, parent: &Device) -> Result<(), VkResult>
+	pub fn wait(&self) -> Result<(), VkResult>
 	{
-		unsafe { vkWaitForFences(parent.obj, 1, &self.obj, true as VkBool32, std::u64::MAX) }.to_result()
+		unsafe { vkWaitForFences(self.parent.obj, 1, &self.obj, true as VkBool32, std::u64::MAX) }.to_result()
 	}
-	pub fn reset(&self, parent: &Device) -> Result<(), VkResult>
+	pub fn reset(&self) -> Result<(), VkResult>
 	{
-		unsafe { vkResetFences(parent.obj, 1, &self.obj) }.to_result()
+		unsafe { vkResetFences(self.parent.obj, 1, &self.obj) }.to_result()
 	}
 	pub fn get_status(&self) -> Result<(), VkResult>
 	{

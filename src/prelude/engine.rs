@@ -32,6 +32,17 @@ impl log::Log for EngineLogger
 	}
 }
 
+fn mtflags_decomposite(flags: VkMemoryPropertyFlags) -> Vec<String>
+{
+	let mut temp: Vec<String> = Vec::new();
+	if (flags & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT) != 0 { temp.push(String::from("Device Local")); }
+	if (flags & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) != 0 { temp.push(String::from("Host Visible")); }
+	if (flags & VK_MEMORY_PROPERTY_HOST_COHERENT_BIT) != 0 { temp.push(String::from("Host Coherent")); }
+	if (flags & VK_MEMORY_PROPERTY_HOST_CACHED_BIT) != 0 { temp.push(String::from("Host Cached")); }
+	if (flags & VK_MEMORY_PROPERTY_LAZILY_ALLOCATED_BIT) != 0 { temp.push(String::from("Lazily Allocated")); }
+	temp
+}
+
 pub trait EngineExports
 {
 	fn get_window_server(&self) -> &Rc<WindowServer>;
@@ -97,6 +108,9 @@ impl Engine
 		let mt_index_for_host_visible = try!(memory_types.memoryTypes[..memory_types.memoryTypeCount as usize].iter()
 			.enumerate().find(|&(_, &VkMemoryType(flags, _))| (flags & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) != 0)
 			.map(|(i, _)| i as u32).ok_or(EngineError::GenericError("Host Visible Memory is not found")));
+		
+		info!(target: "Prelude", "MemoryType[Device Local] Index = {}: {:?}", mt_index_for_device_local, mtflags_decomposite(memory_types.memoryTypes[mt_index_for_device_local as usize].0));
+		info!(target: "Prelude", "MemoryType[Host Visible] Index = {}: {:?}", mt_index_for_host_visible, mtflags_decomposite(memory_types.memoryTypes[mt_index_for_host_visible as usize].0));
 
 		Ok(Box::new(Engine
 		{
@@ -267,22 +281,33 @@ impl Engine
 		});
 		let offsets = structure_sizes.into_iter().chain(&[(0, BufferDataType::Vertex)]).scan(0usize, |offset_accum, &(size, data_type)|
 		{
-			let current = *offset_accum;
-			*offset_accum = match data_type
+			let current = match data_type
 			{
 				BufferDataType::Vertex | BufferDataType::Index => *offset_accum,
 				BufferDataType::Uniform => ((*offset_accum as f64 / uniform_alignment as f64).ceil() as usize) * uniform_alignment as usize
-			} + size;
+			};
+			*offset_accum = current + size;
 			Some(current)
 		}).collect::<Vec<_>>();
 
+		info!(target: "Prelude::MemoryPreallocator", "Preallocation Results: ");
+		info!(target: "Prelude::MemoryPreallocator", "-- Minimum Alignment for Uniform Buffer: {} bytes", uniform_alignment);
+		info!(target: "Prelude::MemoryPreallocator", "-- Preallocated Offsets: {:?}", offsets);
+
 		MemoryPreallocator::new(usage_flags, offsets)
 	}
+	pub fn update_descriptors(&self, write_infos: &[DescriptorSetWriteInfo])
+	{
+		let write_infos_native_interp = write_infos.into_iter().map(|x| Into::<IntoWriteDescriptorSetNativeStruct>::into(x)).collect::<Vec<_>>();
+		let write_infos_native = write_infos_native_interp.into_iter().map(|x| Into::<VkWriteDescriptorSet>::into(x)).collect::<Vec<_>>();
+		unsafe { vkUpdateDescriptorSets(self.device.get_internal().get(), write_infos_native.len() as u32, write_infos_native.as_ptr(),
+			0, std::ptr::null()) };
+	}
 
-	pub fn submit_graphics_commands(&self, commands: &GraphicsCommandBuffers, wait_for_execute: &[(&QueueFence, VkPipelineStageFlags)],
+	pub fn submit_graphics_commands(&self, commands: &GraphicsCommandBuffersView, wait_for_execute: &[(&QueueFence, VkPipelineStageFlags)],
 		signal_on_complete: Option<&QueueFence>, signal_on_complete_host: Option<&Fence>) -> Result<(), EngineError>
 	{
-		self.device.get_graphics_queue().submit_commands(commands.get_internal(),
+		self.device.get_graphics_queue().submit_commands(commands,
 			&wait_for_execute.into_iter().map(|&(q, _)| q.get_internal().get()).collect::<Vec<_>>(),
 			&wait_for_execute.into_iter().map(|&(_, s)| s).collect::<Vec<_>>(),
 			&signal_on_complete.map(|q| vec![q.get_internal().get()]).unwrap_or(vec![]), signal_on_complete_host.map(|f| f.get_internal()))

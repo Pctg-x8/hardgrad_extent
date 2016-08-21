@@ -76,6 +76,7 @@ impl DeviceBufferInternals for DeviceBuffer
 {
 	fn new(engine: &Engine, size: VkDeviceSize, usage: VkBufferUsageFlags) -> Result<Self, EngineError>
 	{
+		info!(target: "Prelude", "Creating Device Buffer with usage {:b}", usage);
 		vk::Buffer::new(engine.get_device().get_internal(), &VkBufferCreateInfo
 		{
 			sType: VkStructureType::BufferCreateInfo, pNext: std::ptr::null(), flags: 0,

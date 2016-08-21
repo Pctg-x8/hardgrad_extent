@@ -145,6 +145,10 @@ impl PipelineLayoutInternals for PipelineLayout
 {
 	fn new(pl: vk::PipelineLayout) -> Self { PipelineLayout { internal: pl } }
 }
+impl InternalExports<vk::PipelineLayout> for PipelineLayout
+{
+	fn get_internal(&self) -> &vk::PipelineLayout { &self.internal }
+}
 
 // Primitive Topology + With-Adjacency flag
 #[derive(Clone, Copy)]
@@ -407,4 +411,8 @@ pub trait GraphicsPipelineInternals { fn new(p: vk::Pipeline) -> Self; }
 impl GraphicsPipelineInternals for GraphicsPipeline
 {
 	fn new(p: vk::Pipeline) -> Self { GraphicsPipeline { internal: p } }
+}
+impl InternalExports<vk::Pipeline> for GraphicsPipeline
+{
+	fn get_internal(&self) -> &vk::Pipeline { &self.internal }
 }

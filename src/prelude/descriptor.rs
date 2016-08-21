@@ -115,8 +115,56 @@ impl DescriptorSetsInternals for DescriptorSets
 		DescriptorSets { pool: pool, sets: sets }
 	}
 }
-impl std::ops::Index<usize> for DescriptorSets
+impl std::ops::Deref for DescriptorSets
 {
-	type Output = VkDescriptorSet;
-	fn index<'a>(&'a self, idx: usize) -> &'a Self::Output { &self.sets[idx] }
+	type Target = DescriptorSetArrayView;
+	fn deref(&self) -> &Self::Target { &self.sets }
+}
+pub type DescriptorSetArrayView = [VkDescriptorSet];
+
+pub struct BufferInfo<'a>(pub &'a BufferResource, pub std::ops::Range<usize>);
+impl <'a> std::convert::Into<VkDescriptorBufferInfo> for &'a BufferInfo<'a>
+{
+	fn into(self) -> VkDescriptorBufferInfo
+	{
+		let &BufferInfo(res, ref range) = self;
+		VkDescriptorBufferInfo(res.get_resource(), range.start as VkDeviceSize, (range.end - range.start) as VkDeviceSize)
+	}
+}
+
+pub enum DescriptorSetWriteInfo<'a>
+{
+	UniformBuffer(VkDescriptorSet, u32, Vec<BufferInfo<'a>>)
+}
+pub struct IntoWriteDescriptorSetNativeStruct
+{
+	target: VkDescriptorSet, binding: u32,
+	dtype: VkDescriptorType, buffers: Vec<VkDescriptorBufferInfo>
+}
+impl <'a> std::convert::Into<IntoWriteDescriptorSetNativeStruct> for &'a DescriptorSetWriteInfo<'a>
+{
+	fn into(self) -> IntoWriteDescriptorSetNativeStruct
+	{
+		match self
+		{
+			&DescriptorSetWriteInfo::UniformBuffer(target, binding, ref bufs) => IntoWriteDescriptorSetNativeStruct
+			{
+				target: target, binding: binding, buffers: bufs.iter().map(|x| x.into()).collect(),
+				dtype: VkDescriptorType::UniformBuffer
+			}
+		}
+	}
+}
+impl std::convert::Into<VkWriteDescriptorSet> for IntoWriteDescriptorSetNativeStruct
+{
+	fn into(self) -> VkWriteDescriptorSet
+	{
+		VkWriteDescriptorSet
+		{
+			sType: VkStructureType::WriteDescriptorSet, pNext: std::ptr::null(),
+			dstSet: self.target, dstBinding: self.binding, dstArrayElement: 0,
+			descriptorType: self.dtype, descriptorCount: self.buffers.len() as u32,
+			pBufferInfo: self.buffers.as_ptr(), pImageInfo: std::ptr::null(), pTexelBufferView: std::ptr::null()
+		}
+	}
 }

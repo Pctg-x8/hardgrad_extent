@@ -5,7 +5,6 @@ use std;
 use vkffi::*;
 use render_vk::wrap as vk;
 use std::rc::Rc;
-use traits::*;
 
 pub struct AttachmentDesc
 {

@@ -23,7 +23,7 @@ pub use self::shading::{
 	PrimitiveTopology, ViewportWithScissorRect, RasterizerState, AttachmentBlendState,
 	GraphicsPipelineBuilder
 };
-pub use self::descriptor::{ShaderStage, Descriptor};
+pub use self::descriptor::{ShaderStage, Descriptor, BufferInfo, DescriptorSetWriteInfo};
 pub mod traits
 {
 	pub use super::command::{PrimaryCommandBuffers};

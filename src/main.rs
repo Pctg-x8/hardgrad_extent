@@ -191,13 +191,54 @@ impl Player
 	}
 }
 */
-fn main()
+
+// Background Datastore //
+pub struct BackgroundDatastore<'a>
 {
-	if let Err(e) = app_main()
+	buffer_data: &'a mut [structures::BackgroundInstance; MAX_BK_COUNT],
+	instance_data: &'a mut [u32; MAX_BK_COUNT]
+}
+impl <'a> BackgroundDatastore<'a>
+{
+	pub fn new(buffer_data_ref: &'a mut [structures::BackgroundInstance; MAX_BK_COUNT], instance_data_ref: &'a mut [u32; MAX_BK_COUNT]) -> Self
 	{
-		prelude::crash(e);
+		BackgroundDatastore
+		{
+			buffer_data: buffer_data_ref,
+			instance_data: instance_data_ref
+		}
+	}
+	pub fn update(&mut self, mut randomizer: &mut rand::Rng, delta_time: time::Duration, appear: bool)
+	{
+		let delta_sec = delta_time.num_microseconds().unwrap_or(0) as f32 / 1_000_000.0f32;
+		let mut require_appear = appear;
+		let mut left_range = rand::distributions::Range::new(-14.0f32, 14.0f32);
+		let mut count_range = rand::distributions::Range::new(2, 10);
+		let mut scale_range = rand::distributions::Range::new(1.0f32, 3.0f32);
+		for (i, m) in self.instance_data.iter_mut().enumerate()
+		{
+			if *m == 0
+			{
+				// instantiate randomly
+				if require_appear
+				{
+					let scale = scale_range.sample(&mut randomizer);
+					*m = 1;
+					self.buffer_data[i].offset = [left_range.sample(&mut randomizer), -20.0f32, -20.0f32, count_range.sample(&mut randomizer) as f32];
+					self.buffer_data[i].scale = [scale, scale, 1.0f32, 1.0f32];
+					require_appear = false;
+				}
+			}
+			else
+			{
+				self.buffer_data[i].offset[1] += delta_sec * 22.0f32;
+				*m = if self.buffer_data[i].offset[1] >= 20.0f32 { 0 } else { 1 };
+			}
+		}
 	}
 }
+
+fn main() { if let Err(e) = app_main() { prelude::crash(e); } }
 fn app_main() -> Result<(), prelude::EngineError>
 {
 	utils::memory_management_test();
@@ -211,7 +252,7 @@ fn app_main() -> Result<(), prelude::EngineError>
 	[
 		prelude::AttachmentDesc
 		{
-			format: main_frame.get_format(), clear_on_load: Some(true),
+			format: main_frame.get_format(), clear_on_load: Some(true), preserve_stored_value: true,
 			initial_layout: VkImageLayout::ColorAttachmentOptimal, final_layout: VkImageLayout::PresentSrcKHR,
 			.. Default::default()
 		}
@@ -226,6 +267,7 @@ fn app_main() -> Result<(), prelude::EngineError>
 	let application_data_prealloc = engine.preallocate(&[
 		(std::mem::size_of::<structures::VertexMemoryForWireRender>(), prelude::BufferDataType::Vertex),
 		(std::mem::size_of::<structures::IndexMemory>(), prelude::BufferDataType::Index),
+		(std::mem::size_of::<structures::InstanceMemory>(), prelude::BufferDataType::Vertex),
 		(std::mem::size_of::<structures::UniformMemory>(), prelude::BufferDataType::Uniform)
 	]);
 	let (application_data, appdata_stage) = try!(engine.create_double_buffer(&application_data_prealloc));
@@ -247,7 +289,10 @@ fn app_main() -> Result<(), prelude::EngineError>
 		prelude::Descriptor::Uniform(1, vec![prelude::ShaderStage::Vertex, prelude::ShaderStage::Geometry])
 	]));
 	let all_descriptor_sets = try!(engine.preallocate_all_descriptor_sets(&[&dslayout_u1]));
-	let ref uniform_memory_descriptor_set = all_descriptor_sets[0];
+	engine.update_descriptors(&[
+		prelude::DescriptorSetWriteInfo::UniformBuffer(all_descriptor_sets[0], 0,
+			vec![prelude::BufferInfo(&application_data, application_data_prealloc.offset(3) .. application_data_prealloc.total_size() as usize)])
+	]);
 	
 	// Shading Structures //
 	let raw_output_vert = try!(engine.create_vertex_shader_from_asset("shaders.RawOutput", "main", &[
@@ -265,7 +310,7 @@ fn app_main() -> Result<(), prelude::EngineError>
 		.viewport_scissors(&[prelude::ViewportWithScissorRect::default_scissor(swapchain_viewport)])
 		.blend_state(&[prelude::AttachmentBlendState::PremultipliedAlphaBlend]);
 	let pipeline_states = try!(engine.create_graphics_pipelines(&[&background_render_state]));
-	let ref background_render_state = pipeline_states[0];
+	let ref background_render = pipeline_states[0];
 	
 	// Initial Data Transmission, Layouting for Swapchain Backbuffer Images //
 	try!(engine.allocate_transient_transfer_command_buffers(1).and_then(|setup_commands|
@@ -309,11 +354,25 @@ fn app_main() -> Result<(), prelude::EngineError>
 			.pipeline_barrier(VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, false, &[], &[],
 				&[color_output_barrier])
 			.begin_render_pass(&framebuffers[i], &[prelude::AttachmentClearValue::Color(1.0f32, 1.0f32, 1.0f32, 1.0f32)], false)
+			.bind_descriptor_sets(&background_render_layout, &all_descriptor_sets[0..1])
+			.bind_pipeline(&background_render)
+			.bind_vertex_buffers(&[
+				(&application_data, application_data_prealloc.offset(0)),
+				(&application_data, application_data_prealloc.offset(2) + structures::background_instance_offs())
+			])
+			.draw(4, MAX_BK_COUNT as u32)
 			.end_render_pass()
 		.end()
-	}).fold(Ok(()), |e, x| match (&e, &x) { (&Err(_), _) => e, (_, &Err(_)) => x, _ => Ok(()) })));
+	}).collect::<Result<Vec<_>, _>>()));
 
 	let mut frame_index = try!(main_frame.execute_rendering(&engine, &framebuffer_commands, None, &execute_next_signal));
+
+	let mapped_range = try!(appdata_stage.map());
+	let mapped_uniform_data = mapped_range.map_mut::<structures::UniformMemory>(application_data_prealloc.offset(3));
+	let (uref_matr, uref_enemy, uref_bk, uref_player_center) = mapped_uniform_data.partial_borrow();
+	let mapped_instance_data = mapped_range.map_mut::<structures::InstanceMemory>(application_data_prealloc.offset(2));
+	let (iref_enemy, iref_bk, iref_player) = mapped_instance_data.partial_borrow();
+	let background_datastore = BackgroundDatastore::new(uref_bk, iref_bk);
 
 	while engine.process_messages()
 	{
@@ -322,8 +381,9 @@ fn app_main() -> Result<(), prelude::EngineError>
 		{
 			frame_index = try!
 			{
+				execute_next_signal.clear().and_then(|()|
 				main_frame.present(&engine, frame_index).and_then(|()|
-					main_frame.execute_rendering(&engine, &framebuffer_commands, None, &execute_next_signal))
+				main_frame.execute_rendering(&engine, &framebuffer_commands, None, &execute_next_signal)))
 			};
 		}
 	}

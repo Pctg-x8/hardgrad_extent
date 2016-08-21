@@ -33,4 +33,8 @@ impl Fence
 	{
 		self.internal.get_status().map_err(EngineError::from)
 	}
+	pub fn clear(&self) -> Result<(), EngineError>
+	{
+		self.internal.reset().map_err(EngineError::from)
+	}
 }

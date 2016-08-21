@@ -211,7 +211,7 @@ pub trait RenderWindow
 	fn get_back_images(&self) -> Vec<&EntireImage>;
 	fn get_format(&self) -> VkFormat;
 	fn get_extent(&self) -> VkExtent2D;
-	fn execute_rendering(&self, engine: &Engine, g_commands: &GraphicsCommandBuffers, t_commands: Option<&TransferCommandBuffers>, signal_on_complete: &Fence)
+	fn execute_rendering(&self, engine: &Engine, g_commands: &GraphicsCommandBuffersView, t_commands: Option<&TransferCommandBuffers>, signal_on_complete: &Fence)
 		-> Result<u32, EngineError>;
 	fn acquire_next_backbuffer_index(&self, wait_semaphore: &QueueFence) -> Result<u32, EngineError>;
 	fn present(&self, engine: &Engine, index: u32) -> Result<(), EngineError>;
@@ -300,7 +300,7 @@ impl RenderWindow for Window
 	fn get_back_images(&self) -> Vec<&EntireImage> { self.render_targets.iter().collect() }
 	fn get_format(&self) -> VkFormat { self.format }
 	fn get_extent(&self) -> VkExtent2D { self.extent }
-	fn execute_rendering(&self, engine: &Engine, g_commands: &GraphicsCommandBuffers, t_commands: Option<&TransferCommandBuffers>, signal_on_complete: &Fence)
+	fn execute_rendering(&self, engine: &Engine, g_fb_commands: &GraphicsCommandBuffersView, t_commands: Option<&TransferCommandBuffers>, signal_on_complete: &Fence)
 		-> Result<u32, EngineError>
 	{
 		self.acquire_next_backbuffer_index(&self.backbuffer_available_signal).and_then(|bb_index|
@@ -308,14 +308,14 @@ impl RenderWindow for Window
 			if let Some(tcs) = t_commands
 			{
 				engine.submit_transfer_commands(&tcs, &[], Some(&self.transfer_complete_signal), None)
-					.and_then(|()| engine.submit_graphics_commands(&g_commands, &[
+					.and_then(|()| engine.submit_graphics_commands(&[g_fb_commands[bb_index as usize]], &[
 						(&self.backbuffer_available_signal, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT),
 						(&self.transfer_complete_signal, VK_PIPELINE_STAGE_TRANSFER_BIT)
 					], None, Some(signal_on_complete)))
 			}
 			else
 			{
-				engine.submit_graphics_commands(&g_commands, &[(&self.backbuffer_available_signal, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT)],
+				engine.submit_graphics_commands(&[g_fb_commands[bb_index as usize]], &[(&self.backbuffer_available_signal, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT)],
 					None, Some(signal_on_complete))
 			}.map(|()| bb_index)
 		})
