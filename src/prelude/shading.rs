@@ -333,12 +333,10 @@ impl <'a> std::convert::Into<IntoNativeGraphicsPipelineCreateInfoStruct<'a>> for
 {
 	fn into(self) -> IntoNativeGraphicsPipelineCreateInfoStruct<'a>
 	{
-		let (vshader, fshader) = (
-			self.vertex_shader.expect("VertexShader is required"),
-			self.fragment_shader.expect("FragmentShader is required")
-		);
-		let mut shader_stage_vec = vec![vshader.shader_stage_create_info(), fshader.shader_stage_create_info()];
+		let vshader = self.vertex_shader.expect("VertexShader is required");
+		let mut shader_stage_vec = vec![vshader.shader_stage_create_info()];
 		if let Some(gs) = self.geometry_shader { shader_stage_vec.push(gs.shader_stage_create_info()); }
+		if let Some(fs) = self.fragment_shader { shader_stage_vec.push(fs.shader_stage_create_info()); }
 		let into_input_state = vshader.into_native_vertex_input_state();
 		let vports = self.vp_sc.iter().map(|&ViewportWithScissorRect(vp, _)| vp).collect::<Vec<_>>();
 		let scissors = self.vp_sc.iter().map(|&ViewportWithScissorRect(_, sc)| sc).collect::<Vec<_>>();
@@ -361,7 +359,7 @@ impl <'a> std::convert::Into<IntoNativeGraphicsPipelineCreateInfoStruct<'a>> for
 			rasterization_state: VkPipelineRasterizationStateCreateInfo
 			{
 				sType: VkStructureType::Pipeline_RasterizationStateCreateInfo, pNext: std::ptr::null(), flags: 0,
-				depthClampEnable: false as VkBool32, depthBiasEnable: false as VkBool32, rasterizerDiscardEnable: true as VkBool32,
+				depthClampEnable: false as VkBool32, depthBiasEnable: false as VkBool32, rasterizerDiscardEnable: self.fragment_shader.is_none() as VkBool32,
 				polygonMode: if self.rasterizer_state.wired_render { VkPolygonMode::Line } else { VkPolygonMode::Fill },
 				cullMode: if let Some(side) = self.rasterizer_state.cull_side { side.into() } else { VK_CULL_MODE_NONE },
 				frontFace: VkFrontFace::CounterClockwise,

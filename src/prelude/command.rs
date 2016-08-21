@@ -345,6 +345,13 @@ impl <'a> GraphicsCommandRecorder<'a>
 		unsafe { vkCmdBindIndexBuffer(*self.buffer_ref.unwrap(), buffer.get_resource(), offset as VkDeviceSize, VkIndexType::U16) };
 		self
 	}
+	pub fn push_constants(self, layout: &PipelineLayout, shader_stage: &[ShaderStage], range: std::ops::Range<u32>, data: &[f32]) -> Self
+	{
+		let stages = shader_stage.into_iter().fold(0, |acc, x| acc | Into::<VkShaderStageFlags>::into(*x));
+		unsafe { vkCmdPushConstants(*self.buffer_ref.unwrap(), layout.get_internal().get(), stages,
+			range.start, range.len() as u32, data.as_ptr() as *const std::os::raw::c_void) };
+		self
+	}
 
 	pub fn draw(self, vertex_count: u32, instance_count: u32) -> Self
 	{

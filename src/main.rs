@@ -260,10 +260,10 @@ fn app_main() -> Result<(), prelude::EngineError>
 	let through_color_frag = try!(engine.create_fragment_shader_from_asset("shaders.ThroughColor", "main"));
 
 	let swapchain_viewport = VkViewport(0.0f32, 0.0f32, frame_width as f32, frame_height as f32, 0.0f32, 1.0f32);
-	let background_render_layout = try!(engine.create_pipeline_layout(&[&dslayout_u1], &[prelude::PushConstantDesc(VK_SHADER_STAGE_GEOMETRY_BIT, 0 .. 4)]));
+	let background_render_layout = try!(engine.create_pipeline_layout(&[&dslayout_u1], &[prelude::PushConstantDesc(VK_SHADER_STAGE_GEOMETRY_BIT, 0 .. 16)]));
 	let background_render_state = prelude::GraphicsPipelineBuilder::new(&background_render_layout, &rp_framebuffer_form, 0)
 		.vertex_shader(&raw_output_vert).geometry_shader(&backline_duplicator).fragment_shader(&through_color_frag)
-		.primitive_topology(prelude::PrimitiveTopology::LineStrip(true))
+		.primitive_topology(prelude::PrimitiveTopology::LineList(true))
 		.viewport_scissors(&[prelude::ViewportWithScissorRect::default_scissor(swapchain_viewport)])
 		.blend_state(&[prelude::AttachmentBlendState::PremultipliedAlphaBlend]);
 	let pipeline_states = try!(engine.create_graphics_pipelines(&[&background_render_state]));
@@ -317,6 +317,8 @@ fn app_main() -> Result<(), prelude::EngineError>
 				(&application_data, application_data_prealloc.offset(0)),
 				(&application_data, application_data_prealloc.offset(2) + structures::background_instance_offs())
 			])
+			.push_constants(&background_render_layout, &[prelude::ShaderStage::Geometry],
+				0 .. std::mem::size_of::<f32>() as u32 * 4, &[0.125f32, 0.5f32, 0.25f32, 0.75f32])
 			.draw(4, MAX_BK_COUNT as u32)
 			.end_render_pass()
 		.end()
@@ -342,7 +344,7 @@ fn app_main() -> Result<(), prelude::EngineError>
 		recorder
 			.pipeline_barrier(VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, false, &[], &buffer_barriers, &[])
 			.copy_buffer(&appdata_stage, &application_data, &[prelude::BufferCopyRegion(uoffs, uoffs, application_data_prealloc.total_size() as usize - uoffs)])
-			.pipeline_barrier(VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, false, &[], &buffer_barriers_ret, &[])
+			.pipeline_barrier(VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, false, &[], &buffer_barriers_ret, &[])
 		.end()
 	}));
 
@@ -392,7 +394,6 @@ fn app_main() -> Result<(), prelude::EngineError>
 		{
 			// fixed update
 			background_next_appear = background_appear_rate.ind_sample(&mut randomizer) == 0;
-			if background_next_appear { info!("next appear bk..."); }
 		}
 	}
 	try!(engine.wait_device());
