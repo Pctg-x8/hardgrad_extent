@@ -196,6 +196,7 @@ impl std::convert::Into<VkCullModeFlags> for CullingSide
 		}
 	}
 }
+#[derive(Clone)]
 pub struct RasterizerState
 {
 	pub wired_render: bool, pub cull_side: Option<CullingSide>
@@ -258,6 +259,16 @@ impl <'a> GraphicsPipelineBuilder<'a>
 			primitive_topology: PrimitiveTopology::TriangleList(false),
 			vp_sc: Vec::new(), rasterizer_state: RasterizerState { wired_render: false, cull_side: None },
 			use_alpha_to_coverage: false, attachment_blend_states: Vec::new()
+		}
+	}
+	pub fn inherit(base: &GraphicsPipelineBuilder<'a>) -> Self
+	{
+		GraphicsPipelineBuilder
+		{
+			layout: base.layout, render_pass: base.render_pass, subpass_index: base.subpass_index,
+			vertex_shader: base.vertex_shader, geometry_shader: base.geometry_shader, fragment_shader: base.fragment_shader,
+			primitive_topology: base.primitive_topology, vp_sc: base.vp_sc.clone(), rasterizer_state: base.rasterizer_state.clone(),
+			use_alpha_to_coverage: base.use_alpha_to_coverage, attachment_blend_states: base.attachment_blend_states.clone()
 		}
 	}
 	pub fn vertex_shader(mut self, vshader: &'a ShaderProgram) -> Self

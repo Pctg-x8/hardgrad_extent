@@ -32,6 +32,7 @@ use render_vk::traits::*;
 use std::string::String;
 use std::collections::LinkedList;
 use std::rc::Rc;
+use std::cell::RefCell;
 
 use prelude::traits::*;
 
@@ -115,50 +116,6 @@ fn create_framebuffers<'d>(views: &Vec<vk::ImageView<'d>>, rp: &vk::RenderPass<'
 	}).collect::<Vec<_>>()
 }
 
-struct Enemy
-{
-	block_index: u32, left: f32, appear_time: time::PreciseTime
-}
-impl Enemy
-{
-	pub fn new(datastore: &mut logical_resources::EnemyDatastore, memory_ref: &mut structures::InstanceMemory, uniform_memory_ref: &mut structures::UniformMemory,
-		init_left: f32) -> Option<Self>
-	{
-		datastore.allocate_block(memory_ref).map(|index|
-		{
-			datastore.update_instance_data(uniform_memory_ref, index,
-				UnitQuaternion::new(Vector3::new(0.0f32, 0.0f32, 0.0f32)).quaternion(), UnitQuaternion::new(Vector3::new(0.0f32, 0.0f32, 0.0f32)).quaternion(),
-				&Vector4::new(init_left, 0.0f32, 0.0f32, 0.0f32));
-			Enemy
-			{
-				block_index: index, left: init_left, appear_time: time::PreciseTime::now()
-			}
-		})
-	}
-	pub fn update(&mut self, datastore: &logical_resources::EnemyDatastore, memory_ref: &mut structures::UniformMemory) -> bool
-	{
-		let delta_time = self.appear_time.to(time::PreciseTime::now());
-		let living_seconds = delta_time.num_milliseconds() as f32 / 1000.0f32;
-		let current_y = if living_seconds < 0.875f32
-		{
-			15.0f32 * (1.0f32 - (1.0f32 - living_seconds / 0.875f32).powi(2)) - 3.0f32
-		}
-		else
-		{
-			15.0f32 + (living_seconds - 0.875f32) * 2.5f32 - 3.0f32
-		};
-		datastore.update_instance_data(memory_ref, self.block_index,
-			UnitQuaternion::new(Vector3::new(-1.0f32, 0.0f32, 0.75f32).normalize() * (260.0f32 * living_seconds).to_radians()).quaternion(),
-			UnitQuaternion::new(Vector3::new(1.0f32, -1.0f32, 0.5f32).normalize() * (-260.0f32 * living_seconds + 13.0f32).to_radians()).quaternion(),
-			&Vector4::new(self.left, current_y, 0.0f32, 0.0f32));
-
-		current_y >= 50.0f32
-	}
-	pub fn die(&self, datastore: &mut logical_resources::EnemyDatastore, memory_ref: &mut structures::InstanceMemory)
-	{
-		datastore.free_block(self.block_index, memory_ref);
-	}
-}
 struct Player
 {
 	start_time: time::PreciseTime
@@ -191,6 +148,52 @@ impl Player
 	}
 }
 */
+
+struct Enemy<'a>
+{
+	datastore_ref: &'a RefCell<logical_resources::EnemyDatastore<'a>>,
+	block_index: u32, left: f32, appear_time: time::PreciseTime
+}
+impl <'a> Enemy<'a>
+{
+	pub fn new(datastore: &'a RefCell<logical_resources::EnemyDatastore<'a>>, init_left: f32) -> Option<Self>
+	{
+		let mut datastore_ref = datastore.borrow_mut();
+		datastore_ref.allocate_block().map(move |index|
+		{
+			datastore_ref.update_instance_data(index,
+				UnitQuaternion::new(Vector3::new(0.0f32, 0.0f32, 0.0f32)).quaternion(), UnitQuaternion::new(Vector3::new(0.0f32, 0.0f32, 0.0f32)).quaternion(),
+				&Vector4::new(init_left, 0.0f32, 0.0f32, 0.0f32));
+			Enemy
+			{
+				datastore_ref: datastore, block_index: index, left: init_left, appear_time: time::PreciseTime::now(),
+			}
+		})
+	}
+	pub fn update(&self) -> bool
+	{
+		let delta_time = self.appear_time.to(time::PreciseTime::now());
+		let living_seconds = delta_time.num_milliseconds() as f32 / 1000.0f32;
+		let current_y = if living_seconds < 0.875f32
+		{
+			15.0f32 * (1.0f32 - (1.0f32 - living_seconds / 0.875f32).powi(2)) - 3.0f32
+		}
+		else
+		{
+			15.0f32 + (living_seconds - 0.875f32) * 2.5f32 - 3.0f32
+		};
+		self.datastore_ref.borrow_mut().update_instance_data(self.block_index,
+			UnitQuaternion::new(Vector3::new(-1.0f32, 0.0f32, 0.75f32).normalize() * (260.0f32 * living_seconds).to_radians()).quaternion(),
+			UnitQuaternion::new(Vector3::new(1.0f32, -1.0f32, 0.5f32).normalize() * (-260.0f32 * living_seconds + 13.0f32).to_radians()).quaternion(),
+			&Vector4::new(self.left, current_y, 0.0f32, 0.0f32));
+
+		current_y >= 50.0f32
+	}
+	pub fn die(self)
+	{
+		self.datastore_ref.borrow_mut().free_block(self.block_index);
+	}
+}
 
 fn main() { if let Err(e) = app_main() { prelude::crash(e); } }
 fn app_main() -> Result<(), prelude::EngineError>
@@ -230,11 +233,27 @@ fn app_main() -> Result<(), prelude::EngineError>
 	try!(appdata_stage.map().map(|mapped|
 	{
 		let vertices = mapped.map_mut::<structures::VertexMemoryForWireRender>(application_data_prealloc.offset(0));
+		let indices = mapped.map_mut::<structures::IndexMemory>(application_data_prealloc.offset(1));
 		vertices.unit_plane_source_vts = [
 			Position(-1.0f32, -1.0f32, 0.0f32, 1.0f32),
 			Position( 1.0f32, -1.0f32, 0.0f32, 1.0f32),
 			Position( 1.0f32,  1.0f32, 0.0f32, 1.0f32),
 			Position(-1.0f32,  1.0f32, 0.0f32, 1.0f32)
+		];
+		vertices.player_cube_vts = [
+			Position(-1.0f32, -1.0f32, -1.0f32, 1.0f32),
+			Position( 1.0f32, -1.0f32, -1.0f32, 1.0f32),
+			Position( 1.0f32,  1.0f32, -1.0f32, 1.0f32),
+			Position(-1.0f32,  1.0f32, -1.0f32, 1.0f32),
+			Position(-1.0f32, -1.0f32,  1.0f32, 1.0f32),
+			Position( 1.0f32, -1.0f32,  1.0f32, 1.0f32),
+			Position( 1.0f32,  1.0f32,  1.0f32, 1.0f32),
+			Position(-1.0f32,  1.0f32,  1.0f32, 1.0f32)
+		];
+		indices.player_cube_ids = [
+			0, 1, 1, 2, 2, 3, 3, 0,
+			4, 5, 5, 6, 6, 7, 7, 4,
+			0, 4, 1, 5, 2, 6, 3, 7
 		];
 		let uniforms = mapped.map_mut::<structures::UniformMemory>(application_data_prealloc.offset(3));
 		logical_resources::projection_matrixes::setup_parameters(uniforms, main_frame.get_extent());
@@ -257,17 +276,22 @@ fn app_main() -> Result<(), prelude::EngineError>
 		prelude::VertexBinding::PerInstance(std::mem::size_of::<u32>() as u32)
 	], &[prelude::VertexAttribute(0, VkFormat::R32G32B32A32_SFLOAT, 0), prelude::VertexAttribute(1, VkFormat::R32_UINT, 0)]));
 	let backline_duplicator = try!(engine.create_geometry_shader_from_asset("shaders.BackLineDuplicator", "main"));
+	let enemy_duplicator = try!(engine.create_geometry_shader_from_asset("shaders.EnemyDuplicator", "main"));
 	let through_color_frag = try!(engine.create_fragment_shader_from_asset("shaders.ThroughColor", "main"));
 
 	let swapchain_viewport = VkViewport(0.0f32, 0.0f32, frame_width as f32, frame_height as f32, 0.0f32, 1.0f32);
-	let background_render_layout = try!(engine.create_pipeline_layout(&[&dslayout_u1], &[prelude::PushConstantDesc(VK_SHADER_STAGE_GEOMETRY_BIT, 0 .. 16)]));
-	let background_render_state = prelude::GraphicsPipelineBuilder::new(&background_render_layout, &rp_framebuffer_form, 0)
+	let wire_render_layout = try!(engine.create_pipeline_layout(&[&dslayout_u1], &[prelude::PushConstantDesc(VK_SHADER_STAGE_GEOMETRY_BIT, 0 .. 16)]));
+	let background_render_state = prelude::GraphicsPipelineBuilder::new(&wire_render_layout, &rp_framebuffer_form, 0)
 		.vertex_shader(&raw_output_vert).geometry_shader(&backline_duplicator).fragment_shader(&through_color_frag)
 		.primitive_topology(prelude::PrimitiveTopology::LineList(true))
 		.viewport_scissors(&[prelude::ViewportWithScissorRect::default_scissor(swapchain_viewport)])
 		.blend_state(&[prelude::AttachmentBlendState::PremultipliedAlphaBlend]);
-	let pipeline_states = try!(engine.create_graphics_pipelines(&[&background_render_state]));
+	let enemy_render_state = prelude::GraphicsPipelineBuilder::inherit(&background_render_state)
+	 	.geometry_shader(&enemy_duplicator)
+		.blend_state(&[prelude::AttachmentBlendState::Disabled]);
+	let pipeline_states = try!(engine.create_graphics_pipelines(&[&background_render_state, &enemy_render_state]));
 	let ref background_render = pipeline_states[0];
+	let ref enemy_render = pipeline_states[1];
 	
 	// Initial Data Transmission, Layouting for Swapchain Backbuffer Images //
 	try!(engine.allocate_transient_transfer_command_buffers(1).and_then(|setup_commands|
@@ -311,15 +335,23 @@ fn app_main() -> Result<(), prelude::EngineError>
 			.pipeline_barrier(VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, false, &[], &[],
 				&[color_output_barrier])
 			.begin_render_pass(&framebuffers[i], &[prelude::AttachmentClearValue::Color(0.0f32, 0.0f32, 0.015625f32, 1.0f32)], false)
-			.bind_descriptor_sets(&background_render_layout, &all_descriptor_sets[0..1])
-			.bind_pipeline(&background_render)
+			.bind_descriptor_sets(&wire_render_layout, &all_descriptor_sets[0..1])
+			.bind_pipeline(background_render)
 			.bind_vertex_buffers(&[
 				(&application_data, application_data_prealloc.offset(0)),
 				(&application_data, application_data_prealloc.offset(2) + structures::background_instance_offs())
 			])
-			.push_constants(&background_render_layout, &[prelude::ShaderStage::Geometry],
+			.push_constants(&wire_render_layout, &[prelude::ShaderStage::Geometry],
 				0 .. std::mem::size_of::<f32>() as u32 * 4, &[0.125f32, 0.5f32, 0.25f32, 0.75f32])
 			.draw(4, MAX_BK_COUNT as u32)
+			.bind_pipeline(enemy_render)
+			.bind_vertex_buffers(&[
+				(&application_data, application_data_prealloc.offset(0)),
+				(&application_data, application_data_prealloc.offset(2))
+			])
+			.push_constants(&wire_render_layout, &[prelude::ShaderStage::Geometry],
+				0 .. std::mem::size_of::<f32>() as u32 * 4, &[0.25f32, 0.9875f32, 1.5f32, 1.0f32])
+			.draw(4, MAX_ENEMY_COUNT as u32)
 			.end_render_pass()
 		.end()
 	}).collect::<Result<Vec<_>, _>>()));
@@ -352,10 +384,14 @@ fn app_main() -> Result<(), prelude::EngineError>
 
 	let mapped_range = try!(appdata_stage.map());
 	let mapped_uniform_data = mapped_range.map_mut::<structures::UniformMemory>(application_data_prealloc.offset(3));
-	let (uref_matr, uref_enemy, uref_bk, uref_player_center) = mapped_uniform_data.partial_borrow();
+	let (_, uref_enemy, uref_bk, uref_player_center) = mapped_uniform_data.partial_borrow();
 	let mapped_instance_data = mapped_range.map_mut::<structures::InstanceMemory>(application_data_prealloc.offset(2));
 	let (iref_enemy, iref_bk, iref_player) = mapped_instance_data.partial_borrow();
 	let mut background_datastore = logical_resources::BackgroundDatastore::new(uref_bk, iref_bk);
+	let enemy_datastore = RefCell::new(logical_resources::EnemyDatastore::new(uref_enemy, iref_enemy));
+
+	// double-buffered enemy entity list //
+	let mut enemy_entities: LinkedList<Enemy> = LinkedList::new();
 
 	let (ftsig_sender, ftsig_receiver) = std::sync::mpsc::channel();
 	let fixed_timer_thread = std::thread::spawn(move ||
@@ -369,7 +405,10 @@ fn app_main() -> Result<(), prelude::EngineError>
 
 	let mut randomizer = rand::thread_rng();
 	let background_appear_rate = rand::distributions::Range::new(0, 4);
+	let enemy_appear_rate = rand::distributions::Range::new(0, 40);
+	let enemy_left_range = rand::distributions::Range::new(-25.0f32, 25.0f32);
 	let mut background_next_appear = false;
+	let mut enemy_next_appear = false;
 	let mut prev_time = time::PreciseTime::now();
 	while engine.process_messages()
 	{
@@ -386,6 +425,55 @@ fn app_main() -> Result<(), prelude::EngineError>
 
 			// normal update
 			background_datastore.update(&mut randomizer, delta_time, background_next_appear);
+
+			if enemy_next_appear
+			{
+				if Enemy::new(&enemy_datastore, enemy_left_range.ind_sample(&mut randomizer)).map(|e| enemy_entities.push_back(e)) == None
+				{
+					warn!("Enemy Datastore is full!!");
+				}
+				enemy_next_appear = false;
+			}
+			fn process_2<'a>(mut livings: LinkedList<Enemy<'a>>, mut purged_after: LinkedList<Enemy<'a>>) -> LinkedList<Enemy<'a>>
+			{
+				if let Some(died_e) = purged_after.pop_front() { died_e.die(); }
+				let mut purge_index: Option<usize> = None;
+				for (idx, e) in purged_after.iter_mut().enumerate()
+				{
+					if e.update()
+					{
+						purge_index = Some(idx);
+						break;
+					}
+				}
+				if let Some(purge_index) = purge_index
+				{
+					let mut purged_before = purged_after;
+					let purged_after = purged_before.split_off(purge_index);
+					livings.append(&mut purged_before);
+					process_2(livings, purged_after)
+				}
+				else
+				{
+					livings.append(&mut purged_after);
+					livings
+				}
+			}
+			let mut purge_index: Option<usize> = None;
+			for (idx, e) in enemy_entities.iter_mut().enumerate()
+			{
+				if e.update()
+				{
+					purge_index = Some(idx);
+					break;
+				}
+			}
+			if let Some(purge_index) = purge_index
+			{
+				let purged_after = enemy_entities.split_off(purge_index);
+				enemy_entities = process_2(enemy_entities, purged_after);
+			}
+
 			background_next_appear = false;
 			prev_time = time::PreciseTime::now();
 		}
@@ -394,6 +482,7 @@ fn app_main() -> Result<(), prelude::EngineError>
 		{
 			// fixed update
 			background_next_appear = background_appear_rate.ind_sample(&mut randomizer) == 0;
+			enemy_next_appear = enemy_appear_rate.ind_sample(&mut randomizer) == 0;
 		}
 	}
 	try!(engine.wait_device());

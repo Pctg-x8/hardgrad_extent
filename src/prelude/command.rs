@@ -358,6 +358,11 @@ impl <'a> GraphicsCommandRecorder<'a>
 		unsafe { vkCmdDraw(*self.buffer_ref.unwrap(), vertex_count, instance_count, 0, 0) };
 		self
 	}
+	pub fn draw_indexed(self, index_count: u32, instance_count: u32, index_offset: u32) -> Self
+	{
+		unsafe { vkCmdDrawIndexed(*self.buffer_ref.unwrap(), index_count, instance_count, index_offset, 0, 0) };
+		self
+	}
 }
 impl <'a> TransferCommandRecorder<'a>
 {
