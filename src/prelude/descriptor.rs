@@ -155,7 +155,7 @@ impl <'a> std::convert::Into<IntoWriteDescriptorSetNativeStruct> for &'a Descrip
 		}
 	}
 }
-impl std::convert::Into<VkWriteDescriptorSet> for IntoWriteDescriptorSetNativeStruct
+impl <'a> std::convert::Into<VkWriteDescriptorSet> for &'a IntoWriteDescriptorSetNativeStruct
 {
 	fn into(self) -> VkWriteDescriptorSet
 	{

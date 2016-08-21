@@ -290,8 +290,9 @@ fn app_main() -> Result<(), prelude::EngineError>
 	]));
 	let all_descriptor_sets = try!(engine.preallocate_all_descriptor_sets(&[&dslayout_u1]));
 	engine.update_descriptors(&[
-		prelude::DescriptorSetWriteInfo::UniformBuffer(all_descriptor_sets[0], 0,
-			vec![prelude::BufferInfo(&application_data, application_data_prealloc.offset(3) .. application_data_prealloc.total_size() as usize)])
+		prelude::DescriptorSetWriteInfo::UniformBuffer(all_descriptor_sets[0], 0, vec![
+			prelude::BufferInfo(&application_data, application_data_prealloc.offset(3) .. application_data_prealloc.total_size() as usize)
+		])
 	]);
 	
 	// Shading Structures //
@@ -387,6 +388,7 @@ fn app_main() -> Result<(), prelude::EngineError>
 			};
 		}
 	}
+	try!(engine.wait_device());
 
 	Ok(())
 

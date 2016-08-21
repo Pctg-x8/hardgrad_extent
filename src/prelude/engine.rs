@@ -263,6 +263,7 @@ impl Engine
 		pool.allocate_sets(self.device.get_internal(), &layouts.into_iter().map(|x| x.get_internal().get()).collect::<Vec<_>>())
 			.map(|sets| DescriptorSets::new(pool, sets))).map_err(EngineError::from)
 	}
+	pub fn wait_device(&self) -> Result<(), EngineError> { self.device.get_internal().wait_for_idle().map_err(EngineError::from) }
 
 	fn parse_asset(&self, asset_path: &str, extension: &str) -> std::ffi::OsString
 	{
@@ -299,7 +300,7 @@ impl Engine
 	pub fn update_descriptors(&self, write_infos: &[DescriptorSetWriteInfo])
 	{
 		let write_infos_native_interp = write_infos.into_iter().map(|x| Into::<IntoWriteDescriptorSetNativeStruct>::into(x)).collect::<Vec<_>>();
-		let write_infos_native = write_infos_native_interp.into_iter().map(|x| Into::<VkWriteDescriptorSet>::into(x)).collect::<Vec<_>>();
+		let write_infos_native = write_infos_native_interp.iter().map(|x| Into::<VkWriteDescriptorSet>::into(x)).collect::<Vec<_>>();
 		unsafe { vkUpdateDescriptorSets(self.device.get_internal().get(), write_infos_native.len() as u32, write_infos_native.as_ptr(),
 			0, std::ptr::null()) };
 	}

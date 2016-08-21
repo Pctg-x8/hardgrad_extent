@@ -561,19 +561,19 @@ impl Swapchain
 }
 impl MemoryAllocationRequired for Buffer
 {
-	fn get_memory_requirements(&self, device: &Device) -> VkMemoryRequirements
+	fn get_memory_requirements(&self) -> VkMemoryRequirements
 	{
 		let mut memreq: VkMemoryRequirements = unsafe { std::mem::uninitialized() };
-		unsafe { vkGetBufferMemoryRequirements(device.obj, self.obj, &mut memreq) };
+		unsafe { vkGetBufferMemoryRequirements(self.parent.obj, self.obj, &mut memreq) };
 		memreq
 	}
 }
 impl MemoryAllocationRequired for Image
 {
-	fn get_memory_requirements(&self, device: &Device) -> VkMemoryRequirements
+	fn get_memory_requirements(&self) -> VkMemoryRequirements
 	{
 		let mut memreq: VkMemoryRequirements = unsafe { std::mem::uninitialized() };
-		unsafe { vkGetImageMemoryRequirements(device.obj, self.obj, &mut memreq) };
+		unsafe { vkGetImageMemoryRequirements(self.parent.obj, self.obj, &mut memreq) };
 		memreq
 	}
 }

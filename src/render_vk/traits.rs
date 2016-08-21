@@ -11,7 +11,7 @@ pub trait ResultValueToObject where Self: std::marker::Sized
 
 pub trait MemoryAllocationRequired
 {
-	fn get_memory_requirements(&self, device: &vk::Device) -> VkMemoryRequirements;
+	fn get_memory_requirements(&self) -> VkMemoryRequirements;
 }
 pub trait OnDeviceMemory
 {

@@ -86,10 +86,9 @@ impl DeviceBufferInternals for DeviceBuffer
 			vk::DeviceMemory::alloc(engine.get_device().get_internal(), &VkMemoryAllocateInfo
 			{
 				sType: VkStructureType::MemoryAllocateInfo, pNext: std::ptr::null(),
-				allocationSize: buffer.get_memory_requirements(engine.get_device().get_internal()).size,
+				allocationSize: buffer.get_memory_requirements().size,
 				memoryTypeIndex: engine.get_memory_type_index_for_device_local()
-			}).and_then(|memory| memory.bind_buffer(&buffer, 0)
-				.map(|()| DeviceBuffer { buffer: buffer, memory: memory, size: size }))
+			}).and_then(|memory| memory.bind_buffer(&buffer, 0).map(|()| DeviceBuffer { buffer: buffer, memory: memory, size: size }))
 		).map_err(EngineError::from)
 	}
 }
@@ -114,10 +113,9 @@ impl StagingBufferInternals for StagingBuffer
 			vk::DeviceMemory::alloc(engine.get_device().get_internal(), &VkMemoryAllocateInfo
 			{
 				sType: VkStructureType::MemoryAllocateInfo, pNext: std::ptr::null(),
-				allocationSize: buffer.get_memory_requirements(engine.get_device().get_internal()).size,
+				allocationSize: buffer.get_memory_requirements().size,
 				memoryTypeIndex: engine.get_memory_type_index_for_host_visible()
-			}).and_then(|memory| memory.bind_buffer(&buffer, 0)
-				.map(|()| StagingBuffer { buffer: buffer, memory: memory, size: size }))
+			}).and_then(|memory| memory.bind_buffer(&buffer, 0).map(|()| StagingBuffer { buffer: buffer, memory: memory, size: size }))
 		).map_err(EngineError::from)
 	}
 }
