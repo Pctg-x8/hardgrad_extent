@@ -20,7 +20,7 @@ mod vertex_formats;
 use vertex_formats::*;
 // mod device_resources;
 mod structures;
-// mod logical_resources;
+mod logical_resources;
 mod utils;
 use nalgebra::*;
 use rand::distributions::*;
@@ -192,52 +192,6 @@ impl Player
 }
 */
 
-// Background Datastore //
-pub struct BackgroundDatastore<'a>
-{
-	buffer_data: &'a mut [structures::BackgroundInstance; MAX_BK_COUNT],
-	instance_data: &'a mut [u32; MAX_BK_COUNT]
-}
-impl <'a> BackgroundDatastore<'a>
-{
-	pub fn new(buffer_data_ref: &'a mut [structures::BackgroundInstance; MAX_BK_COUNT], instance_data_ref: &'a mut [u32; MAX_BK_COUNT]) -> Self
-	{
-		BackgroundDatastore
-		{
-			buffer_data: buffer_data_ref,
-			instance_data: instance_data_ref
-		}
-	}
-	pub fn update(&mut self, mut randomizer: &mut rand::Rng, delta_time: time::Duration, appear: bool)
-	{
-		let delta_sec = delta_time.num_microseconds().unwrap_or(0) as f32 / 1_000_000.0f32;
-		let mut require_appear = appear;
-		let mut left_range = rand::distributions::Range::new(-14.0f32, 14.0f32);
-		let mut count_range = rand::distributions::Range::new(2, 10);
-		let mut scale_range = rand::distributions::Range::new(1.0f32, 3.0f32);
-		for (i, m) in self.instance_data.iter_mut().enumerate()
-		{
-			if *m == 0
-			{
-				// instantiate randomly
-				if require_appear
-				{
-					let scale = scale_range.sample(&mut randomizer);
-					*m = 1;
-					self.buffer_data[i].offset = [left_range.sample(&mut randomizer), -20.0f32, -20.0f32, count_range.sample(&mut randomizer) as f32];
-					self.buffer_data[i].scale = [scale, scale, 1.0f32, 1.0f32];
-					require_appear = false;
-				}
-			}
-			else
-			{
-				self.buffer_data[i].offset[1] += delta_sec * 22.0f32;
-				*m = if self.buffer_data[i].offset[1] >= 20.0f32 { 0 } else { 1 };
-			}
-		}
-	}
-}
-
 fn main() { if let Err(e) = app_main() { prelude::crash(e); } }
 fn app_main() -> Result<(), prelude::EngineError>
 {
@@ -282,6 +236,8 @@ fn app_main() -> Result<(), prelude::EngineError>
 			Position( 1.0f32,  1.0f32, 0.0f32, 1.0f32),
 			Position(-1.0f32,  1.0f32, 0.0f32, 1.0f32)
 		];
+		let uniforms = mapped.map_mut::<structures::UniformMemory>(application_data_prealloc.offset(3));
+		logical_resources::projection_matrixes::setup_parameters(uniforms, main_frame.get_extent());
 	}));
 
 	// Descriptor Set //
@@ -354,7 +310,7 @@ fn app_main() -> Result<(), prelude::EngineError>
 		recorder
 			.pipeline_barrier(VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, false, &[], &[],
 				&[color_output_barrier])
-			.begin_render_pass(&framebuffers[i], &[prelude::AttachmentClearValue::Color(1.0f32, 1.0f32, 1.0f32, 1.0f32)], false)
+			.begin_render_pass(&framebuffers[i], &[prelude::AttachmentClearValue::Color(0.0f32, 0.0f32, 0.015625f32, 1.0f32)], false)
 			.bind_descriptor_sets(&background_render_layout, &all_descriptor_sets[0..1])
 			.bind_pipeline(&background_render)
 			.bind_vertex_buffers(&[
@@ -365,6 +321,30 @@ fn app_main() -> Result<(), prelude::EngineError>
 			.end_render_pass()
 		.end()
 	}).collect::<Result<Vec<_>, _>>()));
+	// Transfer Commands //
+	let update_commands = try!(engine.allocate_transfer_command_buffers(1));
+	try!(update_commands.begin(0).and_then(|recorder|
+	{
+		let uoffs = application_data_prealloc.offset(2);
+		let buffer_barriers = [
+			prelude::BufferMemoryBarrier::hold_ownership(&application_data, uoffs as u64 .. application_data_prealloc.total_size(),
+				VK_ACCESS_INDEX_READ_BIT | VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT | VK_ACCESS_UNIFORM_READ_BIT, VK_ACCESS_TRANSFER_WRITE_BIT),
+			prelude::BufferMemoryBarrier::hold_ownership(&appdata_stage, uoffs as u64 .. application_data_prealloc.total_size(),
+				VK_ACCESS_MEMORY_READ_BIT, VK_ACCESS_TRANSFER_READ_BIT)
+		];
+		let buffer_barriers_ret = [
+			prelude::BufferMemoryBarrier::hold_ownership(&application_data, uoffs as u64 .. application_data_prealloc.total_size(),
+				VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_INDEX_READ_BIT | VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT | VK_ACCESS_UNIFORM_READ_BIT),
+			prelude::BufferMemoryBarrier::hold_ownership(&appdata_stage, uoffs as u64 .. application_data_prealloc.total_size(),
+				VK_ACCESS_TRANSFER_READ_BIT, VK_ACCESS_MEMORY_READ_BIT)
+		];
+
+		recorder
+			.pipeline_barrier(VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, false, &[], &buffer_barriers, &[])
+			.copy_buffer(&appdata_stage, &application_data, &[prelude::BufferCopyRegion(uoffs, uoffs, application_data_prealloc.total_size() as usize - uoffs)])
+			.pipeline_barrier(VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, false, &[], &buffer_barriers_ret, &[])
+		.end()
+	}));
 
 	let mut frame_index = try!(main_frame.execute_rendering(&engine, &framebuffer_commands, None, &execute_next_signal));
 
@@ -373,19 +353,46 @@ fn app_main() -> Result<(), prelude::EngineError>
 	let (uref_matr, uref_enemy, uref_bk, uref_player_center) = mapped_uniform_data.partial_borrow();
 	let mapped_instance_data = mapped_range.map_mut::<structures::InstanceMemory>(application_data_prealloc.offset(2));
 	let (iref_enemy, iref_bk, iref_player) = mapped_instance_data.partial_borrow();
-	let background_datastore = BackgroundDatastore::new(uref_bk, iref_bk);
+	let mut background_datastore = logical_resources::BackgroundDatastore::new(uref_bk, iref_bk);
 
+	let (ftsig_sender, ftsig_receiver) = std::sync::mpsc::channel();
+	let fixed_timer_thread = std::thread::spawn(move ||
+	{
+		loop
+		{
+			std::thread::sleep(std::time::Duration::from_millis(16));
+			if let Err(_) = ftsig_sender.send(()) { break; }
+		}
+	});
+
+	let mut randomizer = rand::thread_rng();
+	let background_appear_rate = rand::distributions::Range::new(0, 4);
+	let mut background_next_appear = false;
+	let mut prev_time = time::PreciseTime::now();
 	while engine.process_messages()
 	{
 		// Render code...
 		if execute_next_signal.get_status().is_ok()
 		{
+			let delta_time = prev_time.to(time::PreciseTime::now());
 			frame_index = try!
 			{
 				execute_next_signal.clear().and_then(|()|
 				main_frame.present(&engine, frame_index).and_then(|()|
-				main_frame.execute_rendering(&engine, &framebuffer_commands, None, &execute_next_signal)))
+				main_frame.execute_rendering(&engine, &framebuffer_commands, Some(&update_commands), &execute_next_signal)))
 			};
+
+			// normal update
+			background_datastore.update(&mut randomizer, delta_time, background_next_appear);
+			background_next_appear = false;
+			prev_time = time::PreciseTime::now();
+		}
+
+		if let Ok(()) = ftsig_receiver.try_recv()
+		{
+			// fixed update
+			background_next_appear = background_appear_rate.ind_sample(&mut randomizer) == 0;
+			if background_next_appear { info!("next appear bk..."); }
 		}
 	}
 	try!(engine.wait_device());

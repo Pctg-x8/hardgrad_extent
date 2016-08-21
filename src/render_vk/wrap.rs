@@ -227,6 +227,10 @@ impl Device
 pub struct Queue { obj: VkQueue, pub family_index: u32 }
 impl Queue
 {
+	pub fn batched_submission(&self, infos: &[VkSubmitInfo], event_receiver: Option<&Fence>) -> Result<(), VkResult>
+	{
+		unsafe { vkQueueSubmit(self.obj, infos.len() as u32, infos.as_ptr(), event_receiver.map(|x| x.obj).unwrap_or(std::ptr::null_mut())) }.to_result()
+	}
 	pub fn submit_commands(&self, buffers: &[VkCommandBuffer],
 		device_synchronizer: &[VkSemaphore], synchronizer_stages: &[VkPipelineStageFlags], device_signalizer: &[VkSemaphore],
 		event_receiver: Option<&Fence>) -> Result<(), VkResult>
@@ -238,7 +242,7 @@ impl Queue
 			commandBufferCount: buffers.len() as u32, pCommandBuffers: buffers.as_ptr(),
 			signalSemaphoreCount: device_signalizer.len() as u32, pSignalSemaphores: device_signalizer.as_ptr()
 		};
-		unsafe { vkQueueSubmit(self.obj, 1, &submit_info, event_receiver.map(|x| x.obj).unwrap_or(std::ptr::null_mut())) }.to_result()
+		self.batched_submission(&[submit_info], event_receiver)
 	}
 	pub fn wait_for_idle(&self) -> Result<(), VkResult>
 	{

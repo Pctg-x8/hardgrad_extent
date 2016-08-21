@@ -308,19 +308,25 @@ impl Engine
 	pub fn submit_graphics_commands(&self, commands: &GraphicsCommandBuffersView, wait_for_execute: &[(&QueueFence, VkPipelineStageFlags)],
 		signal_on_complete: Option<&QueueFence>, signal_on_complete_host: Option<&Fence>) -> Result<(), EngineError>
 	{
+		let signals_on_complete = signal_on_complete.map(|q| vec![q.get_internal().get()]).unwrap_or(vec![]);
+		let wait_stages = if wait_for_execute.is_empty() { vec![VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT] }
+		else { wait_for_execute.into_iter().map(|&(_, s)| s).collect::<Vec<_>>() };
+		
 		self.device.get_graphics_queue().submit_commands(commands,
-			&wait_for_execute.into_iter().map(|&(q, _)| q.get_internal().get()).collect::<Vec<_>>(),
-			&wait_for_execute.into_iter().map(|&(_, s)| s).collect::<Vec<_>>(),
-			&signal_on_complete.map(|q| vec![q.get_internal().get()]).unwrap_or(vec![]), signal_on_complete_host.map(|f| f.get_internal()))
+			&wait_for_execute.into_iter().map(|&(q, _)| q.get_internal().get()).collect::<Vec<_>>(), &wait_stages,
+			&signals_on_complete, signal_on_complete_host.map(|f| f.get_internal()))
 			.map_err(EngineError::from)
 	}
 	pub fn submit_transfer_commands(&self, commands: &TransferCommandBuffers, wait_for_execute: &[(&QueueFence, VkPipelineStageFlags)],
 		signal_on_complete: Option<&QueueFence>, signal_on_complete_host: Option<&Fence>) -> Result<(), EngineError>
 	{
+		let signals_on_complete = signal_on_complete.map(|q| vec![q.get_internal().get()]).unwrap_or(vec![]);
+		let wait_stages = if wait_for_execute.is_empty() { vec![VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT] }
+		else { wait_for_execute.into_iter().map(|&(_, s)| s).collect::<Vec<_>>() };
+
 		self.device.get_transfer_queue().submit_commands(commands.get_internal(),
-			&wait_for_execute.into_iter().map(|&(q, _)| q.get_internal().get()).collect::<Vec<_>>(),
-			&wait_for_execute.into_iter().map(|&(_, s)| s).collect::<Vec<_>>(),
-			&signal_on_complete.map(|q| vec![q.get_internal().get()]).unwrap_or(vec![]), signal_on_complete_host.map(|f| f.get_internal()))
+			&wait_for_execute.into_iter().map(|&(q, _)| q.get_internal().get()).collect::<Vec<_>>(), &wait_stages,
+			&signals_on_complete, signal_on_complete_host.map(|f| f.get_internal()))
 			.map_err(EngineError::from)
 	}
 

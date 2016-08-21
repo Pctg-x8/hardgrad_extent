@@ -2,22 +2,31 @@
 use rand; use time;
 use rand::distributions::*;
 use structures;
+use constants::*;
 
-pub struct BackgroundDatastore;
-impl BackgroundDatastore
+pub struct BackgroundDatastore<'a>
 {
-	pub fn new() -> BackgroundDatastore
+	buffer_data: &'a mut [structures::BackgroundInstance; MAX_BK_COUNT],
+	instance_data: &'a mut [u32; MAX_BK_COUNT]
+}
+impl <'a> BackgroundDatastore<'a>
+{
+	pub fn new(buffer_data_ref: &'a mut [structures::BackgroundInstance; MAX_BK_COUNT], instance_data_ref: &'a mut [u32; MAX_BK_COUNT]) -> Self
 	{
 		BackgroundDatastore
+		{
+			buffer_data: buffer_data_ref,
+			instance_data: instance_data_ref
+		}
 	}
-	pub fn update(&self, uniform_memory_ref: &mut structures::UniformMemory, instance_memory_ref: &mut structures::InstanceMemory, mut randomizer: &mut rand::Rng, delta_time: time::Duration, appear: bool)
+	pub fn update(&mut self, mut randomizer: &mut rand::Rng, delta_time: time::Duration, appear: bool)
 	{
-		let delta_sec = delta_time.num_microseconds().unwrap_or(0) as f32 / (1000.0f32 * 1000.0f32);
-        let mut require_appear = appear;
-        let mut left_range = rand::distributions::Range::new(-14.0f32, 14.0f32);
+		let delta_sec = delta_time.num_microseconds().unwrap_or(0) as f32 / 1_000_000.0f32;
+		let mut require_appear = appear;
+		let mut left_range = rand::distributions::Range::new(-14.0f32, 14.0f32);
 		let mut count_range = rand::distributions::Range::new(2, 10);
 		let mut scale_range = rand::distributions::Range::new(1.0f32, 3.0f32);
-		for (i, m) in instance_memory_ref.background_instance_mult.iter_mut().enumerate()
+		for (i, m) in self.instance_data.iter_mut().enumerate()
 		{
 			if *m == 0
 			{
@@ -26,15 +35,15 @@ impl BackgroundDatastore
 				{
 					let scale = scale_range.sample(&mut randomizer);
 					*m = 1;
-					uniform_memory_ref.background_instance_data[i].offset = [left_range.sample(&mut randomizer), -20.0f32, -20.0f32, count_range.sample(&mut randomizer) as f32];
-					uniform_memory_ref.background_instance_data[i].scale = [scale, scale, 1.0f32, 1.0f32];
-                    require_appear = false;
+					self.buffer_data[i].offset = [left_range.sample(&mut randomizer), -20.0f32, -20.0f32, count_range.sample(&mut randomizer) as f32];
+					self.buffer_data[i].scale = [scale, scale, 1.0f32, 1.0f32];
+					require_appear = false;
 				}
 			}
 			else
 			{
-				uniform_memory_ref.background_instance_data[i].offset[1] += delta_sec * 22.0f32;
-				*m = if uniform_memory_ref.background_instance_data[i].offset[1] >= 20.0f32 { 0 } else { 1 };
+				self.buffer_data[i].offset[1] += delta_sec * 22.0f32;
+				*m = if self.buffer_data[i].offset[1] >= 20.0f32 { 0 } else { 1 };
 			}
 		}
 	}

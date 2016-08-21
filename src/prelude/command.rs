@@ -258,7 +258,7 @@ impl <'a> PrimaryCommandBuffers<'a, TransferCommandRecorder<'a>> for TransientTr
 			vkBeginCommandBuffer(*x, &VkCommandBufferBeginInfo
 			{
 				sType: VkStructureType::CommandBufferBeginInfo, pNext: std::ptr::null(),
-				flags: 0, pInheritanceInfo: std::ptr::null()
+				flags: VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT, pInheritanceInfo: std::ptr::null()
 			}).map(|| (i, TransferCommandRecorder { buffer_ref: Some(&x) }))
 		}).collect::<Result<Vec<_>, _>>().map_err(EngineError::from).map(|x| x.into_iter())
 	}
