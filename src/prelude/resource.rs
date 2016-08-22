@@ -66,7 +66,7 @@ impl MemoryPreallocator
 
 pub struct DeviceBuffer
 {
-	buffer: vk::Buffer, memory: vk::DeviceMemory, size: VkDeviceSize,
+	buffer: vk::Buffer, memory: vk::DeviceMemory, size: VkDeviceSize
 }
 pub trait DeviceBufferInternals where Self: std::marker::Sized
 {
@@ -83,13 +83,14 @@ impl DeviceBufferInternals for DeviceBuffer
 			size: size, usage: usage | VK_BUFFER_USAGE_TRANSFER_DST_BIT, sharingMode: VkSharingMode::Exclusive,
 			queueFamilyIndexCount: 0, pQueueFamilyIndices: std::ptr::null()
 		}).and_then(|buffer|
+		{
+			let alloc_size = buffer.get_memory_requirements().size;
 			vk::DeviceMemory::alloc(engine.get_device().get_internal(), &VkMemoryAllocateInfo
 			{
 				sType: VkStructureType::MemoryAllocateInfo, pNext: std::ptr::null(),
-				allocationSize: buffer.get_memory_requirements().size,
-				memoryTypeIndex: engine.get_memory_type_index_for_device_local()
-			}).and_then(|memory| memory.bind_buffer(&buffer, 0).map(|()| DeviceBuffer { buffer: buffer, memory: memory, size: size }))
-		).map_err(EngineError::from)
+				allocationSize: alloc_size, memoryTypeIndex: engine.get_memory_type_index_for_device_local()
+			}).and_then(|memory| memory.bind_buffer(&buffer, 0).map(|()| DeviceBuffer { buffer: buffer, memory: memory, size: alloc_size }))
+		}).map_err(EngineError::from)
 	}
 }
 pub struct StagingBuffer
@@ -110,13 +111,14 @@ impl StagingBufferInternals for StagingBuffer
 			size: size, usage: VK_BUFFER_USAGE_TRANSFER_SRC_BIT, sharingMode: VkSharingMode::Exclusive,
 			queueFamilyIndexCount: 0, pQueueFamilyIndices: std::ptr::null()
 		}).and_then(|buffer|
+		{
+			let alloc_size = buffer.get_memory_requirements().size;
 			vk::DeviceMemory::alloc(engine.get_device().get_internal(), &VkMemoryAllocateInfo
 			{
 				sType: VkStructureType::MemoryAllocateInfo, pNext: std::ptr::null(),
-				allocationSize: buffer.get_memory_requirements().size,
-				memoryTypeIndex: engine.get_memory_type_index_for_host_visible()
-			}).and_then(|memory| memory.bind_buffer(&buffer, 0).map(|()| StagingBuffer { buffer: buffer, memory: memory, size: size }))
-		).map_err(EngineError::from)
+				allocationSize: alloc_size, memoryTypeIndex: engine.get_memory_type_index_for_host_visible()
+			}).and_then(|memory| memory.bind_buffer(&buffer, 0).map(|()| StagingBuffer { buffer: buffer, memory: memory, size: alloc_size }))
+		}).map_err(EngineError::from)
 	}
 }
 impl StagingBuffer
@@ -143,7 +145,8 @@ impl <'a> MemoryMappedRange<'a>
 {
 	pub fn map_mut<MappedStructureT>(&self, offset: usize) -> &mut MappedStructureT
 	{
-		unsafe { std::mem::transmute(self.ptr.offset(offset as isize)) }
+		let t: &mut MappedStructureT = unsafe { std::mem::transmute(std::mem::transmute::<_, usize>(self.ptr) + offset) };
+		t
 	}
 }
 impl <'a> std::ops::Drop for MemoryMappedRange<'a>

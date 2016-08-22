@@ -309,7 +309,7 @@ impl RenderWindow for Window
 			{
 				engine.submit_transfer_commands(tcs, &[], Some(&self.transfer_complete_signal), None)
 					.and_then(|()| engine.submit_graphics_commands(&[g_fb_commands[bb_index as usize]], &[
-						(&self.backbuffer_available_signal, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT),
+						(&self.backbuffer_available_signal, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT),
 						(&self.transfer_complete_signal, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT)
 					], None, Some(signal_on_complete)))
 			}

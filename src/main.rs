@@ -115,38 +115,6 @@ fn create_framebuffers<'d>(views: &Vec<vk::ImageView<'d>>, rp: &vk::RenderPass<'
 		v.parent().create_framebuffer(&fb_info).unwrap()
 	}).collect::<Vec<_>>()
 }
-
-struct Player
-{
-	start_time: time::PreciseTime
-}
-impl Player
-{
-	fn new(uniform_ref: &mut structures::UniformMemory, instance_ref: &mut structures::InstanceMemory) -> Self
-	{
-		let u_quaternion = UnitQuaternion::new(Vector3::new(0.0f32, 0.0f32, 0.0f32));
-		let quaternion_ref = u_quaternion.quaternion();
-
-		instance_ref.player_rotq[0] = [quaternion_ref.i, quaternion_ref.j, quaternion_ref.k, quaternion_ref.w];
-		instance_ref.player_rotq[1] = [quaternion_ref.i, quaternion_ref.j, quaternion_ref.k, quaternion_ref.w];
-		uniform_ref.player_center_tf = [0.0f32, 38.0f32, 0.0f32, 0.0f32];
-
-		Player { start_time: time::PreciseTime::now() }
-	}
-	fn update(&self, instance_ref: &mut structures::InstanceMemory, uniform_ref: &mut structures::UniformMemory)
-	{
-		let delta_time = self.start_time.to(time::PreciseTime::now());
-		let living_secs = delta_time.num_milliseconds() as f64 / 1000.0f64;
-		let u_quaternions = [
-			UnitQuaternion::new(Vector3::new(-1.0f32, 0.0f32, 0.75f32).normalize() * (260.0f32 * living_secs as f32).to_radians()),
-			UnitQuaternion::new(Vector3::new(1.0f32, -1.0f32, 0.5f32).normalize() * (-260.0f32 * living_secs as f32 + 13.0f32).to_radians())
-		];
-		let mut quaternions = u_quaternions.iter().map(|x| x.quaternion()).map(|q| [q.i, q.j, q.k, q.w]);
-
-		instance_ref.player_rotq[0] = quaternions.next().unwrap();
-		instance_ref.player_rotq[1] = quaternions.next().unwrap();
-	}
-}
 */
 
 struct Enemy<'a>
@@ -192,6 +160,43 @@ impl <'a> Enemy<'a>
 	pub fn die(self)
 	{
 		self.datastore_ref.borrow_mut().free_block(self.block_index);
+	}
+}
+
+struct Player<'a>
+{
+	uniform_memory: &'a mut structures::CVector4, instance_memory: &'a mut [structures::CVector4; 2],
+	start_time: time::PreciseTime
+}
+impl <'a> Player<'a>
+{
+	fn new(uniform_ref: &'a mut structures::CVector4, instance_ref: &'a mut [structures::CVector4; 2]) -> Self
+	{
+		let u_quaternion = UnitQuaternion::new(Vector3::new(0.0f32, 0.0f32, 0.0f32));
+		let quaternion_ref = u_quaternion.quaternion();
+
+		instance_ref[0] = [quaternion_ref.i, quaternion_ref.j, quaternion_ref.k, quaternion_ref.w];
+		instance_ref[1] = [quaternion_ref.i, quaternion_ref.j, quaternion_ref.k, quaternion_ref.w];
+		*uniform_ref = [0.0f32, 38.0f32, 0.0f32, 0.0f32];
+
+		Player
+		{
+			uniform_memory: uniform_ref, instance_memory: instance_ref,
+			start_time: time::PreciseTime::now()
+		}
+	}
+	fn update(&mut self)
+	{
+		let delta_time = self.start_time.to(time::PreciseTime::now());
+		let living_secs = delta_time.num_milliseconds() as f64 / 1000.0f64;
+		let u_quaternions = [
+			UnitQuaternion::new(Vector3::new(-1.0f32, 0.0f32, 0.75f32).normalize() * (260.0f32 * living_secs as f32).to_radians()),
+			UnitQuaternion::new(Vector3::new(1.0f32, -1.0f32, 0.5f32).normalize() * (-260.0f32 * living_secs as f32 + 13.0f32).to_radians())
+		];
+		let mut quaternions = u_quaternions.iter().map(|x| x.quaternion()).map(|q| [q.i, q.j, q.k, q.w]);
+
+		self.instance_memory[0] = quaternions.next().unwrap();
+		self.instance_memory[1] = quaternions.next().unwrap();
 	}
 }
 
@@ -275,12 +280,16 @@ fn app_main() -> Result<(), prelude::EngineError>
 		prelude::VertexBinding::PerVertex(std::mem::size_of::<vertex_formats::Position>() as u32),
 		prelude::VertexBinding::PerInstance(std::mem::size_of::<u32>() as u32)
 	], &[prelude::VertexAttribute(0, VkFormat::R32G32B32A32_SFLOAT, 0), prelude::VertexAttribute(1, VkFormat::R32_UINT, 0)]));
+	let player_rotor_vert = try!(engine.create_vertex_shader_from_asset("shaders.PlayerRotor", "main", &[
+		prelude::VertexBinding::PerVertex(std::mem::size_of::<vertex_formats::Position>() as u32),
+		prelude::VertexBinding::PerInstance(std::mem::size_of::<structures::CVector4>() as u32)
+	], &[prelude::VertexAttribute(0, VkFormat::R32G32B32A32_SFLOAT, 0), prelude::VertexAttribute(1, VkFormat::R32G32B32A32_SFLOAT, 0)]));
 	let backline_duplicator = try!(engine.create_geometry_shader_from_asset("shaders.BackLineDuplicator", "main"));
 	let enemy_duplicator = try!(engine.create_geometry_shader_from_asset("shaders.EnemyDuplicator", "main"));
 	let through_color_frag = try!(engine.create_fragment_shader_from_asset("shaders.ThroughColor", "main"));
 
 	let swapchain_viewport = VkViewport(0.0f32, 0.0f32, frame_width as f32, frame_height as f32, 0.0f32, 1.0f32);
-	let wire_render_layout = try!(engine.create_pipeline_layout(&[&dslayout_u1], &[prelude::PushConstantDesc(VK_SHADER_STAGE_GEOMETRY_BIT, 0 .. 16)]));
+	let wire_render_layout = try!(engine.create_pipeline_layout(&[&dslayout_u1], &[prelude::PushConstantDesc(VK_SHADER_STAGE_VERTEX_BIT, 0 .. 16)]));
 	let background_render_state = prelude::GraphicsPipelineBuilder::new(&wire_render_layout, &rp_framebuffer_form, 0)
 		.vertex_shader(&raw_output_vert).geometry_shader(&backline_duplicator).fragment_shader(&through_color_frag)
 		.primitive_topology(prelude::PrimitiveTopology::LineList(true))
@@ -289,18 +298,24 @@ fn app_main() -> Result<(), prelude::EngineError>
 	let enemy_render_state = prelude::GraphicsPipelineBuilder::inherit(&background_render_state)
 	 	.geometry_shader(&enemy_duplicator)
 		.blend_state(&[prelude::AttachmentBlendState::Disabled]);
-	let pipeline_states = try!(engine.create_graphics_pipelines(&[&background_render_state, &enemy_render_state]));
+	let player_render_state = prelude::GraphicsPipelineBuilder::new(&wire_render_layout, &rp_framebuffer_form, 0)
+		.vertex_shader(&player_rotor_vert).fragment_shader(&through_color_frag)
+		.primitive_topology(prelude::PrimitiveTopology::LineList(false))
+		.viewport_scissors(&[prelude::ViewportWithScissorRect::default_scissor(swapchain_viewport)])
+		.blend_state(&[prelude::AttachmentBlendState::Disabled]);
+	let pipeline_states = try!(engine.create_graphics_pipelines(&[&background_render_state, &enemy_render_state, &player_render_state]));
 	let ref background_render = pipeline_states[0];
 	let ref enemy_render = pipeline_states[1];
+	let ref player_render = pipeline_states[2];
 	
 	// Initial Data Transmission, Layouting for Swapchain Backbuffer Images //
 	try!(engine.allocate_transient_transfer_command_buffers(1).and_then(|setup_commands|
 	{
 		let buffer_memory_barriers = [
 			prelude::BufferMemoryBarrier::hold_ownership(&appdata_stage, 0 .. application_data_prealloc.total_size(),
-				VK_ACCESS_MEMORY_READ_BIT, VK_ACCESS_TRANSFER_READ_BIT),
+				0, VK_ACCESS_TRANSFER_READ_BIT),
 			prelude::BufferMemoryBarrier::hold_ownership(&application_data, 0 .. application_data_prealloc.total_size(),
-				VK_ACCESS_MEMORY_READ_BIT, VK_ACCESS_TRANSFER_WRITE_BIT)
+				0, VK_ACCESS_TRANSFER_WRITE_BIT)
 		];
 		let buffer_memory_barriers_ret = [
 			prelude::BufferMemoryBarrier::hold_ownership(&appdata_stage, 0 .. application_data_prealloc.total_size(),
@@ -336,22 +351,23 @@ fn app_main() -> Result<(), prelude::EngineError>
 				&[color_output_barrier])
 			.begin_render_pass(&framebuffers[i], &[prelude::AttachmentClearValue::Color(0.0f32, 0.0f32, 0.015625f32, 1.0f32)], false)
 			.bind_descriptor_sets(&wire_render_layout, &all_descriptor_sets[0..1])
+			.bind_vertex_buffers(&[(&application_data, application_data_prealloc.offset(0))])
 			.bind_pipeline(background_render)
-			.bind_vertex_buffers(&[
-				(&application_data, application_data_prealloc.offset(0)),
-				(&application_data, application_data_prealloc.offset(2) + structures::background_instance_offs())
-			])
-			.push_constants(&wire_render_layout, &[prelude::ShaderStage::Geometry],
+			.bind_vertex_buffers_partial(1, &[(&application_data, application_data_prealloc.offset(2) + structures::background_instance_offs())])
+			.push_constants(&wire_render_layout, &[prelude::ShaderStage::Vertex],
 				0 .. std::mem::size_of::<f32>() as u32 * 4, &[0.125f32, 0.5f32, 0.25f32, 0.75f32])
 			.draw(4, MAX_BK_COUNT as u32)
 			.bind_pipeline(enemy_render)
-			.bind_vertex_buffers(&[
-				(&application_data, application_data_prealloc.offset(0)),
-				(&application_data, application_data_prealloc.offset(2))
-			])
-			.push_constants(&wire_render_layout, &[prelude::ShaderStage::Geometry],
+			.bind_vertex_buffers_partial(1, &[(&application_data, application_data_prealloc.offset(2))])
+			.push_constants(&wire_render_layout, &[prelude::ShaderStage::Vertex],
 				0 .. std::mem::size_of::<f32>() as u32 * 4, &[0.25f32, 0.9875f32, 1.5f32, 1.0f32])
 			.draw(4, MAX_ENEMY_COUNT as u32)
+			.bind_pipeline(player_render)
+			.bind_vertex_buffers_partial(1, &[(&application_data, application_data_prealloc.offset(2) + structures::player_instance_offs())])
+			.bind_index_buffer(&application_data, application_data_prealloc.offset(1))
+			.push_constants(&wire_render_layout, &[prelude::ShaderStage::Vertex],
+				0 .. std::mem::size_of::<f32>() as u32 * 4, &[1.5f32, 1.25f32, 0.375f32, 1.0f32])
+			.draw_indexed(24, 2, 4)
 			.end_render_pass()
 		.end()
 	}).collect::<Result<Vec<_>, _>>()));
@@ -376,7 +392,7 @@ fn app_main() -> Result<(), prelude::EngineError>
 		recorder
 			.pipeline_barrier(VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, false, &[], &buffer_barriers, &[])
 			.copy_buffer(&appdata_stage, &application_data, &[prelude::BufferCopyRegion(uoffs, uoffs, application_data_prealloc.total_size() as usize - uoffs)])
-			.pipeline_barrier(VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, false, &[], &buffer_barriers_ret, &[])
+			.pipeline_barrier(VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, false, &[], &buffer_barriers_ret, &[])
 		.end()
 	}));
 
@@ -384,61 +400,86 @@ fn app_main() -> Result<(), prelude::EngineError>
 
 	let mapped_range = try!(appdata_stage.map());
 	let mapped_uniform_data = mapped_range.map_mut::<structures::UniformMemory>(application_data_prealloc.offset(3));
-	let (_, uref_enemy, uref_bk, uref_player_center) = mapped_uniform_data.partial_borrow();
 	let mapped_instance_data = mapped_range.map_mut::<structures::InstanceMemory>(application_data_prealloc.offset(2));
+	let (_, uref_enemy, uref_bk, uref_player_center) = mapped_uniform_data.partial_borrow();
 	let (iref_enemy, iref_bk, iref_player) = mapped_instance_data.partial_borrow();
 	let mut background_datastore = logical_resources::BackgroundDatastore::new(uref_bk, iref_bk);
 	let enemy_datastore = RefCell::new(logical_resources::EnemyDatastore::new(uref_enemy, iref_enemy));
 
 	// double-buffered enemy entity list //
 	let mut enemy_entities: LinkedList<Enemy> = LinkedList::new();
+	let mut player = Player::new(uref_player_center, iref_player);
 
-	let (ftsig_sender, ftsig_receiver) = std::sync::mpsc::channel();
-	let fixed_timer_thread = std::thread::spawn(move ||
+	let ft_thread =
 	{
-		loop
+		let (ftsig_sender, ftsig_receiver) = std::sync::mpsc::channel();
+		let ft_thread = try!(std::thread::Builder::new().name("FixedUpdateTimerThread".into()).spawn(move ||
 		{
-			std::thread::sleep(std::time::Duration::from_millis(16));
-			if let Err(_) = ftsig_sender.send(()) { break; }
-		}
-	});
-
-	let mut randomizer = rand::thread_rng();
-	let background_appear_rate = rand::distributions::Range::new(0, 4);
-	let enemy_appear_rate = rand::distributions::Range::new(0, 40);
-	let enemy_left_range = rand::distributions::Range::new(-25.0f32, 25.0f32);
-	let mut background_next_appear = false;
-	let mut enemy_next_appear = false;
-	let mut prev_time = time::PreciseTime::now();
-	while engine.process_messages()
-	{
-		// Render code...
-		if execute_next_signal.get_status().is_ok()
-		{
-			let delta_time = prev_time.to(time::PreciseTime::now());
-			frame_index = try!
+			loop
 			{
-				execute_next_signal.clear().and_then(|()|
-				main_frame.present(&engine, frame_index).and_then(|()|
-				main_frame.execute_rendering(&engine, &framebuffer_commands, Some(&update_commands), &execute_next_signal)))
-			};
-
-			// normal update
-			background_datastore.update(&mut randomizer, delta_time, background_next_appear);
-
-			if enemy_next_appear
-			{
-				if Enemy::new(&enemy_datastore, enemy_left_range.ind_sample(&mut randomizer)).map(|e| enemy_entities.push_back(e)) == None
-				{
-					warn!("Enemy Datastore is full!!");
-				}
-				enemy_next_appear = false;
+				std::thread::sleep(std::time::Duration::from_millis(16));
+				if let Err(_) = ftsig_sender.send(()) { break; }
 			}
-			fn process_2<'a>(mut livings: LinkedList<Enemy<'a>>, mut purged_after: LinkedList<Enemy<'a>>) -> LinkedList<Enemy<'a>>
+		}).map_err(|_| prelude::EngineError::GenericError("Couldn't start FixedUpdate Timer Thread")));
+
+		let mut randomizer = rand::thread_rng();
+		let background_appear_rate = rand::distributions::Range::new(0, 6);
+		let enemy_appear_rate = rand::distributions::Range::new(0, 40);
+		let enemy_left_range = rand::distributions::Range::new(-25.0f32, 25.0f32);
+		let mut background_next_appear = false;
+		let mut enemy_next_appear = false;
+		let mut prev_time = time::PreciseTime::now();
+		while engine.process_messages()
+		{
+			// Render code...
+			if execute_next_signal.get_status().is_ok()
 			{
-				if let Some(died_e) = purged_after.pop_front() { died_e.die(); }
+				let delta_time = prev_time.to(time::PreciseTime::now());
+				frame_index = try!
+				{
+					execute_next_signal.clear().and_then(|()|
+					main_frame.present(&engine, frame_index).and_then(|()|
+					main_frame.execute_rendering(&engine, &framebuffer_commands, Some(&update_commands), &execute_next_signal)))
+				};
+
+				// normal update
+				background_datastore.update(&mut randomizer, delta_time, background_next_appear);
+
+				if enemy_next_appear
+				{
+					if Enemy::new(&enemy_datastore, enemy_left_range.ind_sample(&mut randomizer)).map(|e| enemy_entities.push_back(e)) == None
+					{
+						warn!("Enemy Datastore is full!!");
+					}
+					enemy_next_appear = false;
+				}
+				fn process_2<'a>(mut livings: LinkedList<Enemy<'a>>, mut purged_after: LinkedList<Enemy<'a>>) -> LinkedList<Enemy<'a>>
+				{
+					if let Some(died_e) = purged_after.pop_front() { died_e.die(); }
+					let mut purge_index: Option<usize> = None;
+					for (idx, e) in purged_after.iter_mut().enumerate()
+					{
+						if e.update()
+						{
+							purge_index = Some(idx);
+							break;
+						}
+					}
+					if let Some(purge_index) = purge_index
+					{
+						let mut purged_before = purged_after;
+						let purged_after = purged_before.split_off(purge_index);
+						livings.append(&mut purged_before);
+						process_2(livings, purged_after)
+					}
+					else
+					{
+						livings.append(&mut purged_after);
+						livings
+					}
+				}
 				let mut purge_index: Option<usize> = None;
-				for (idx, e) in purged_after.iter_mut().enumerate()
+				for (idx, e) in enemy_entities.iter_mut().enumerate()
 				{
 					if e.update()
 					{
@@ -448,43 +489,26 @@ fn app_main() -> Result<(), prelude::EngineError>
 				}
 				if let Some(purge_index) = purge_index
 				{
-					let mut purged_before = purged_after;
-					let purged_after = purged_before.split_off(purge_index);
-					livings.append(&mut purged_before);
-					process_2(livings, purged_after)
+					let purged_after = enemy_entities.split_off(purge_index);
+					enemy_entities = process_2(enemy_entities, purged_after);
 				}
-				else
-				{
-					livings.append(&mut purged_after);
-					livings
-				}
-			}
-			let mut purge_index: Option<usize> = None;
-			for (idx, e) in enemy_entities.iter_mut().enumerate()
-			{
-				if e.update()
-				{
-					purge_index = Some(idx);
-					break;
-				}
-			}
-			if let Some(purge_index) = purge_index
-			{
-				let purged_after = enemy_entities.split_off(purge_index);
-				enemy_entities = process_2(enemy_entities, purged_after);
+				player.update();
+
+				background_next_appear = false;
+				prev_time = time::PreciseTime::now();
 			}
 
-			background_next_appear = false;
-			prev_time = time::PreciseTime::now();
+			if let Ok(()) = ftsig_receiver.try_recv()
+			{
+				// fixed update
+				background_next_appear = background_appear_rate.ind_sample(&mut randomizer) == 0;
+				enemy_next_appear = enemy_appear_rate.ind_sample(&mut randomizer) == 0;
+			}
 		}
 
-		if let Ok(()) = ftsig_receiver.try_recv()
-		{
-			// fixed update
-			background_next_appear = background_appear_rate.ind_sample(&mut randomizer) == 0;
-			enemy_next_appear = enemy_appear_rate.ind_sample(&mut randomizer) == 0;
-		}
-	}
+		ft_thread
+	};
+	ft_thread.join().unwrap();
 	try!(engine.wait_device());
 
 	Ok(())

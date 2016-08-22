@@ -335,9 +335,14 @@ impl <'a> GraphicsCommandRecorder<'a>
 	}
 	pub fn bind_vertex_buffers(self, buffer_offsets: &[(&BufferResource, usize)]) -> Self
 	{
+		// :Specialized:
+		self.bind_vertex_buffers_partial(0, buffer_offsets)
+	}
+	pub fn bind_vertex_buffers_partial(self, start_binding: u32, buffer_offsets: &[(&BufferResource, usize)]) -> Self
+	{
 		let (buffer_native, offsets_native): (Vec<_>, Vec<_>) = buffer_offsets.into_iter()
 			.map(|&(b, v)| (b.get_resource(), v as VkDeviceSize)).unzip();
-		unsafe { vkCmdBindVertexBuffers(*self.buffer_ref.unwrap(), 0, buffer_native.len() as u32, buffer_native.as_ptr(), offsets_native.as_ptr()) };
+		unsafe { vkCmdBindVertexBuffers(*self.buffer_ref.unwrap(), start_binding, buffer_native.len() as u32, buffer_native.as_ptr(), offsets_native.as_ptr()) };
 		self
 	}
 	pub fn bind_index_buffer(self, buffer: &BufferResource, offset: usize) -> Self
@@ -360,7 +365,7 @@ impl <'a> GraphicsCommandRecorder<'a>
 	}
 	pub fn draw_indexed(self, index_count: u32, instance_count: u32, index_offset: u32) -> Self
 	{
-		unsafe { vkCmdDrawIndexed(*self.buffer_ref.unwrap(), index_count, instance_count, index_offset, 0, 0) };
+		unsafe { vkCmdDrawIndexed(*self.buffer_ref.unwrap(), index_count, instance_count, 0, index_offset, 0) };
 		self
 	}
 }

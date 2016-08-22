@@ -4,12 +4,9 @@
 
 layout(lines_adjacency, invocations = 2) in;
 layout(line_strip, max_vertices = 16) out;
-layout(push_constant) uniform PushConstant
-{
-	vec4 color;
-} pushed_values;
 
-layout(location = 0) in uint instance_id[];
+layout(location = 0) in vec4 color_in[];
+layout(location = 1) in uint instance_id[];
 layout(location = 0) out vec4 color;
 in gl_PerVertex { vec4 gl_Position; } gl_in[];
 out gl_PerVertex { vec4 gl_Position; };
@@ -27,7 +24,7 @@ void main()
 {
 	if(instance_id[0] > 0)
 	{
-		color = pushed_values.color;
+		color = color_in[0];
 		gl_Position = vertex_transform(gl_in[0].gl_Position - vec4(0.0f, 0.0f, 1.0f, 0.0f), instance_id[0] - 1); EmitVertex();
 		gl_Position = vertex_transform(gl_in[1].gl_Position - vec4(0.0f, 0.0f, 1.0f, 0.0f), instance_id[0] - 1); EmitVertex();
 		gl_Position = vertex_transform(gl_in[2].gl_Position - vec4(0.0f, 0.0f, 1.0f, 0.0f), instance_id[0] - 1); EmitVertex();
