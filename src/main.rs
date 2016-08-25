@@ -36,87 +36,6 @@ use std::cell::RefCell;
 
 use prelude::traits::*;
 
-/*
-// Application Dependent Factories
-impl std::ops::Deref for Swapchain
-{
-    type Target = vk::Swapchain;
-    fn deref(&self) -> &Self::Target { &self.object }
-}
-
-fn create_image_views<'d, ImageObj: vk::VkImageResource + HasParent<ParentRefType=Rc<vk::Device>>>(images: &'d Vec<ImageObj>, format: VkFormat) -> Vec<vk::ImageView>
-{
-	images.into_iter().map(|o|
-	{
-		let view_info = VkImageViewCreateInfo
-		{
-			sType: VkStructureType::ImageViewCreateInfo, pNext: std::ptr::null(),
-			image: o.get(), viewType: VkImageViewType::Dim2, format: format,
-			components: VkComponentMapping { r: VkComponentSwizzle::R, g: VkComponentSwizzle::G, b: VkComponentSwizzle::B, a: VkComponentSwizzle::A },
-			subresourceRange: VkImageSubresourceRange
-			{
-				aspectMask: VK_IMAGE_ASPECT_COLOR_BIT,
-				baseArrayLayer: 0, layerCount: 1,
-				baseMipLevel: 0, levelCount: 1
-			},
-			flags: 0
-		};
-		o.parent().create_image_view(&view_info).unwrap()
-	}).collect::<Vec<_>>()
-}
-fn create_render_pass<'d>(dev: &'d vk::Device, attachments: &[VkAttachmentDescription], subpasses: &[VkSubpassDescription], dependencies: &[VkSubpassDependency])
-	-> Result<vk::RenderPass<'d>, VkResult>
-{
-	dev.create_render_pass(&VkRenderPassCreateInfo
-	{
-		sType: VkStructureType::RenderPassCreateInfo, pNext: std::ptr::null(), flags: 0,
-		attachmentCount: attachments.len() as u32, pAttachments: attachments.as_ptr(),
-		subpassCount: subpasses.len() as u32, pSubpasses: subpasses.as_ptr(),
-		dependencyCount: dependencies.len() as u32, pDependencies: dependencies.as_ptr()
-	})
-}
-fn create_simple_render_pass<'d>(dev: &'d vk::Device, format: VkFormat) -> vk::RenderPass<'d>
-{
-	let color_attref = VkAttachmentReference { attachment: 0, layout: VkImageLayout::ColorAttachmentOptimal };
-	let subpasses = [
-		VkSubpassDescription
-		{
-			inputAttachmentCount: 0, pInputAttachments: std::ptr::null(),
-			colorAttachmentCount: 1, pColorAttachments: &color_attref,
-			pDepthStencilAttachment: std::ptr::null(), pResolveAttachments: std::ptr::null(),
-			preserveAttachmentCount: 0, pPreserveAttachments: std::ptr::null(),
-			pipelineBindPoint: VkPipelineBindPoint::Graphics, flags: 0
-		}
-	];
-	let attachment_descs = [
-		VkAttachmentDescription
-		{
-			format: format, samples: VK_SAMPLE_COUNT_1_BIT, flags: 0,
-			loadOp: VkAttachmentLoadOp::Clear, storeOp: VkAttachmentStoreOp::Store,
-			stencilLoadOp: VkAttachmentLoadOp::DontCare, stencilStoreOp: VkAttachmentStoreOp::DontCare,
-			initialLayout: VkImageLayout::ColorAttachmentOptimal, finalLayout: VkImageLayout::PresentSrcKHR
-		}
-	];
-	create_render_pass(dev, &attachment_descs, &subpasses, &[]).unwrap()
-}
-fn create_framebuffers<'d>(views: &Vec<vk::ImageView<'d>>, rp: &vk::RenderPass<'d>, extent: VkExtent2D) -> Vec<vk::Framebuffer<'d>>
-{
-	let VkExtent2D(width, height) = extent;
-
-	views.into_iter().map(|v|
-	{
-		let attachments = [v.get()];
-		let fb_info = VkFramebufferCreateInfo
-		{
-			sType: VkStructureType::FramebufferCreateInfo, pNext: std::ptr::null(),
-			attachmentCount: attachments.len() as u32, pAttachments: attachments.as_ptr(), renderPass: rp.get(),
-			width: width, height: height, layers: 1, flags: 0
-		};
-		v.parent().create_framebuffer(&fb_info).unwrap()
-	}).collect::<Vec<_>>()
-}
-*/
-
 struct Enemy<'a>
 {
 	datastore_ref: &'a RefCell<logical_resources::EnemyDatastore<'a>>,
@@ -206,6 +125,8 @@ fn app_main() -> Result<(), prelude::EngineError>
 	utils::memory_management_test();
 
 	let engine = try!(prelude::Engine::new("HardGrad->Extent", VK_MAKE_VERSION!(0, 0, 1))).with_assets_in(std::env::current_dir().unwrap());
+	let debug_info = try!(prelude::DebugInfo::new(&engine));
+	debug_info.test();
 	let main_frame = try!(engine.create_render_window(VkExtent2D(640, 480), "HardGrad -> Extent"));
 	let VkExtent2D(frame_width, frame_height) = main_frame.get_extent();
 	let execute_next_signal = try!(engine.create_fence());
@@ -226,19 +147,27 @@ fn app_main() -> Result<(), prelude::EngineError>
 		.collect::<Result<Vec<_>, _>>());
 
 	// Resources //
-	let application_data_prealloc = engine.preallocate(&[
+	let application_buffer_prealloc = engine.buffer_preallocate(&[
 		(std::mem::size_of::<structures::VertexMemoryForWireRender>(), prelude::BufferDataType::Vertex),
 		(std::mem::size_of::<structures::IndexMemory>(), prelude::BufferDataType::Index),
 		(std::mem::size_of::<structures::InstanceMemory>(), prelude::BufferDataType::Vertex),
 		(std::mem::size_of::<structures::UniformMemory>(), prelude::BufferDataType::Uniform)
 	]);
-	let (application_data, appdata_stage) = try!(engine.create_double_buffer(&application_data_prealloc));
+	let appdata_prealloc = prelude::ResourcePreallocator::new()
+		.buffer(&application_buffer_prealloc);
+	let (application_data, appdata_stage) = 
+	{
+		let (dev, stg) = try!(engine.create_double_buffer(&appdata_prealloc));
+		(dev, stg.unwrap())
+	};
+	let application_buffer = try!(application_data.buffer());
+	let appdata_stage_buffer = try!(appdata_stage.buffer());
 
 	// setup initial data //
 	try!(appdata_stage.map().map(|mapped|
 	{
-		let vertices = mapped.map_mut::<structures::VertexMemoryForWireRender>(application_data_prealloc.offset(0));
-		let indices = mapped.map_mut::<structures::IndexMemory>(application_data_prealloc.offset(1));
+		let vertices = mapped.map_mut::<structures::VertexMemoryForWireRender>(application_buffer_prealloc.offset(0));
+		let indices = mapped.map_mut::<structures::IndexMemory>(application_buffer_prealloc.offset(1));
 		vertices.unit_plane_source_vts = [
 			Position(-1.0f32, -1.0f32, 0.0f32, 1.0f32),
 			Position( 1.0f32, -1.0f32, 0.0f32, 1.0f32),
@@ -260,7 +189,7 @@ fn app_main() -> Result<(), prelude::EngineError>
 			4, 5, 5, 6, 6, 7, 7, 4,
 			0, 4, 1, 5, 2, 6, 3, 7
 		];
-		let uniforms = mapped.map_mut::<structures::UniformMemory>(application_data_prealloc.offset(3));
+		let uniforms = mapped.map_mut::<structures::UniformMemory>(application_buffer_prealloc.offset(3));
 		logical_resources::projection_matrixes::setup_parameters(uniforms, main_frame.get_extent());
 	}));
 
@@ -271,7 +200,7 @@ fn app_main() -> Result<(), prelude::EngineError>
 	let all_descriptor_sets = try!(engine.preallocate_all_descriptor_sets(&[&dslayout_u1]));
 	engine.update_descriptors(&[
 		prelude::DescriptorSetWriteInfo::UniformBuffer(all_descriptor_sets[0], 0, vec![
-			prelude::BufferInfo(&application_data, application_data_prealloc.offset(3) .. application_data_prealloc.total_size() as usize)
+			prelude::BufferInfo(application_buffer, application_buffer_prealloc.offset(3) .. application_buffer_prealloc.total_size() as usize)
 		])
 	]);
 	
@@ -312,15 +241,15 @@ fn app_main() -> Result<(), prelude::EngineError>
 	try!(engine.allocate_transient_transfer_command_buffers(1).and_then(|setup_commands|
 	{
 		let buffer_memory_barriers = [
-			prelude::BufferMemoryBarrier::hold_ownership(&appdata_stage, 0 .. application_data_prealloc.total_size(),
+			prelude::BufferMemoryBarrier::hold_ownership(appdata_stage_buffer, 0 .. application_buffer_prealloc.total_size(),
 				0, VK_ACCESS_TRANSFER_READ_BIT),
-			prelude::BufferMemoryBarrier::hold_ownership(&application_data, 0 .. application_data_prealloc.total_size(),
+			prelude::BufferMemoryBarrier::hold_ownership(application_buffer, 0 .. application_buffer_prealloc.total_size(),
 				0, VK_ACCESS_TRANSFER_WRITE_BIT)
 		];
 		let buffer_memory_barriers_ret = [
-			prelude::BufferMemoryBarrier::hold_ownership(&appdata_stage, 0 .. application_data_prealloc.total_size(),
+			prelude::BufferMemoryBarrier::hold_ownership(appdata_stage_buffer, 0 .. application_buffer_prealloc.total_size(),
 				VK_ACCESS_TRANSFER_READ_BIT, VK_ACCESS_MEMORY_READ_BIT),
-			prelude::BufferMemoryBarrier::hold_ownership(&application_data, 0 .. application_data_prealloc.total_size(),
+			prelude::BufferMemoryBarrier::hold_ownership(application_buffer, 0 .. application_buffer_prealloc.total_size(),
 				VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT | VK_ACCESS_INDEX_READ_BIT | VK_ACCESS_UNIFORM_READ_BIT)
 		];
 		let image_memory_barriers = main_frame.get_back_images().iter()
@@ -330,7 +259,7 @@ fn app_main() -> Result<(), prelude::EngineError>
 		try!(setup_commands.begin(0).and_then(|recorder|
 			recorder.pipeline_barrier(VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, false,
 				&[], &buffer_memory_barriers, &image_memory_barriers)
-			.copy_buffer(&appdata_stage, &application_data, &[prelude::BufferCopyRegion(0, 0, application_data_prealloc.total_size() as usize)])
+			.copy_buffer(appdata_stage_buffer, application_buffer, &[prelude::BufferCopyRegion(0, 0, application_buffer_prealloc.total_size() as usize)])
 			.pipeline_barrier(VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, false, &[], &buffer_memory_barriers_ret, &[])
 			.end()
 		));
@@ -351,20 +280,20 @@ fn app_main() -> Result<(), prelude::EngineError>
 				&[color_output_barrier])
 			.begin_render_pass(&framebuffers[i], &[prelude::AttachmentClearValue::Color(0.0f32, 0.0f32, 0.015625f32, 1.0f32)], false)
 			.bind_descriptor_sets(&wire_render_layout, &all_descriptor_sets[0..1])
-			.bind_vertex_buffers(&[(&application_data, application_data_prealloc.offset(0))])
+			.bind_vertex_buffers(&[(application_buffer, application_buffer_prealloc.offset(0))])
 			.bind_pipeline(background_render)
-			.bind_vertex_buffers_partial(1, &[(&application_data, application_data_prealloc.offset(2) + structures::background_instance_offs())])
+			.bind_vertex_buffers_partial(1, &[(application_buffer, application_buffer_prealloc.offset(2) + structures::background_instance_offs())])
 			.push_constants(&wire_render_layout, &[prelude::ShaderStage::Vertex],
 				0 .. std::mem::size_of::<f32>() as u32 * 4, &[0.125f32, 0.5f32, 0.25f32, 0.75f32])
 			.draw(4, MAX_BK_COUNT as u32)
 			.bind_pipeline(enemy_render)
-			.bind_vertex_buffers_partial(1, &[(&application_data, application_data_prealloc.offset(2))])
+			.bind_vertex_buffers_partial(1, &[(application_buffer, application_buffer_prealloc.offset(2))])
 			.push_constants(&wire_render_layout, &[prelude::ShaderStage::Vertex],
 				0 .. std::mem::size_of::<f32>() as u32 * 4, &[0.25f32, 0.9875f32, 1.5f32, 1.0f32])
 			.draw(4, MAX_ENEMY_COUNT as u32)
 			.bind_pipeline(player_render)
-			.bind_vertex_buffers_partial(1, &[(&application_data, application_data_prealloc.offset(2) + structures::player_instance_offs())])
-			.bind_index_buffer(&application_data, application_data_prealloc.offset(1))
+			.bind_vertex_buffers_partial(1, &[(application_buffer, application_buffer_prealloc.offset(2) + structures::player_instance_offs())])
+			.bind_index_buffer(application_buffer, application_buffer_prealloc.offset(1))
 			.push_constants(&wire_render_layout, &[prelude::ShaderStage::Vertex],
 				0 .. std::mem::size_of::<f32>() as u32 * 4, &[1.5f32, 1.25f32, 0.375f32, 1.0f32])
 			.draw_indexed(24, 2, 4)
@@ -375,23 +304,23 @@ fn app_main() -> Result<(), prelude::EngineError>
 	let update_commands = try!(engine.allocate_transfer_command_buffers(1));
 	try!(update_commands.begin(0).and_then(|recorder|
 	{
-		let uoffs = application_data_prealloc.offset(2);
+		let uoffs = application_buffer_prealloc.offset(2);
 		let buffer_barriers = [
-			prelude::BufferMemoryBarrier::hold_ownership(&application_data, uoffs as u64 .. application_data_prealloc.total_size(),
+			prelude::BufferMemoryBarrier::hold_ownership(application_buffer, uoffs as u64 .. application_buffer_prealloc.total_size(),
 				VK_ACCESS_INDEX_READ_BIT | VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT | VK_ACCESS_UNIFORM_READ_BIT, VK_ACCESS_TRANSFER_WRITE_BIT),
-			prelude::BufferMemoryBarrier::hold_ownership(&appdata_stage, uoffs as u64 .. application_data_prealloc.total_size(),
+			prelude::BufferMemoryBarrier::hold_ownership(appdata_stage_buffer, uoffs as u64 .. application_buffer_prealloc.total_size(),
 				VK_ACCESS_MEMORY_READ_BIT, VK_ACCESS_TRANSFER_READ_BIT)
 		];
 		let buffer_barriers_ret = [
-			prelude::BufferMemoryBarrier::hold_ownership(&application_data, uoffs as u64 .. application_data_prealloc.total_size(),
+			prelude::BufferMemoryBarrier::hold_ownership(application_buffer, uoffs as u64 .. application_buffer_prealloc.total_size(),
 				VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_INDEX_READ_BIT | VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT | VK_ACCESS_UNIFORM_READ_BIT),
-			prelude::BufferMemoryBarrier::hold_ownership(&appdata_stage, uoffs as u64 .. application_data_prealloc.total_size(),
+			prelude::BufferMemoryBarrier::hold_ownership(appdata_stage_buffer, uoffs as u64 .. application_buffer_prealloc.total_size(),
 				VK_ACCESS_TRANSFER_READ_BIT, VK_ACCESS_MEMORY_READ_BIT)
 		];
 
 		recorder
 			.pipeline_barrier(VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, false, &[], &buffer_barriers, &[])
-			.copy_buffer(&appdata_stage, &application_data, &[prelude::BufferCopyRegion(uoffs, uoffs, application_data_prealloc.total_size() as usize - uoffs)])
+			.copy_buffer(appdata_stage_buffer, application_buffer, &[prelude::BufferCopyRegion(uoffs, uoffs, application_buffer_prealloc.total_size() as usize - uoffs)])
 			.pipeline_barrier(VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, false, &[], &buffer_barriers_ret, &[])
 		.end()
 	}));
@@ -399,8 +328,8 @@ fn app_main() -> Result<(), prelude::EngineError>
 	let mut frame_index = try!(main_frame.execute_rendering(&engine, &framebuffer_commands, None, &execute_next_signal));
 
 	let mapped_range = try!(appdata_stage.map());
-	let mapped_uniform_data = mapped_range.map_mut::<structures::UniformMemory>(application_data_prealloc.offset(3));
-	let mapped_instance_data = mapped_range.map_mut::<structures::InstanceMemory>(application_data_prealloc.offset(2));
+	let mapped_uniform_data = mapped_range.map_mut::<structures::UniformMemory>(application_buffer_prealloc.offset(3));
+	let mapped_instance_data = mapped_range.map_mut::<structures::InstanceMemory>(application_buffer_prealloc.offset(2));
 	let (_, uref_enemy, uref_bk, uref_player_center) = mapped_uniform_data.partial_borrow();
 	let (iref_enemy, iref_bk, iref_player) = mapped_instance_data.partial_borrow();
 	let mut background_datastore = logical_resources::BackgroundDatastore::new(uref_bk, iref_bk);

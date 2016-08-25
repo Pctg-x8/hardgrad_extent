@@ -11,22 +11,29 @@ mod window;
 mod descriptor;
 mod internal_traits;
 
+mod debug_info;
+
 // Exported APIs //
 pub use self::error::*;
 pub use self::engine::Engine;
 pub use self::synchronize::{QueueFence, Fence};
 pub use self::framebuffer::{AttachmentDesc, PassDesc, PassDependency, AttachmentClearValue};
 pub use self::command::{MemoryBarrier, BufferMemoryBarrier, ImageMemoryBarrier, BufferCopyRegion};
-pub use self::resource::{ImageSubresourceRange, BufferDataType};
+pub use self::resource::{
+	ImageSubresourceRange, BufferDataType, ImageUsagePresets,
+	ImageDescriptor1, ImageDescriptor2, ImageDescriptor3, ResourcePreallocator
+};
 pub use self::shading::{
 	VertexBinding, VertexAttribute, PushConstantDesc,
 	PrimitiveTopology, ViewportWithScissorRect, RasterizerState, AttachmentBlendState,
 	GraphicsPipelineBuilder
 };
 pub use self::descriptor::{ShaderStage, Descriptor, BufferInfo, DescriptorSetWriteInfo};
+pub use self::debug_info::DebugInfo;
 pub mod traits
 {
 	pub use super::command::{PrimaryCommandBuffers};
+	pub use super::resource::{ImageDescriptor};
 }
 
 // For internal exports //
@@ -43,4 +50,5 @@ mod internals
 	pub use super::synchronize::*;
 	pub use super::shading::*;
 	pub use super::descriptor::*;
+	pub use super::debug_info::*;
 }

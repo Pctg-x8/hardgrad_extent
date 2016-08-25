@@ -14,12 +14,12 @@ use vkffi::macros::*;
 use xcb;
 
 // Basic Types(Copyable) //
-#[repr(C)] #[derive(Clone, Copy)] pub struct VkOffset2D(pub i32, pub i32);
-#[repr(C)] #[derive(Clone, Copy)] pub struct VkExtent2D(pub u32, pub u32);
-#[repr(C)] #[derive(Clone, Copy)] pub struct VkRect2D(pub VkOffset2D, pub VkExtent2D);
-#[repr(C)] #[derive(Clone, Copy)] pub struct VkOffset3D(pub i32, pub i32, pub i32);
-#[repr(C)] #[derive(Clone, Copy)] pub struct VkExtent3D(pub u32, pub u32, pub u32);
-#[repr(C)] #[derive(Clone, Copy)] pub struct VkViewport(pub f32, pub f32, pub f32, pub f32, pub f32, pub f32);
+#[repr(C)] #[derive(Clone, Copy, Debug)] pub struct VkOffset2D(pub i32, pub i32);
+#[repr(C)] #[derive(Clone, Copy, Debug)] pub struct VkExtent2D(pub u32, pub u32);
+#[repr(C)] #[derive(Clone, Copy, Debug)] pub struct VkRect2D(pub VkOffset2D, pub VkExtent2D);
+#[repr(C)] #[derive(Clone, Copy, Debug)] pub struct VkOffset3D(pub i32, pub i32, pub i32);
+#[repr(C)] #[derive(Clone, Copy, Debug)] pub struct VkExtent3D(pub u32, pub u32, pub u32);
+#[repr(C)] #[derive(Clone, Copy, Debug)] pub struct VkViewport(pub f32, pub f32, pub f32, pub f32, pub f32, pub f32);
 
 #[repr(C)]
 pub struct VkInstanceCreateInfo
@@ -552,7 +552,7 @@ impl VkComponentMapping
 	pub memory: VkDeviceMemory, pub offset: VkDeviceSize,
 	pub size: VkDeviceSize
 }
-#[repr(C)] pub struct VkMemoryRequirements
+#[repr(C)] #[derive(Copy, Clone)] pub struct VkMemoryRequirements
 {
 	pub size: VkDeviceSize, pub alignment: VkDeviceSize,
 	pub memoryTypeBits: u32
@@ -565,7 +565,7 @@ impl VkComponentMapping
 	pub usage: VkBufferUsageFlags, pub sharingMode: VkSharingMode,
 	pub queueFamilyIndexCount: u32, pub pQueueFamilyIndices: *const u32
 }
-#[repr(C)] pub struct VkImageCreateInfo
+#[repr(C)] #[derive(Clone, Copy)] pub struct VkImageCreateInfo
 {
 	pub sType: VkStructureType, pub pNext: *const c_void,
 	pub flags: VkImageCreateFlags, pub imageType: VkImageType,

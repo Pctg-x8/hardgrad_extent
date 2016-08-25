@@ -236,11 +236,28 @@ impl Engine
 			&builder_into_natives.iter().map(|x| x.into()).collect::<Vec<_>>())
 			.map(|v| v.into_iter().map(GraphicsPipeline::new).collect::<Vec<_>>()).map_err(EngineError::from)
 	}
-	pub fn create_double_buffer(&self, preallocator: &MemoryPreallocator) -> Result<(DeviceBuffer, StagingBuffer), EngineError>
+	pub fn create_double_buffer(&self, resource_prealloc: &ResourcePreallocator) -> Result<(DeviceResource, Option<StagingResource>), EngineError>
 	{
-		info!(target: "Prelude", "Allocated device memory: {} bytes(double-buffered)", preallocator.total_size());
-		DeviceBuffer::new(self, preallocator.total_size(), preallocator.get_usage()).and_then(|db|
-		StagingBuffer::new(self, preallocator.total_size()).map(|sb| (db, sb)))
+		let buffer = try!(match resource_prealloc.buffer().map(|pa| Buffer::new(self, pa.total_size(), pa.get_usage() | VK_BUFFER_USAGE_TRANSFER_DST_BIT))
+			{ Some(e) => e.map(|x| Some(x)), None => Ok(None) });
+		let stage_buffer = try!(match resource_prealloc.buffer().map(|pa| Buffer::new(self, pa.total_size(), VK_BUFFER_USAGE_TRANSFER_SRC_BIT))
+			{ Some(e) => e.map(|x| Some(x)), None => Ok(None) });
+		let image1 = try!(resource_prealloc.dim1_images().iter().map(|desc| Image1D::new(self, desc.get_internal())).collect::<Result<Vec<_>, EngineError>>());
+		let image2 = try!(resource_prealloc.dim2_images().iter().map(|desc| Image2D::new(self, desc.get_internal())).collect::<Result<Vec<_>, EngineError>>());
+		let image3 = try!(resource_prealloc.dim3_images().iter().map(|desc| Image3D::new(self, desc.get_internal())).collect::<Result<Vec<_>, EngineError>>());
+		let linear_image2 = try!(resource_prealloc.dim2_images().iter().map(|desc| desc.get_internal())
+			.filter(|desc| desc.mipLevels == 1 && desc.arrayLayers == 1 && desc.samples == VK_SAMPLE_COUNT_1_BIT)
+			.map(|desc| LinearImage2D::new(self, VkExtent2D(desc.extent.0, desc.extent.1), desc.format)).collect::<Result<Vec<_>, EngineError>>());
+		
+		DeviceResource::new(self,buffer, image1, image2, image3).and_then(|dev|
+		if stage_buffer.is_some() || !linear_image2.is_empty()
+		{
+			StagingResource::new(self, stage_buffer, linear_image2).map(|stg| (dev, Some(stg)))
+		}
+		else
+		{
+			Ok((dev, None))
+		})
 	}
 	pub fn create_descriptor_set_layout(&self, bindings: &[Descriptor]) -> Result<DescriptorSetLayout, EngineError>
 	{
@@ -271,7 +288,7 @@ impl Engine
 		self.asset_dir.join(asset_path.replace(".", "/")).with_extension(extension).into()
 	}
 
-	pub fn preallocate(&self, structure_sizes: &[(usize, BufferDataType)]) -> MemoryPreallocator
+	pub fn buffer_preallocate(&self, structure_sizes: &[(usize, BufferDataType)]) -> BufferPreallocator
 	{
 		let uniform_alignment = self.physical_device_limits.minUniformBufferOffsetAlignment as usize;
 		let usage_flags = structure_sizes.iter().fold(0, |flags_accum, &(_, data_type)| match data_type
@@ -291,11 +308,11 @@ impl Engine
 			Some(current)
 		}).collect::<Vec<_>>();
 
-		info!(target: "Prelude::MemoryPreallocator", "Preallocation Results: ");
-		info!(target: "Prelude::MemoryPreallocator", "-- Minimum Alignment for Uniform Buffer: {} bytes", uniform_alignment);
-		info!(target: "Prelude::MemoryPreallocator", "-- Preallocated Offsets: {:?}", offsets);
+		info!(target: "Prelude::BufferPreallocator", "Preallocation Results: ");
+		info!(target: "Prelude::BufferPreallocator", "-- Minimum Alignment for Uniform Buffer: {} bytes", uniform_alignment);
+		info!(target: "Prelude::BufferPreallocator", "-- Preallocated Offsets: {:?}", offsets);
 
-		MemoryPreallocator::new(usage_flags, offsets)
+		BufferPreallocator::new(usage_flags, offsets)
 	}
 	pub fn update_descriptors(&self, write_infos: &[DescriptorSetWriteInfo])
 	{

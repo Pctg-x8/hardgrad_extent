@@ -326,8 +326,7 @@ pub const VK_QUEUE_SPARSE_BINDING_BIT: VkFlags	= 0x08;
 	Identity = 0, Zero = 1, One = 2,
 	R = 3, G = 4, B = 5, A = 6
 }
-#[repr(C)]
-pub enum VkSharingMode
+#[repr(C)] #[derive(Clone, Copy)] pub enum VkSharingMode
 {
 	Exclusive = 0,
 	Concurrent = 1
@@ -387,11 +386,11 @@ pub const VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT: VkFlags	= 0x20;
 pub const VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT: VkFlags		= 0x40;
 pub const VK_IMAGE_USAGE_INPUT_ATTACHMENT_BIT: VkFlags			= 0x80;
 
-#[repr(C)] pub enum VkImageTiling
+#[repr(C)] #[derive(Copy, Clone)] pub enum VkImageTiling
 {
 	Optimal = 0, Linear = 1
 }
-#[repr(C)] pub enum VkImageType
+#[repr(C)] #[derive(PartialEq, Debug, Clone, Copy)] pub enum VkImageType
 {
 	Dim1 = 0, Dim2 = 1, Dim3 = 2
 }
