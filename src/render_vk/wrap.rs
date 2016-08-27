@@ -506,6 +506,7 @@ impl DescriptorPool
 
 pub struct Sampler { parent: Rc<Device>, obj: VkSampler }
 impl std::ops::Drop for Sampler { fn drop(&mut self) { unsafe { vkDestroySampler(self.parent.obj, self.obj, std::ptr::null()) }; } }
+impl NativeOwner<VkSampler> for Sampler { fn get(&self) -> VkSampler { self.obj } }
 impl Sampler
 {
 	pub fn new(device: &Rc<Device>, info: &VkSamplerCreateInfo) -> Result<Self, VkResult>

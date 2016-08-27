@@ -3,11 +3,11 @@ extern crate xcb;
 extern crate nalgebra;
 extern crate rand;
 extern crate time;
-extern crate freetype;
 extern crate unicode_normalization;
 extern crate thread_scoped;
 #[macro_use] extern crate log;
 extern crate ansi_term;
+extern crate freetype_sys;
 #[macro_use] mod vkffi;
 mod render_vk;
 mod prelude;
@@ -125,8 +125,6 @@ fn app_main() -> Result<(), prelude::EngineError>
 	utils::memory_management_test();
 
 	let engine = try!(prelude::Engine::new("HardGrad->Extent", VK_MAKE_VERSION!(0, 0, 1))).with_assets_in(std::env::current_dir().unwrap());
-	let debug_info = try!(prelude::DebugInfo::new(&engine));
-	debug_info.test();
 	let main_frame = try!(engine.create_render_window(VkExtent2D(640, 480), "HardGrad -> Extent"));
 	let VkExtent2D(frame_width, frame_height) = main_frame.get_extent();
 	let execute_next_signal = try!(engine.create_fence());
@@ -153,15 +151,7 @@ fn app_main() -> Result<(), prelude::EngineError>
 		(std::mem::size_of::<structures::InstanceMemory>(), prelude::BufferDataType::Vertex),
 		(std::mem::size_of::<structures::UniformMemory>(), prelude::BufferDataType::Uniform)
 	]);
-	let appdata_prealloc = prelude::ResourcePreallocator::new()
-		.buffer(&application_buffer_prealloc);
-	let (application_data, appdata_stage) = 
-	{
-		let (dev, stg) = try!(engine.create_double_buffer(&appdata_prealloc));
-		(dev, stg.unwrap())
-	};
-	let application_buffer = try!(application_data.buffer());
-	let appdata_stage_buffer = try!(appdata_stage.buffer());
+	let (application_data, appdata_stage) = try!(engine.create_double_buffer(&application_buffer_prealloc));
 
 	// setup initial data //
 	try!(appdata_stage.map().map(|mapped|
@@ -200,7 +190,7 @@ fn app_main() -> Result<(), prelude::EngineError>
 	let all_descriptor_sets = try!(engine.preallocate_all_descriptor_sets(&[&dslayout_u1]));
 	engine.update_descriptors(&[
 		prelude::DescriptorSetWriteInfo::UniformBuffer(all_descriptor_sets[0], 0, vec![
-			prelude::BufferInfo(application_buffer, application_buffer_prealloc.offset(3) .. application_buffer_prealloc.total_size() as usize)
+			prelude::BufferInfo(&application_data, application_buffer_prealloc.offset(3) .. application_buffer_prealloc.total_size() as usize)
 		])
 	]);
 	
@@ -241,15 +231,15 @@ fn app_main() -> Result<(), prelude::EngineError>
 	try!(engine.allocate_transient_transfer_command_buffers(1).and_then(|setup_commands|
 	{
 		let buffer_memory_barriers = [
-			prelude::BufferMemoryBarrier::hold_ownership(appdata_stage_buffer, 0 .. application_buffer_prealloc.total_size(),
+			prelude::BufferMemoryBarrier::hold_ownership(&appdata_stage, 0 .. application_buffer_prealloc.total_size(),
 				0, VK_ACCESS_TRANSFER_READ_BIT),
-			prelude::BufferMemoryBarrier::hold_ownership(application_buffer, 0 .. application_buffer_prealloc.total_size(),
+			prelude::BufferMemoryBarrier::hold_ownership(&application_data, 0 .. application_buffer_prealloc.total_size(),
 				0, VK_ACCESS_TRANSFER_WRITE_BIT)
 		];
 		let buffer_memory_barriers_ret = [
-			prelude::BufferMemoryBarrier::hold_ownership(appdata_stage_buffer, 0 .. application_buffer_prealloc.total_size(),
+			prelude::BufferMemoryBarrier::hold_ownership(&appdata_stage, 0 .. application_buffer_prealloc.total_size(),
 				VK_ACCESS_TRANSFER_READ_BIT, VK_ACCESS_MEMORY_READ_BIT),
-			prelude::BufferMemoryBarrier::hold_ownership(application_buffer, 0 .. application_buffer_prealloc.total_size(),
+			prelude::BufferMemoryBarrier::hold_ownership(&application_data, 0 .. application_buffer_prealloc.total_size(),
 				VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT | VK_ACCESS_INDEX_READ_BIT | VK_ACCESS_UNIFORM_READ_BIT)
 		];
 		let image_memory_barriers = main_frame.get_back_images().iter()
@@ -259,12 +249,20 @@ fn app_main() -> Result<(), prelude::EngineError>
 		try!(setup_commands.begin(0).and_then(|recorder|
 			recorder.pipeline_barrier(VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, false,
 				&[], &buffer_memory_barriers, &image_memory_barriers)
-			.copy_buffer(appdata_stage_buffer, application_buffer, &[prelude::BufferCopyRegion(0, 0, application_buffer_prealloc.total_size() as usize)])
+			.copy_buffer(&appdata_stage, &application_data, &[prelude::BufferCopyRegion(0, 0, application_buffer_prealloc.total_size() as usize)])
 			.pipeline_barrier(VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, false, &[], &buffer_memory_barriers_ret, &[])
 			.end()
 		));
 		setup_commands.execute()
 	}));
+
+	// Debug Information //
+	let frame_time_ms = RefCell::new(0.0f64);
+	let enemy_count = RefCell::new(0u32);
+	let debug_info = try!(prelude::DebugInfo::new(&engine, &[
+		prelude::DebugLine::Float("Frame Time".to_string(), &frame_time_ms, Some("ms".to_string())),
+		prelude::DebugLine::UnsignedInt("Enemy Count".to_string(), &enemy_count, None)
+	], &rp_framebuffer_form, 0, swapchain_viewport));
 
 	// Rendering Commands //
 	let framebuffer_commands = try!(engine.allocate_graphics_command_buffers(main_frame.get_back_images().len() as u32));
@@ -280,23 +278,24 @@ fn app_main() -> Result<(), prelude::EngineError>
 				&[color_output_barrier])
 			.begin_render_pass(&framebuffers[i], &[prelude::AttachmentClearValue::Color(0.0f32, 0.0f32, 0.015625f32, 1.0f32)], false)
 			.bind_descriptor_sets(&wire_render_layout, &all_descriptor_sets[0..1])
-			.bind_vertex_buffers(&[(application_buffer, application_buffer_prealloc.offset(0))])
+			.bind_vertex_buffers(&[(&application_data, application_buffer_prealloc.offset(0))])
 			.bind_pipeline(background_render)
-			.bind_vertex_buffers_partial(1, &[(application_buffer, application_buffer_prealloc.offset(2) + structures::background_instance_offs())])
+			.bind_vertex_buffers_partial(1, &[(&application_data, application_buffer_prealloc.offset(2) + structures::background_instance_offs())])
 			.push_constants(&wire_render_layout, &[prelude::ShaderStage::Vertex],
 				0 .. std::mem::size_of::<f32>() as u32 * 4, &[0.125f32, 0.5f32, 0.25f32, 0.75f32])
 			.draw(4, MAX_BK_COUNT as u32)
 			.bind_pipeline(enemy_render)
-			.bind_vertex_buffers_partial(1, &[(application_buffer, application_buffer_prealloc.offset(2))])
+			.bind_vertex_buffers_partial(1, &[(&application_data, application_buffer_prealloc.offset(2))])
 			.push_constants(&wire_render_layout, &[prelude::ShaderStage::Vertex],
 				0 .. std::mem::size_of::<f32>() as u32 * 4, &[0.25f32, 0.9875f32, 1.5f32, 1.0f32])
 			.draw(4, MAX_ENEMY_COUNT as u32)
 			.bind_pipeline(player_render)
-			.bind_vertex_buffers_partial(1, &[(application_buffer, application_buffer_prealloc.offset(2) + structures::player_instance_offs())])
-			.bind_index_buffer(application_buffer, application_buffer_prealloc.offset(1))
+			.bind_vertex_buffers_partial(1, &[(&application_data, application_buffer_prealloc.offset(2) + structures::player_instance_offs())])
+			.bind_index_buffer(&application_data, application_buffer_prealloc.offset(1))
 			.push_constants(&wire_render_layout, &[prelude::ShaderStage::Vertex],
 				0 .. std::mem::size_of::<f32>() as u32 * 4, &[1.5f32, 1.25f32, 0.375f32, 1.0f32])
 			.draw_indexed(24, 2, 4)
+			.inject_commands(|r| debug_info.inject_render_commands(r))
 			.end_render_pass()
 		.end()
 	}).collect::<Result<Vec<_>, _>>()));
@@ -306,21 +305,21 @@ fn app_main() -> Result<(), prelude::EngineError>
 	{
 		let uoffs = application_buffer_prealloc.offset(2);
 		let buffer_barriers = [
-			prelude::BufferMemoryBarrier::hold_ownership(application_buffer, uoffs as u64 .. application_buffer_prealloc.total_size(),
+			prelude::BufferMemoryBarrier::hold_ownership(&application_data, uoffs as u64 .. application_buffer_prealloc.total_size(),
 				VK_ACCESS_INDEX_READ_BIT | VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT | VK_ACCESS_UNIFORM_READ_BIT, VK_ACCESS_TRANSFER_WRITE_BIT),
-			prelude::BufferMemoryBarrier::hold_ownership(appdata_stage_buffer, uoffs as u64 .. application_buffer_prealloc.total_size(),
+			prelude::BufferMemoryBarrier::hold_ownership(&appdata_stage, uoffs as u64 .. application_buffer_prealloc.total_size(),
 				VK_ACCESS_MEMORY_READ_BIT, VK_ACCESS_TRANSFER_READ_BIT)
 		];
 		let buffer_barriers_ret = [
-			prelude::BufferMemoryBarrier::hold_ownership(application_buffer, uoffs as u64 .. application_buffer_prealloc.total_size(),
+			prelude::BufferMemoryBarrier::hold_ownership(&application_data, uoffs as u64 .. application_buffer_prealloc.total_size(),
 				VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_INDEX_READ_BIT | VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT | VK_ACCESS_UNIFORM_READ_BIT),
-			prelude::BufferMemoryBarrier::hold_ownership(appdata_stage_buffer, uoffs as u64 .. application_buffer_prealloc.total_size(),
+			prelude::BufferMemoryBarrier::hold_ownership(&appdata_stage, uoffs as u64 .. application_buffer_prealloc.total_size(),
 				VK_ACCESS_TRANSFER_READ_BIT, VK_ACCESS_MEMORY_READ_BIT)
 		];
 
 		recorder
 			.pipeline_barrier(VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, false, &[], &buffer_barriers, &[])
-			.copy_buffer(appdata_stage_buffer, application_buffer, &[prelude::BufferCopyRegion(uoffs, uoffs, application_buffer_prealloc.total_size() as usize - uoffs)])
+			.copy_buffer(&appdata_stage, &application_data, &[prelude::BufferCopyRegion(uoffs, uoffs, application_buffer_prealloc.total_size() as usize - uoffs)])
 			.pipeline_barrier(VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, false, &[], &buffer_barriers_ret, &[])
 		.end()
 	}));
@@ -364,6 +363,7 @@ fn app_main() -> Result<(), prelude::EngineError>
 			if execute_next_signal.get_status().is_ok()
 			{
 				let delta_time = prev_time.to(time::PreciseTime::now());
+				*frame_time_ms.borrow_mut() = delta_time.num_microseconds().unwrap_or(-1) as f64 / 1000.0f64;
 				frame_index = try!
 				{
 					execute_next_signal.clear().and_then(|()|

@@ -3,15 +3,15 @@ name = "hardgrad_extent"
 version = "0.1.0"
 dependencies = [
  "ansi_term 0.8.0 (registry+https://github.com/rust-lang/crates.io-index)",
- "freetype-rs 0.10.0 (registry+https://github.com/rust-lang/crates.io-index)",
- "libc 0.2.12 (registry+https://github.com/rust-lang/crates.io-index)",
+ "freetype-sys 0.4.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "libc 0.2.15 (registry+https://github.com/rust-lang/crates.io-index)",
  "log 0.3.6 (registry+https://github.com/rust-lang/crates.io-index)",
  "nalgebra 0.8.2 (registry+https://github.com/rust-lang/crates.io-index)",
  "rand 0.3.14 (registry+https://github.com/rust-lang/crates.io-index)",
  "thread-scoped 1.0.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "time 0.1.35 (registry+https://github.com/rust-lang/crates.io-index)",
  "unicode-normalization 0.1.2 (registry+https://github.com/rust-lang/crates.io-index)",
- "xcb 0.7.3 (registry+https://github.com/rust-lang/crates.io-index)",
+ "xcb 0.7.5 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
 [[package]]
@@ -20,33 +20,18 @@ version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 
 [[package]]
-name = "bitflags"
-version = "0.7.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-
-[[package]]
-name = "freetype-rs"
-version = "0.10.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-dependencies = [
- "bitflags 0.7.0 (registry+https://github.com/rust-lang/crates.io-index)",
- "freetype-sys 0.4.0 (registry+https://github.com/rust-lang/crates.io-index)",
- "libc 0.2.12 (registry+https://github.com/rust-lang/crates.io-index)",
-]
-
-[[package]]
 name = "freetype-sys"
 version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 dependencies = [
- "libc 0.2.12 (registry+https://github.com/rust-lang/crates.io-index)",
- "libz-sys 1.0.4 (registry+https://github.com/rust-lang/crates.io-index)",
+ "libc 0.2.15 (registry+https://github.com/rust-lang/crates.io-index)",
+ "libz-sys 1.0.5 (registry+https://github.com/rust-lang/crates.io-index)",
  "pkg-config 0.3.8 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
 [[package]]
 name = "gcc"
-version = "0.3.30"
+version = "0.3.35"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 
 [[package]]
@@ -60,16 +45,16 @@ dependencies = [
 
 [[package]]
 name = "libc"
-version = "0.2.12"
+version = "0.2.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 
 [[package]]
 name = "libz-sys"
-version = "1.0.4"
+version = "1.0.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 dependencies = [
- "gcc 0.3.30 (registry+https://github.com/rust-lang/crates.io-index)",
- "libc 0.2.12 (registry+https://github.com/rust-lang/crates.io-index)",
+ "gcc 0.3.35 (registry+https://github.com/rust-lang/crates.io-index)",
+ "libc 0.2.15 (registry+https://github.com/rust-lang/crates.io-index)",
  "pkg-config 0.3.8 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
@@ -83,41 +68,41 @@ name = "nalgebra"
 version = "0.8.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 dependencies = [
- "num 0.1.32 (registry+https://github.com/rust-lang/crates.io-index)",
+ "num 0.1.35 (registry+https://github.com/rust-lang/crates.io-index)",
  "rand 0.3.14 (registry+https://github.com/rust-lang/crates.io-index)",
  "rustc-serialize 0.3.19 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
 [[package]]
 name = "num"
-version = "0.1.32"
+version = "0.1.35"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 dependencies = [
- "num-bigint 0.1.32 (registry+https://github.com/rust-lang/crates.io-index)",
- "num-complex 0.1.32 (registry+https://github.com/rust-lang/crates.io-index)",
+ "num-bigint 0.1.35 (registry+https://github.com/rust-lang/crates.io-index)",
+ "num-complex 0.1.35 (registry+https://github.com/rust-lang/crates.io-index)",
  "num-integer 0.1.32 (registry+https://github.com/rust-lang/crates.io-index)",
  "num-iter 0.1.32 (registry+https://github.com/rust-lang/crates.io-index)",
- "num-rational 0.1.32 (registry+https://github.com/rust-lang/crates.io-index)",
- "num-traits 0.1.32 (registry+https://github.com/rust-lang/crates.io-index)",
+ "num-rational 0.1.35 (registry+https://github.com/rust-lang/crates.io-index)",
+ "num-traits 0.1.35 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
 [[package]]
 name = "num-bigint"
-version = "0.1.32"
+version = "0.1.35"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 dependencies = [
  "num-integer 0.1.32 (registry+https://github.com/rust-lang/crates.io-index)",
- "num-traits 0.1.32 (registry+https://github.com/rust-lang/crates.io-index)",
+ "num-traits 0.1.35 (registry+https://github.com/rust-lang/crates.io-index)",
  "rand 0.3.14 (registry+https://github.com/rust-lang/crates.io-index)",
  "rustc-serialize 0.3.19 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
 [[package]]
 name = "num-complex"
-version = "0.1.32"
+version = "0.1.35"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 dependencies = [
- "num-traits 0.1.32 (registry+https://github.com/rust-lang/crates.io-index)",
+ "num-traits 0.1.35 (registry+https://github.com/rust-lang/crates.io-index)",
  "rustc-serialize 0.3.19 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
@@ -126,7 +111,7 @@ name = "num-integer"
 version = "0.1.32"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 dependencies = [
- "num-traits 0.1.32 (registry+https://github.com/rust-lang/crates.io-index)",
+ "num-traits 0.1.35 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
 [[package]]
@@ -135,23 +120,23 @@ version = "0.1.32"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 dependencies = [
  "num-integer 0.1.32 (registry+https://github.com/rust-lang/crates.io-index)",
- "num-traits 0.1.32 (registry+https://github.com/rust-lang/crates.io-index)",
+ "num-traits 0.1.35 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
 [[package]]
 name = "num-rational"
-version = "0.1.32"
+version = "0.1.35"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 dependencies = [
- "num-bigint 0.1.32 (registry+https://github.com/rust-lang/crates.io-index)",
+ "num-bigint 0.1.35 (registry+https://github.com/rust-lang/crates.io-index)",
  "num-integer 0.1.32 (registry+https://github.com/rust-lang/crates.io-index)",
- "num-traits 0.1.32 (registry+https://github.com/rust-lang/crates.io-index)",
+ "num-traits 0.1.35 (registry+https://github.com/rust-lang/crates.io-index)",
  "rustc-serialize 0.3.19 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
 [[package]]
 name = "num-traits"
-version = "0.1.32"
+version = "0.1.35"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 
 [[package]]
@@ -164,7 +149,7 @@ name = "rand"
 version = "0.3.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 dependencies = [
- "libc 0.2.12 (registry+https://github.com/rust-lang/crates.io-index)",
+ "libc 0.2.15 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
 [[package]]
@@ -183,7 +168,7 @@ version = "0.1.35"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 dependencies = [
  "kernel32-sys 0.2.2 (registry+https://github.com/rust-lang/crates.io-index)",
- "libc 0.2.12 (registry+https://github.com/rust-lang/crates.io-index)",
+ "libc 0.2.15 (registry+https://github.com/rust-lang/crates.io-index)",
  "winapi 0.2.8 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
@@ -204,10 +189,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 
 [[package]]
 name = "xcb"
-version = "0.7.3"
+version = "0.7.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 dependencies = [
- "libc 0.2.12 (registry+https://github.com/rust-lang/crates.io-index)",
+ "libc 0.2.15 (registry+https://github.com/rust-lang/crates.io-index)",
  "log 0.3.6 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 

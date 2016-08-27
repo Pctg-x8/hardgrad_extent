@@ -2,9 +2,9 @@
 
 CC_GLSL = $(SHADERC_BUILD_DIR)/glslc/glslc
 .SUFFIXES: .vert .frag .geom .spv
-VERT_OUTS = $(patsubst %.vert,%.spv,$(wildcard *.vert))
-FRAG_OUTS = $(patsubst %.frag,%.spv,$(wildcard *.frag))
-GEOM_OUTS = $(patsubst %.geom,%.spv,$(wildcard *.geom))
+VERT_OUTS = $(patsubst %.vert,%.spv,$(shell find . -type f -name '*.vert'))
+FRAG_OUTS = $(patsubst %.frag,%.spv,$(shell find . -type f -name '*.frag'))
+GEOM_OUTS = $(patsubst %.geom,%.spv,$(shell find . -type f -name '*.geom'))
 ALL_OUTS = $(VERT_OUTS) $(FRAG_OUTS) $(GEOM_OUTS)
 
 all: $(ALL_OUTS)

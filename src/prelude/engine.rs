@@ -178,6 +178,11 @@ impl Engine
 		self.pools.for_graphics().allocate_buffers(&self.device, VkCommandBufferLevel::Primary, count).map_err(EngineError::from)
 			.map(|v| GraphicsCommandBuffers::new(self.pools.for_graphics(), v))
 	}
+	pub fn allocate_bundled_command_buffers(&self, count: u32) -> Result<BundledCommandBuffers, EngineError>
+	{
+		self.pools.for_graphics().allocate_buffers(&self.device, VkCommandBufferLevel::Secondary, count).map_err(EngineError::from)
+			.map(|v| BundledCommandBuffers::new(self.pools.for_graphics(), v))
+	}
 	pub fn allocate_transfer_command_buffers(&self, count: u32) -> Result<TransferCommandBuffers, EngineError>
 	{
 		self.pools.for_transfer().allocate_buffers(&self.device, VkCommandBufferLevel::Primary, count).map_err(EngineError::from)
@@ -236,23 +241,24 @@ impl Engine
 			&builder_into_natives.iter().map(|x| x.into()).collect::<Vec<_>>())
 			.map(|v| v.into_iter().map(GraphicsPipeline::new).collect::<Vec<_>>()).map_err(EngineError::from)
 	}
-	pub fn create_double_buffer(&self, resource_prealloc: &ResourcePreallocator) -> Result<(DeviceResource, Option<StagingResource>), EngineError>
+	pub fn create_double_buffer(&self, prealloc: &BufferPreallocator) -> Result<(DeviceBuffer, StagingBuffer), EngineError>
 	{
-		let buffer = try!(match resource_prealloc.buffer().map(|pa| Buffer::new(self, pa.total_size(), pa.get_usage() | VK_BUFFER_USAGE_TRANSFER_DST_BIT))
-			{ Some(e) => e.map(|x| Some(x)), None => Ok(None) });
-		let stage_buffer = try!(match resource_prealloc.buffer().map(|pa| Buffer::new(self, pa.total_size(), VK_BUFFER_USAGE_TRANSFER_SRC_BIT))
-			{ Some(e) => e.map(|x| Some(x)), None => Ok(None) });
-		let image1 = try!(resource_prealloc.dim1_images().iter().map(|desc| Image1D::new(self, desc.get_internal())).collect::<Result<Vec<_>, EngineError>>());
-		let image2 = try!(resource_prealloc.dim2_images().iter().map(|desc| Image2D::new(self, desc.get_internal())).collect::<Result<Vec<_>, EngineError>>());
-		let image3 = try!(resource_prealloc.dim3_images().iter().map(|desc| Image3D::new(self, desc.get_internal())).collect::<Result<Vec<_>, EngineError>>());
-		let linear_image2 = try!(resource_prealloc.dim2_images().iter().map(|desc| desc.get_internal())
+		DeviceBuffer::new(self, prealloc.total_size(), prealloc.get_usage()).and_then(|dev|
+		StagingBuffer::new(self, prealloc.total_size()).map(move |stg| (dev, stg)))
+	}
+	pub fn create_double_image(&self, prealloc: &ImagePreallocator) -> Result<(DeviceImage, Option<StagingImage>), EngineError>
+	{
+		let image1 = try!(prealloc.dim1_images().iter().map(|desc| Image1D::new(self, desc.get_internal())).collect::<Result<Vec<_>, EngineError>>());
+		let image2 = try!(prealloc.dim2_images().iter().map(|desc| Image2D::new(self, desc.get_internal())).collect::<Result<Vec<_>, EngineError>>());
+		let image3 = try!(prealloc.dim3_images().iter().map(|desc| Image3D::new(self, desc.get_internal())).collect::<Result<Vec<_>, EngineError>>());
+		let linear_image2 = try!(prealloc.dim2_images().iter().map(|desc| desc.get_internal())
 			.filter(|desc| desc.mipLevels == 1 && desc.arrayLayers == 1 && desc.samples == VK_SAMPLE_COUNT_1_BIT)
 			.map(|desc| LinearImage2D::new(self, VkExtent2D(desc.extent.0, desc.extent.1), desc.format)).collect::<Result<Vec<_>, EngineError>>());
 		
-		DeviceResource::new(self,buffer, image1, image2, image3).and_then(|dev|
-		if stage_buffer.is_some() || !linear_image2.is_empty()
+		DeviceImage::new(self, image1, image2, image3).and_then(|dev|
+		if !linear_image2.is_empty()
 		{
-			StagingResource::new(self, stage_buffer, linear_image2).map(|stg| (dev, Some(stg)))
+			StagingImage::new(self, linear_image2).map(move |stg| (dev, Some(stg)))
 		}
 		else
 		{
@@ -280,9 +286,18 @@ impl Engine
 		pool.allocate_sets(self.device.get_internal(), &layouts.into_iter().map(|x| x.get_internal().get()).collect::<Vec<_>>())
 			.map(|sets| DescriptorSets::new(pool, sets))).map_err(EngineError::from)
 	}
+	pub fn create_sampler(&self, state: &SamplerState) -> Result<Sampler, EngineError>
+	{
+		Sampler::new(self, &state.into())
+	}
+	pub fn create_image_view_2d(&self, res: &Rc<Image2D>, format: VkFormat, c_map: ComponentMapping, subres: ImageSubresourceRange)
+		-> Result<ImageView2D, EngineError>
+	{
+		ImageView2D::new(self, res, format, c_map, subres)
+	}
 	pub fn wait_device(&self) -> Result<(), EngineError> { self.device.get_internal().wait_for_idle().map_err(EngineError::from) }
 
-	fn parse_asset(&self, asset_path: &str, extension: &str) -> std::ffi::OsString
+	pub fn parse_asset(&self, asset_path: &str, extension: &str) -> std::ffi::OsString
 	{
 		// ident ("." ident)* -> ident ("/" ident)*
 		self.asset_dir.join(asset_path.replace(".", "/")).with_extension(extension).into()
@@ -295,13 +310,14 @@ impl Engine
 		{
 			BufferDataType::Vertex => flags_accum | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
 			BufferDataType::Index => flags_accum | VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
-			BufferDataType::Uniform => flags_accum | VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT
+			BufferDataType::Uniform => flags_accum | VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+			BufferDataType::IndirectCallParam => flags_accum | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT
 		});
 		let offsets = structure_sizes.into_iter().chain(&[(0, BufferDataType::Vertex)]).scan(0usize, |offset_accum, &(size, data_type)|
 		{
 			let current = match data_type
 			{
-				BufferDataType::Vertex | BufferDataType::Index => *offset_accum,
+				BufferDataType::Vertex | BufferDataType::Index | BufferDataType::IndirectCallParam => *offset_accum,
 				BufferDataType::Uniform => ((*offset_accum as f64 / uniform_alignment as f64).ceil() as usize) * uniform_alignment as usize
 			};
 			*offset_accum = current + size;

@@ -342,7 +342,7 @@ impl VkComponentMapping
 	pub sType: VkStructureType, pub pNext: *const c_void,
 	pub renderPass: VkRenderPass, pub subpass: u32,
 	pub framebuffer: VkFramebuffer, pub occlusionQueryEnable: VkBool32,
-	pub queryflags: VkQueryControlFlags, pub pipelineStatistics: VkQueryPipelineStatisticFlags
+	pub queryFlags: VkQueryControlFlags, pub pipelineStatistics: VkQueryPipelineStatisticFlags
 }
 #[repr(C)] pub struct VkCommandBufferBeginInfo
 {

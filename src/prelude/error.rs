@@ -3,12 +3,15 @@
 use {std, xcb};
 use vkffi::*;
 use std::os::raw::*;
+use freetype_sys::*;
 
 pub enum EngineError
 {
 	DeviceError(VkResult), IOError(std::io::Error),
-	XServerError(c_int),
-	GenericError(&'static str)
+	XServerError(c_int), FreeTypeError(FT_Error),
+	GenericError(&'static str),
+	// Specific Errors //
+	AllocateMemoryWithEmptyResources
 }
 impl std::convert::From<VkResult> for EngineError
 {
@@ -17,6 +20,10 @@ impl std::convert::From<VkResult> for EngineError
 impl std::convert::From<std::io::Error> for EngineError
 {
 	fn from(ie: std::io::Error) -> EngineError { EngineError::IOError(ie) }
+}
+impl std::convert::From<FT_Error> for EngineError
+{
+	fn from(fe: FT_Error) -> EngineError { EngineError::FreeTypeError(fe) }
 }
 impl std::fmt::Debug for EngineError
 {
@@ -27,7 +34,9 @@ impl std::fmt::Debug for EngineError
 			&EngineError::DeviceError(ref r) => write!(formatter, "DeviceError: {:?}", r),
 			&EngineError::IOError(ref e) => write!(formatter, "IOError: {:?}", e),
 			&EngineError::XServerError(ref c) => write!(formatter, "XServerError: {:?}", c),
-			&EngineError::GenericError(ref e) => write!(formatter, "GenericError: {}", e)
+			&EngineError::FreeTypeError(ref f) => write!(formatter, "FreeTypeError: {:?}", f),
+			&EngineError::GenericError(ref e) => write!(formatter, "GenericError: {}", e),
+			&EngineError::AllocateMemoryWithEmptyResources => write!(formatter, "GenericError: Attempting to allocate device memory with empty resources")
 		}
 	}
 }
@@ -39,6 +48,7 @@ pub fn crash(err: EngineError) -> !
 		EngineError::DeviceError(_) => "Device Error",
 		EngineError::IOError(_) => "Input/Output Error",
 		EngineError::XServerError(_) => "XServer Communication Error",
-		EngineError::GenericError(_) => "Generic Error"
+		EngineError::FreeTypeError(_) => "FreeType Internal Error",
+		EngineError::GenericError(_) | EngineError::AllocateMemoryWithEmptyResources => "Generic Error"
 	})
 }

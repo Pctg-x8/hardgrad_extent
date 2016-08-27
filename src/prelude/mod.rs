@@ -18,23 +18,27 @@ pub use self::error::*;
 pub use self::engine::Engine;
 pub use self::synchronize::{QueueFence, Fence};
 pub use self::framebuffer::{AttachmentDesc, PassDesc, PassDependency, AttachmentClearValue};
-pub use self::command::{MemoryBarrier, BufferMemoryBarrier, ImageMemoryBarrier, BufferCopyRegion};
+pub use self::command::{MemoryBarrier, BufferMemoryBarrier, ImageMemoryBarrier, IndirectCallParameter, BufferCopyRegion, ImageCopyRegion};
 pub use self::resource::{
-	ImageSubresourceRange, BufferDataType, ImageUsagePresets,
-	ImageDescriptor1, ImageDescriptor2, ImageDescriptor3, ResourcePreallocator
+	ImageSubresourceRange, ImageSubresourceLayers, BufferDataType, ImageUsagePresets,
+	ImageDescriptor1, ImageDescriptor2, ImageDescriptor3, ImagePreallocator,
+	SamplerState, ComponentSwizzle, ComponentMapping
 };
 pub use self::shading::{
 	VertexBinding, VertexAttribute, PushConstantDesc,
 	PrimitiveTopology, ViewportWithScissorRect, RasterizerState, AttachmentBlendState,
 	GraphicsPipelineBuilder
 };
-pub use self::descriptor::{ShaderStage, Descriptor, BufferInfo, DescriptorSetWriteInfo};
-pub use self::debug_info::DebugInfo;
+pub use self::descriptor::{ShaderStage, Descriptor, BufferInfo, ImageInfo, DescriptorSetWriteInfo};
+pub use self::debug_info::{DebugInfo, DebugLine};
 pub mod traits
 {
-	pub use super::command::{PrimaryCommandBuffers};
+	pub use super::command::{PrimaryCommandBuffers, SecondaryCommandBuffers};
 	pub use super::resource::{ImageDescriptor};
 }
+// exported objects
+pub use self::command::{GraphicsCommandBuffers, BundledCommandBuffers, TransferCommandBuffers, TransientTransferCommandBuffers};
+pub use self::framebuffer::{RenderPass, Framebuffer};
 
 // For internal exports //
 mod internals

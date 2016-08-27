@@ -102,7 +102,7 @@ impl InternalExports<vk::DescriptorSetLayout> for DescriptorSetLayout
 
 pub struct DescriptorSets
 {
-	pool: vk::DescriptorPool, sets: Vec<VkDescriptorSet>
+	#[allow(dead_code)] pool: vk::DescriptorPool, sets: Vec<VkDescriptorSet>
 }
 pub trait DescriptorSetsInternals
 {
@@ -131,15 +131,33 @@ impl <'a> std::convert::Into<VkDescriptorBufferInfo> for &'a BufferInfo<'a>
 		VkDescriptorBufferInfo(res.get_resource(), range.start as VkDeviceSize, (range.end - range.start) as VkDeviceSize)
 	}
 }
+pub struct ImageInfo<'a>(pub &'a Sampler, pub &'a ImageView, pub VkImageLayout);
+impl <'a> std::convert::Into<VkDescriptorImageInfo> for &'a ImageInfo<'a>
+{
+	fn into(self) -> VkDescriptorImageInfo
+	{
+		let &ImageInfo(sampler, view, layout) = self;
+		VkDescriptorImageInfo(sampler.get_native(), view.get_native(), layout)
+	}
+}
 
 pub enum DescriptorSetWriteInfo<'a>
 {
-	UniformBuffer(VkDescriptorSet, u32, Vec<BufferInfo<'a>>)
+	UniformBuffer(VkDescriptorSet, u32, Vec<BufferInfo<'a>>),
+	CombinedImageSampler(VkDescriptorSet, u32, Vec<ImageInfo<'a>>)
 }
-pub struct IntoWriteDescriptorSetNativeStruct
+pub enum IntoWriteDescriptorSetNativeStruct
 {
-	target: VkDescriptorSet, binding: u32,
-	dtype: VkDescriptorType, buffers: Vec<VkDescriptorBufferInfo>
+	Buffers
+	{
+		target: VkDescriptorSet, binding: u32,
+		dtype: VkDescriptorType, buffers: Vec<VkDescriptorBufferInfo>
+	},
+	Images
+	{
+		target: VkDescriptorSet, binding: u32,
+		dtype: VkDescriptorType, images: Vec<VkDescriptorImageInfo>
+	}
 }
 impl <'a> std::convert::Into<IntoWriteDescriptorSetNativeStruct> for &'a DescriptorSetWriteInfo<'a>
 {
@@ -147,10 +165,15 @@ impl <'a> std::convert::Into<IntoWriteDescriptorSetNativeStruct> for &'a Descrip
 	{
 		match self
 		{
-			&DescriptorSetWriteInfo::UniformBuffer(target, binding, ref bufs) => IntoWriteDescriptorSetNativeStruct
+			&DescriptorSetWriteInfo::UniformBuffer(target, binding, ref bufs) => IntoWriteDescriptorSetNativeStruct::Buffers
 			{
 				target: target, binding: binding, buffers: bufs.iter().map(|x| x.into()).collect(),
 				dtype: VkDescriptorType::UniformBuffer
+			},
+			&DescriptorSetWriteInfo::CombinedImageSampler(target, binding, ref imgs) => IntoWriteDescriptorSetNativeStruct::Images
+			{
+				target: target, binding: binding, images: imgs.iter().map(|x| x.into()).collect(),
+				dtype: VkDescriptorType::CombinedImageSampler
 			}
 		}
 	}
@@ -159,12 +182,22 @@ impl <'a> std::convert::Into<VkWriteDescriptorSet> for &'a IntoWriteDescriptorSe
 {
 	fn into(self) -> VkWriteDescriptorSet
 	{
-		VkWriteDescriptorSet
+		match self
 		{
-			sType: VkStructureType::WriteDescriptorSet, pNext: std::ptr::null(),
-			dstSet: self.target, dstBinding: self.binding, dstArrayElement: 0,
-			descriptorType: self.dtype, descriptorCount: self.buffers.len() as u32,
-			pBufferInfo: self.buffers.as_ptr(), pImageInfo: std::ptr::null(), pTexelBufferView: std::ptr::null()
+			&IntoWriteDescriptorSetNativeStruct::Buffers { target, binding, dtype, ref buffers } => VkWriteDescriptorSet
+			{
+				sType: VkStructureType::WriteDescriptorSet, pNext: std::ptr::null(),
+				dstSet: target, dstBinding: binding, dstArrayElement: 0,
+				descriptorType: dtype, descriptorCount: buffers.len() as u32,
+				pBufferInfo: buffers.as_ptr(), pImageInfo: std::ptr::null(), pTexelBufferView: std::ptr::null()
+			},
+			&IntoWriteDescriptorSetNativeStruct::Images { target, binding, dtype, ref images } => VkWriteDescriptorSet
+			{
+				sType: VkStructureType::WriteDescriptorSet, pNext: std::ptr::null(),
+				dstSet: target, dstBinding: binding, dstArrayElement: 0,
+				descriptorType: dtype, descriptorCount: images.len() as u32,
+				pBufferInfo: std::ptr::null(), pImageInfo: images.as_ptr(), pTexelBufferView: std::ptr::null()
+			}
 		}
 	}
 }
