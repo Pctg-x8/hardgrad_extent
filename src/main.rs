@@ -8,6 +8,7 @@ extern crate thread_scoped;
 #[macro_use] extern crate log;
 extern crate ansi_term;
 extern crate freetype_sys;
+extern crate glob;
 #[macro_use] mod vkffi;
 mod render_vk;
 mod prelude;
@@ -22,6 +23,8 @@ mod logical_resources;
 mod utils;
 use nalgebra::*;
 use rand::distributions::*;
+mod evdev;
+use evdev::*;
 
 use vkffi::*;
 
@@ -29,6 +32,7 @@ use std::collections::LinkedList;
 use std::cell::RefCell;
 
 use prelude::traits::*;
+use std::io::Read;
 
 struct Enemy<'a>
 {
@@ -347,6 +351,76 @@ fn app_main() -> Result<(), prelude::EngineError>
 				if let Err(_) = ftsig_sender.send(()) { break; }
 			}
 		}).map_err(|_| prelude::EngineError::GenericError("Couldn't start FixedUpdate Timer Thread")));
+		try!(std::thread::Builder::new().name("Keyboard Thread".into()).spawn(move ||
+		{
+			let event_devices = glob::glob("/dev/input/event*").unwrap();
+			let mut available_devices: Vec<EventDeviceParams> = Vec::new();
+			for evdev in event_devices
+			{
+				if let Ok(ed_path) = evdev
+				{
+					match std::fs::OpenOptions::new().read(true).open(&ed_path)
+					{
+						Ok(fp) =>
+						{
+							let device_params = EventDeviceParams::get_from_fd(ed_path.to_str().unwrap(), &fp);
+							info!(target: "Prelude::evdev", "Event Device {}: [{}/{:?} {:x}:{:x} 0x{:x}]", ed_path.display(), device_params.name,
+								device_params.bus_type, device_params.vendor, device_params.product, device_params.version);
+							info!(target: "Prelude::evdev", "-- Supported Keys: {:?}", device_params.key_events);
+							info!(target: "Prelude::evdev", "-- Supported Axis: {:?}", device_params.axis_events);
+							info!(target: "Prelude::evdev", "-- Supported Syn Events: {:?}", device_params.syn_events);
+							info!(target: "Prelude::evdev", "-- Force Feedback Params");
+							info!(target: "Prelude::evdev", "---- Supported Effects: {:?}", device_params.ff_effect_types);
+							info!(target: "Prelude::evdev", "---- Supported Waveforms: {:?}", device_params.ff_waveforms);
+							info!(target: "Prelude::evdev", "---- Supported Properties: {:?}", device_params.ff_properties);
+							available_devices.push(device_params);
+						},
+						Err(e) => info!(target: "Prelude::evdev", "Failed to open event device({}): {:?}", ed_path.display(), e)
+					}
+				}
+			}
+			info!(target: "Prelude::evdev", "Using Default Device: {}", available_devices[0].fs_location);
+			let fp = std::fs::File::open(&available_devices[0].fs_location).expect("Failed to open event device");
+			let mut buffered_reader = std::io::BufReader::new(fp);
+			let mut event_data = vec![0u8; std::mem::size_of::<input_event>()];
+			loop
+			{
+				buffered_reader.read_exact(&mut event_data).unwrap();
+				let mapped_event = unsafe { std::mem::transmute::<_, &input_event>(event_data.as_ptr()) };
+				match unsafe { std::mem::transmute::<_, Event>(mapped_event._type as u32) }
+				{
+					Event::Syn =>
+					{
+						let code = unsafe { std::mem::transmute::<_, SynEvents>(mapped_event.code as u32) };
+						info!(target: "Prelude::evdev", "Syn Event: {:?} at {}.{}", code, mapped_event.time.tv_sec, mapped_event.time.tv_usec);
+					},
+					Event::Key =>
+					{
+						let code = unsafe { std::mem::transmute::<_, KeyEvents>(mapped_event.code as u32) };
+						if mapped_event.value == 1
+						{
+							info!(target: "Prelude::evdev", "Pressed Key {:?} at {}.{}", code, mapped_event.time.tv_sec, mapped_event.time.tv_usec);
+						}
+						else if mapped_event.value == 2
+						{
+							info!(target: "Prelude::evdev", "Repeating Key {:?} at {}.{}", code, mapped_event.time.tv_sec, mapped_event.time.tv_usec);
+						}
+						else
+						{
+							info!(target: "Prelude::evdev", "Released Key {:?} at {}.{}", code, mapped_event.time.tv_sec, mapped_event.time.tv_usec);
+						}
+					},
+					Event::Absolute =>
+					{
+						let code = unsafe { std::mem::transmute::<_, AbsoluteAxisEvents>(mapped_event.code as u32) };
+						info!(target: "Prelude::evdev", "Axis Input: {:?} = {} at {}.{}", code, mapped_event.value,
+							mapped_event.time.tv_sec, mapped_event.time.tv_usec);
+					},
+					_ => info!(target: "Prelude::evdev", "Received Event {:?} at {}.{}",
+						unsafe { std::mem::transmute::<_, Event>(mapped_event._type as u32) }, mapped_event.time.tv_sec, mapped_event.time.tv_usec)
+				}
+			}
+		}).map_err(|_| prelude::EngineError::GenericError("Couldn't start Keyboard Thread")));
 
 		let mut randomizer = rand::thread_rng();
 		let background_appear_rate = rand::distributions::Range::new(0, 6);

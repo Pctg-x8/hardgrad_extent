@@ -27,8 +27,8 @@ impl log::Log for EngineLogger
 		{
 			println!("{}", match record.level()
 			{
-				log::LogLevel::Error => Style::new().bold().fg(Color::Red).paint(format!("!! [{}:{}] {}", record.target(), record.level(), record.args())),
-				_ => Style::new().bold().paint(format!("** [{}:{}] {}", record.target(), record.level(), record.args()))
+				log::LogLevel::Error => Style::new().bold().fg(Color::Red).paint(format!("!! [{}|{}] {}", record.target(), record.level(), record.args())),
+				_ => Style::new().bold().paint(format!("** [{}|{}] {}", record.target(), record.level(), record.args()))
 			});
 		}
 	}
