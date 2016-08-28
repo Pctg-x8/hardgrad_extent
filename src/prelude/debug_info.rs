@@ -14,6 +14,7 @@ use unicode_normalization::*;
 use nalgebra::*;
 
 const TEXTURE_SIZE: u32 = 512;
+const DEBUG_LEFT_OFFSET: f32 = 6.0;
 
 trait FreeTypeErrorHandler
 {
@@ -123,9 +124,10 @@ impl <'a> DebugLine<'a>
 }
 enum OptimizedDebugLine<'a>
 {
-	Integer(StrRenderData, &'a RefCell<i32>, Option<StrRenderData>),
-	UnsignedInt(StrRenderData, &'a RefCell<u32>, Option<StrRenderData>),
-	Float(StrRenderData, &'a RefCell<f64>, Option<StrRenderData>)
+	// cp_offs, base_y, param_name, value_ref, unit
+	Integer(usize, f32, StrRenderData, &'a RefCell<i32>, Option<StrRenderData>),
+	UnsignedInt(usize, f32, StrRenderData, &'a RefCell<u32>, Option<StrRenderData>),
+	Float(usize, f32, StrRenderData, &'a RefCell<f64>, Option<StrRenderData>)
 }
 
 // xoffs, yoffs, wscale hscale, uoffs, voffs, uscale, vscale
@@ -142,7 +144,34 @@ pub struct DebugInfo<'a>
 	update_commands: prelude::TransferCommandBuffers,
 	ds_layout: DescriptorSetLayout, playout: PipelineLayout,
 	render_tech: GraphicsPipeline, descriptor_sets: DescriptorSets,
-	vertex_offs: usize, instance_offs: usize, indirect_param_offs: usize
+	vertex_offs: usize, instance_offs: usize, indirect_param_offs: usize,
+	buffer_mapped_ptr: *mut std::os::raw::c_void,
+	baseline: i32, rendering_params_count: usize,
+	num_glyph_data: [StrRenderData; 12],
+	transfer_completion: QueueFence
+}
+pub trait DebugInfoInternals
+{
+	fn get_transfer_completion_qfence(&self) -> &QueueFence;
+	fn get_transfer_commands(&self) -> &TransferCommandBuffers;
+}
+impl <'a> DebugInfoInternals for DebugInfo<'a>
+{
+	fn get_transfer_completion_qfence(&self) -> &QueueFence
+	{
+		&self.transfer_completion
+	}
+	fn get_transfer_commands(&self) -> &TransferCommandBuffers
+	{
+		&self.update_commands
+	}
+}
+impl <'a> std::ops::Drop for DebugInfo<'a>
+{
+	fn drop(&mut self)
+	{
+		unsafe { MemoryMappedRange::from_raw(&self.sres_buf, self.buffer_mapped_ptr) };
+	}
 }
 impl <'a> DebugInfo<'a>
 {
@@ -154,7 +183,7 @@ impl <'a> DebugInfo<'a>
 		let max_instance_count = lines.iter().fold(0usize, |acc, x| if x.has_unit() { acc + 2 + 8 } else { acc + 1 + 8 });
 		let rendering_params_prealloc = engine.buffer_preallocate(&[
 			(std::mem::size_of::<[Position; 4]>(), prelude::BufferDataType::Vertex),
-			(std::mem::size_of::<prelude::IndirectCallParameter>(), prelude::BufferDataType::IndirectCallParam),
+			(std::mem::size_of::<prelude::IndirectCallParameter>() * lines.len(), prelude::BufferDataType::IndirectCallParam),
 			(std::mem::size_of::<StrRenderInstanceData>() * max_instance_count, prelude::BufferDataType::Vertex),
 			(std::mem::size_of::<CMatrix4>(), prelude::BufferDataType::Uniform)
 		]);
@@ -210,6 +239,7 @@ impl <'a> DebugInfo<'a>
 		let mut optimized_lines = Vec::new();
 		
 		// Generate Textures and Rendering Params
+		let mut num_glyph_data: [StrRenderData; 12] = unsafe { std::mem::uninitialized() };
 		try!(bstage.map().and_then(|mapped_buf| istage.map().map(move |mapped| (mapped_buf, mapped))).and_then(|(mapped_buf, mapped)|
 		{
 			*mapped_buf.map_mut::<[Position; 4]>(rendering_params_prealloc.offset(0)) = [
@@ -224,7 +254,7 @@ impl <'a> DebugInfo<'a>
 
 			let rendering_params = mapped_buf.range_mut::<StrRenderInstanceData>(rendering_params_prealloc.offset(2), max_instance_count);
 			let mapped_pixels = mapped.map_mut::<[u8; TEXTURE_SIZE as usize * TEXTURE_SIZE as usize]>(istage.image2d_offset(0) as usize);
-			for c in "0123456789".nfc()
+			for (n, c) in "0123456789.-".nfc().enumerate()
 			{
 				try!(typeface.load_char(c));
 				let gref = unsafe { &*typeface.glyph_ref() };
@@ -239,19 +269,19 @@ impl <'a> DebugInfo<'a>
 				{
 					mapped_pixels[((x as f32 + xo as f32 + texcoord.u * TEXTURE_SIZE as f32) + (y as f32 + texcoord.v * TEXTURE_SIZE as f32) * TEXTURE_SIZE as f32) as usize] = p;
 				}
-				glyph_coords.insert(c.to_string(), StrRenderData
+				num_glyph_data[n] = StrRenderData
 				{
 					texcoord: texcoord,
 					width: (xo + width) as f32, height: height as f32,
 					offset_from_baseline: yo as f32, advance_left: gref.advance.x as f32 / 64.0f32
-				});
+				};
 			}
 
 			// Add Debug Lines //
+			let call_params = mapped_buf.range_mut::<prelude::IndirectCallParameter>(rendering_params_prealloc.offset(1), lines.len());
 			let mut rp_current_index = 0;
 			let mut top = 4u32;
-			let left_offs = 6.0f32;
-			for line in lines
+			for (n, line) in lines.into_iter().enumerate()
 			{
 				let base = top as f32 + typeface.baseline as f32;
 				optimized_lines.push(match line
@@ -260,36 +290,59 @@ impl <'a> DebugInfo<'a>
 					{
 						let param_name = Self::string_entry(&mut glyph_coords, &typeface, &mut horizons, mapped_pixels, param.clone() + ": ");
 						let unit_str = unit.as_ref().map(|x| Self::string_entry(&mut glyph_coords, &typeface, &mut horizons, mapped_pixels, x.clone()));
-						let left = left_offs;
+						let left = DEBUG_LEFT_OFFSET;
+						let start_rp_index = rp_current_index;
 						rendering_params[rp_current_index] = StrRenderInstanceData(left, base - param_name.offset_from_baseline, param_name.width, param_name.height, param_name.texcoord.u, param_name.texcoord.v, param_name.texcoord.uw, param_name.texcoord.vh);
-						// let left = left + param_name.advance_left.ceil();
+						let left = left + param_name.advance_left.ceil();
 						rp_current_index += 1;
-						OptimizedDebugLine::Integer(param_name, vref, unit_str)
+						if let Some(unit_str) = unit_str
+						{
+							rendering_params[rp_current_index] = StrRenderInstanceData(left, base - unit_str.offset_from_baseline, unit_str.width, unit_str.height, unit_str.texcoord.u, unit_str.texcoord.v, unit_str.texcoord.uw, unit_str.texcoord.vh);
+							rp_current_index += 1;
+						}
+						rp_current_index += 8;
+						call_params[n] = prelude::IndirectCallParameter(4, rp_current_index as u32 - start_rp_index as u32 - 8, 0, start_rp_index as u32);
+						OptimizedDebugLine::Integer(start_rp_index, base, param_name, vref, unit_str)
 					},
 					&DebugLine::UnsignedInt(ref param, vref, ref unit) =>
 					{
 						let param_name = Self::string_entry(&mut glyph_coords, &typeface, &mut horizons, mapped_pixels, param.clone() + ": ");
 						let unit_str = unit.as_ref().map(|x| Self::string_entry(&mut glyph_coords, &typeface, &mut horizons, mapped_pixels, x.clone()));
-						let left = left_offs;
+						let left = DEBUG_LEFT_OFFSET;
+						let start_rp_index = rp_current_index;
 						rendering_params[rp_current_index] = StrRenderInstanceData(left, base - param_name.offset_from_baseline, param_name.width, param_name.height, param_name.texcoord.u, param_name.texcoord.v, param_name.texcoord.uw, param_name.texcoord.vh);
-						// let left = left + param_name.advance_left.ceil();
+						let left = left + param_name.advance_left.ceil();
 						rp_current_index += 1;
-						OptimizedDebugLine::UnsignedInt(param_name, vref, unit_str)
+						if let Some(unit_str) = unit_str
+						{
+							rendering_params[rp_current_index] = StrRenderInstanceData(left, base - unit_str.offset_from_baseline, unit_str.width, unit_str.height, unit_str.texcoord.u, unit_str.texcoord.v, unit_str.texcoord.uw, unit_str.texcoord.vh);
+							rp_current_index += 1;
+						}
+						rp_current_index += 8;
+						call_params[n] = prelude::IndirectCallParameter(4, rp_current_index as u32 - start_rp_index as u32 - 8, 0, start_rp_index as u32);
+						OptimizedDebugLine::UnsignedInt(start_rp_index, base, param_name, vref, unit_str)
 					},
 					&DebugLine::Float(ref param, vref, ref unit) =>
 					{
 						let param_name = Self::string_entry(&mut glyph_coords, &typeface, &mut horizons, mapped_pixels, param.clone() + ": ");
 						let unit_str = unit.as_ref().map(|x| Self::string_entry(&mut glyph_coords, &typeface, &mut horizons, mapped_pixels, x.clone()));
-						let left = left_offs;
+						let left = DEBUG_LEFT_OFFSET;
+						let start_rp_index = rp_current_index;
 						rendering_params[rp_current_index] = StrRenderInstanceData(left, base - param_name.offset_from_baseline, param_name.width, param_name.height, param_name.texcoord.u, param_name.texcoord.v, param_name.texcoord.uw, param_name.texcoord.vh);
-						// let left = left + param_name.advance_left.ceil();
+						let left = left + param_name.advance_left.ceil();
 						rp_current_index += 1;
-						OptimizedDebugLine::Float(param_name, vref, unit_str)
+						if let Some(unit_str) = unit_str
+						{
+							rendering_params[rp_current_index] = StrRenderInstanceData(left, base - unit_str.offset_from_baseline, unit_str.width, unit_str.height, unit_str.texcoord.u, unit_str.texcoord.v, unit_str.texcoord.uw, unit_str.texcoord.vh);
+							rp_current_index += 1;
+						}
+						rp_current_index += 8;
+						call_params[n] = prelude::IndirectCallParameter(4, rp_current_index as u32 - start_rp_index as u32 - 8, 0, start_rp_index as u32);
+						OptimizedDebugLine::Float(start_rp_index, base, param_name, vref, unit_str)
 					}
 				});
 				top += typeface.line_height.ceil() as u32;
 			}
-			*mapped_buf.map_mut::<prelude::IndirectCallParameter>(rendering_params_prealloc.offset(1)) = prelude::IndirectCallParameter(4, rp_current_index as u32, 0, 0);
 			Ok(())
 		}));
 
@@ -297,6 +350,8 @@ impl <'a> DebugInfo<'a>
 		let update_commands = try!(engine.allocate_transfer_command_buffers(1));
 		try!(update_commands.begin(0).and_then(|recorder|
 		{
+			let update_start_offs = rendering_params_prealloc.offset(1);
+			let update_end_offs = rendering_params_prealloc.offset(3);
 			let imb_stage_template = prelude::ImageMemoryBarrier::template(istage.dim2(0), prelude::ImageSubresourceRange::base_color());
 			let imb_dev_template = prelude::ImageMemoryBarrier::template(&**idev.dim2(0), prelude::ImageSubresourceRange::base_color());
 			let image_memory_barriers = [
@@ -307,13 +362,23 @@ impl <'a> DebugInfo<'a>
 				imb_stage_template.hold_ownership(VK_ACCESS_TRANSFER_READ_BIT, VK_ACCESS_HOST_WRITE_BIT, VkImageLayout::TransferSrcOptimal, VkImageLayout::General),
 				imb_dev_template.hold_ownership(VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT, VkImageLayout::TransferDestOptimal, VkImageLayout::ShaderReadOnlyOptimal)
 			];
+			let buffer_memory_barriers = [
+				prelude::BufferMemoryBarrier::hold_ownership(&bstage, update_start_offs .. update_end_offs, VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT),
+				prelude::BufferMemoryBarrier::hold_ownership(&bdev, update_start_offs .. update_end_offs, VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT | VK_ACCESS_UNIFORM_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_READ_BIT, VK_ACCESS_TRANSFER_WRITE_BIT)
+			];
+			let buffer_memory_barriers_ret = [
+				prelude::BufferMemoryBarrier::hold_ownership(&bstage, update_start_offs .. update_end_offs, VK_ACCESS_TRANSFER_READ_BIT, VK_ACCESS_HOST_WRITE_BIT),
+				prelude::BufferMemoryBarrier::hold_ownership(&bdev, update_start_offs .. update_end_offs, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT | VK_ACCESS_UNIFORM_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_READ_BIT)
+			];
+
 			recorder
 				.pipeline_barrier(VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, false,
-					&[], &[], &image_memory_barriers)
+					&[], &buffer_memory_barriers, &image_memory_barriers)
 				.copy_image(istage.dim2(0), &**idev.dim2(0), VkImageLayout::TransferSrcOptimal, VkImageLayout::TransferDestOptimal,
 					&[prelude::ImageCopyRegion(prelude::ImageSubresourceLayers::base_color(), VkOffset3D(0, 0, 0), prelude::ImageSubresourceLayers::base_color(), VkOffset3D(0, 0, 0), VkExtent3D(TEXTURE_SIZE, TEXTURE_SIZE, 1))])
+				.copy_buffer(&bstage, &bdev, &[prelude::BufferCopyRegion(update_start_offs, update_start_offs, (update_end_offs - update_start_offs) as usize)])
 				.pipeline_barrier(VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, false,
-					&[], &[], &image_memory_barriers_ret)
+					&[], &buffer_memory_barriers_ret, &image_memory_barriers_ret)
 			.end()
 		}));
 
@@ -355,6 +420,8 @@ impl <'a> DebugInfo<'a>
 			try!(setup_commands.execute());
 		}
 
+		let buffer_mapped_ptr = try!(bstage.map().map(|x| unsafe { x.into_raw() }));
+
 		Ok(Box::new(DebugInfo
 		{
 			dres_buf: bdev, sres_buf: bstage,
@@ -365,7 +432,12 @@ impl <'a> DebugInfo<'a>
 			render_tech: pipeline, descriptor_sets: descriptor_sets,
 			vertex_offs: rendering_params_prealloc.offset(0),
 			instance_offs: rendering_params_prealloc.offset(2),
-			indirect_param_offs: rendering_params_prealloc.offset(1)
+			indirect_param_offs: rendering_params_prealloc.offset(1),
+			buffer_mapped_ptr: buffer_mapped_ptr,
+			baseline: typeface.baseline,
+			rendering_params_count: max_instance_count,
+			num_glyph_data: num_glyph_data,
+			transfer_completion: try!(engine.create_queue_fence())
 		}))
 	}
 	fn allocate_rect(horizons: &mut LinkedList<Horizon>, rect: VkExtent2D) -> Option<TextureRegion>
@@ -475,7 +547,162 @@ impl <'a> DebugInfo<'a>
 		recorder.bind_pipeline(&self.render_tech)
 			.bind_descriptor_sets(&self.playout, &self.descriptor_sets[0 .. 1])
 			.bind_vertex_buffers(&[(&self.dres_buf, self.vertex_offs), (&self.dres_buf, self.instance_offs)])
-			.draw_indirect(&self.dres_buf, self.indirect_param_offs)
+			.draw_indirect_mult(&self.dres_buf, self.indirect_param_offs, self.optimized_lines.len() as u32)
+	}
+
+	#[allow(dead_code)]
+	pub fn update(&self)
+	{
+		let (call_params, rendering_params) = unsafe
+		{
+			(std::slice::from_raw_parts_mut(self.buffer_mapped_ptr.offset(self.indirect_param_offs as isize) as *mut prelude::IndirectCallParameter,
+				self.optimized_lines.len()),
+			std::slice::from_raw_parts_mut(self.buffer_mapped_ptr.offset(self.instance_offs as isize) as *mut StrRenderInstanceData,
+				self.rendering_params_count))
+		};
+		for (line, call_param) in self.optimized_lines.iter().zip(call_params)
+		{
+			match line
+			{
+				&OptimizedDebugLine::Integer(start_rp_index, base, ref param, vref, ref unit) =>
+				{
+					// maximum 7 digits + sign
+					let mut character_indices = [0usize; 8];
+					let total_len = if *vref.borrow() == 0
+					{
+						character_indices[0] = 0;
+						1
+					}
+					else
+					{
+						let is_minus = *vref.borrow() < 0;
+						let mut ipart_abs = if is_minus { -*vref.borrow() } else { *vref.borrow() } % 10_000_000;
+						let total_len = if is_minus { 1 } else { 0 } + (ipart_abs as f32).log(10.0f32) as usize + 1;
+						let mut current_ptr = total_len;
+						while ipart_abs > 0
+						{
+							current_ptr -= 1;
+							character_indices[current_ptr] = (ipart_abs % 10) as usize;
+							ipart_abs = ipart_abs / 10;
+						}
+						if is_minus { character_indices[0] = 11; }		// minus sign
+						total_len
+					};
+
+					let header_offs = if unit.is_some() { 2 } else { 1 };
+					let mut left = DEBUG_LEFT_OFFSET + param.advance_left.ceil();
+					for (n, ci) in character_indices[..total_len].into_iter().enumerate()
+					{
+						let ref glyph_data = self.num_glyph_data[*ci];
+						rendering_params[start_rp_index + header_offs + n] = StrRenderInstanceData(left, base - glyph_data.offset_from_baseline,
+							glyph_data.width, glyph_data.height, glyph_data.texcoord.u, glyph_data.texcoord.v,
+							glyph_data.texcoord.uw, glyph_data.texcoord.vh);
+						left += glyph_data.advance_left;
+					}
+					if unit.is_some()
+					{
+						rendering_params[start_rp_index + 1].0 = left;
+					}
+					*call_param = prelude::IndirectCallParameter(4, if unit.is_some() { 2 } else { 1 } + total_len as u32, 0, start_rp_index as u32);
+				},
+				&OptimizedDebugLine::UnsignedInt(start_rp_index, base, ref param, vref, ref unit) =>
+				{
+					// maximum 8 digits
+					let mut character_indices = [0usize; 8];
+					let mut ipart = *vref.borrow() % 100_000_000;
+					let total_len = if ipart == 0
+					{
+						character_indices[0] = 0;
+						1
+					}
+					else
+					{
+						let total_len = (ipart as f32).log(10.0f32) as usize + 1;
+						let mut current_ptr = total_len;
+						while ipart > 0
+						{
+							current_ptr -= 1;
+							character_indices[current_ptr] = (ipart % 10) as usize;
+							ipart = ipart / 10;
+						}
+						total_len
+					};
+
+					let header_offs = if unit.is_some() { 2 } else { 1 };
+					let mut left = DEBUG_LEFT_OFFSET + param.advance_left.ceil();
+					for (n, ci) in character_indices[..total_len].into_iter().enumerate()
+					{
+						let ref glyph_data = self.num_glyph_data[*ci];
+						rendering_params[start_rp_index + header_offs + n] = StrRenderInstanceData(left, base - glyph_data.offset_from_baseline,
+							glyph_data.width, glyph_data.height, glyph_data.texcoord.u, glyph_data.texcoord.v,
+							glyph_data.texcoord.uw, glyph_data.texcoord.vh);
+						left += glyph_data.advance_left;
+					}
+					if unit.is_some()
+					{
+						rendering_params[start_rp_index + 1].0 = left;
+					}
+					*call_param = prelude::IndirectCallParameter(4, if unit.is_some() { 2 } else { 1 } + total_len as u32, 0, start_rp_index as u32);
+				},
+				&OptimizedDebugLine::Float(start_rp_index, base, ref param, vref, ref unit) =>
+				{
+					// maximum 3.3 digits + sign
+					let mut character_indices = [0usize; 8];
+					let is_minus = *vref.borrow() < 0.0f64;
+					let (mut ipart_abs, mut fpart) = (vref.borrow().abs().floor() as u32 % 1_000, *vref.borrow() - vref.borrow().floor());
+					let first_idx = if is_minus { 1 } else { 0 };
+					let ipart_len = if ipart_abs == 0
+					{
+						character_indices[first_idx] = 0;
+						1
+					}
+					else
+					{
+						let ipart_len = (ipart_abs as f32).log(10.0f32) as usize + 1;
+						let mut current_ptr = ipart_len;
+						while ipart_abs > 0
+						{
+							current_ptr -= 1;
+							character_indices[first_idx + current_ptr] = (ipart_abs % 10) as usize;
+							ipart_abs = ipart_abs / 10;
+						}
+						ipart_len
+					};
+					let cont_len = if fpart > 0.0f64
+					{
+						character_indices[first_idx + ipart_len] = 10;		// period
+						let mut fplen = 0;
+						while fpart > 0.0f64 && fplen < 4
+						{
+							fplen += 1;
+							fpart *= 10.0f64;
+							character_indices[first_idx + ipart_len + fplen] = fpart as usize % 10;
+							fpart -= fpart.floor();
+						}
+						fplen
+					}
+					else { 0 };
+					if is_minus { character_indices[0] = 11; }		// minus
+
+					let total_len = ipart_len + cont_len;
+					let header_offs = if unit.is_some() { 2 } else { 1 };
+					let mut left = DEBUG_LEFT_OFFSET + param.advance_left.ceil();
+					for (n, ci) in character_indices[..total_len].into_iter().enumerate()
+					{
+						let ref glyph_data = self.num_glyph_data[*ci];
+						rendering_params[start_rp_index + header_offs + n] = StrRenderInstanceData(left, base - glyph_data.offset_from_baseline,
+							glyph_data.width, glyph_data.height, glyph_data.texcoord.u, glyph_data.texcoord.v,
+							glyph_data.texcoord.uw, glyph_data.texcoord.vh);
+						left += glyph_data.advance_left;
+					}
+					if unit.is_some()
+					{
+						rendering_params[start_rp_index + 1].0 = left;
+					}
+					*call_param = prelude::IndirectCallParameter(4, if unit.is_some() { 2 } else { 1 } + total_len as u32, 0, start_rp_index as u32);
+				}
+			}
+		}
 	}
 
 /*

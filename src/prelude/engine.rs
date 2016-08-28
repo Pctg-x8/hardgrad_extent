@@ -1,5 +1,7 @@
 // Prelude: Engine and EngineLogger
 
+#![allow(dead_code)]
+
 use prelude::internals::*;
 use {std, log};
 use ansi_term::*;
@@ -43,6 +45,29 @@ fn mtflags_decomposite(flags: VkMemoryPropertyFlags) -> Vec<String>
 	temp
 }
 
+pub struct DeviceFeatures(VkPhysicalDeviceFeatures);
+impl DeviceFeatures
+{
+	pub fn new() -> Self
+	{
+		DeviceFeatures(VkPhysicalDeviceFeatures
+		{
+			geometryShader: true as VkBool32,
+			.. Default::default()
+		})
+	}
+	pub fn enable_multidraw_indirect(mut self) -> Self
+	{
+		self.0.multiDrawIndirect = true as VkBool32;
+		self
+	}
+	pub fn enable_draw_indirect_first_instance(mut self) -> Self
+	{
+		self.0.drawIndirectFirstInstance = true as VkBool32;
+		self
+	}
+}
+
 pub trait EngineExports
 {
 	fn get_window_server(&self) -> &Rc<WindowServer>;
@@ -73,7 +98,11 @@ impl EngineExports for Engine
 }
 impl Engine
 {
-	pub fn new(app_name: &str, app_version: u32) -> Result<Box<Engine>, EngineError>
+	pub fn new(app_name: &str, app_version: u32) -> Result<Box<Self>, EngineError>
+	{
+		Self::new_with_features(app_name, app_version, DeviceFeatures::new())
+	}
+	pub fn new_with_features(app_name: &str, app_version: u32, extra_features: DeviceFeatures) -> Result<Box<Engine>, EngineError>
 	{
 		// Setup Engine Logger //
 		log::set_logger(|max_log_level| { max_log_level.set(log::LogLevelFilter::Info); Box::new(EngineLogger) }).unwrap();
@@ -95,7 +124,7 @@ impl Engine
 			let transfer_qf = queue_family_properties.iter().enumerate().filter(|&(i, _)| i as u32 != graphics_qf)
 				.find(|&(_, fp)| (fp.queueFlags & VK_QUEUE_TRANSFER_BIT) != 0).map(|(i, _)| i as u32);
 			Self::diagnose_adapter(&*window_server, &adapter, graphics_qf);
-			let device_features = VkPhysicalDeviceFeatures { geometryShader: 1, .. Default::default() };
+			let device_features = extra_features.0;
 			try!(Device::new(&adapter, &device_features, graphics_qf, transfer_qf, &queue_family_properties[graphics_qf as usize]))
 		};
 		let pools = try!(CommandPool::new(&device));
@@ -243,8 +272,8 @@ impl Engine
 	}
 	pub fn create_double_buffer(&self, prealloc: &BufferPreallocator) -> Result<(DeviceBuffer, StagingBuffer), EngineError>
 	{
-		DeviceBuffer::new(self, prealloc.total_size(), prealloc.get_usage()).and_then(|dev|
-		StagingBuffer::new(self, prealloc.total_size()).map(move |stg| (dev, stg)))
+		DeviceBuffer::new(self, prealloc.total_size() as VkDeviceSize, prealloc.get_usage()).and_then(|dev|
+		StagingBuffer::new(self, prealloc.total_size() as VkDeviceSize).map(move |stg| (dev, stg)))
 	}
 	pub fn create_double_image(&self, prealloc: &ImagePreallocator) -> Result<(DeviceImage, Option<StagingImage>), EngineError>
 	{
@@ -368,19 +397,19 @@ impl Engine
 		// Feature Check //
 		let features = adapter.get_features();
 		info!(target: "Prelude::DiagAdapter", "adapter features");
-		info!(target: "Prelude::DiagAdapter", "-- independentBlend: {}", features.independentBlend);
-		info!(target: "Prelude::DiagAdapter", "-- geometryShader: {}", features.geometryShader);
-		info!(target: "Prelude::DiagAdapter", "-- multiDrawIndirect: {}", features.multiDrawIndirect);
-		info!(target: "Prelude::DiagAdapter", "-- drawIndirectFirstInstance: {}", features.drawIndirectFirstInstance);
-		info!(target: "Prelude::DiagAdapter", "-- shaderTessellationAndGeometryPointSize: {}", features.shaderTessellationAndGeometryPointSize);
-		info!(target: "Prelude::DiagAdapter", "-- depthClamp: {}", features.depthClamp);
-		info!(target: "Prelude::DiagAdapter", "-- depthBiasClamp: {}", features.depthBiasClamp);
-		info!(target: "Prelude::DiagAdapter", "-- wideLines: {}", features.wideLines);
-		info!(target: "Prelude::DiagAdapter", "-- alphaToOne: {}", features.alphaToOne);
-		info!(target: "Prelude::DiagAdapter", "-- multiViewport: {}", features.multiViewport);
-		info!(target: "Prelude::DiagAdapter", "-- shaderCullDistance: {}", features.shaderCullDistance);
-		info!(target: "Prelude::DiagAdapter", "-- shaderClipDistance: {}", features.shaderClipDistance);
-		info!(target: "Prelude::DiagAdapter", "-- shaderResourceResidency: {}", features.shaderResourceResidency);
+		info!(target: "Prelude::DiagAdapter", "-- independentBlend: {}", bool_to_str(features.independentBlend));
+		info!(target: "Prelude::DiagAdapter", "-- geometryShader: {}", bool_to_str(features.geometryShader));
+		info!(target: "Prelude::DiagAdapter", "-- multiDrawIndirect: {}", bool_to_str(features.multiDrawIndirect));
+		info!(target: "Prelude::DiagAdapter", "-- drawIndirectFirstInstance: {}", bool_to_str(features.drawIndirectFirstInstance));
+		info!(target: "Prelude::DiagAdapter", "-- shaderTessellationAndGeometryPointSize: {}", bool_to_str(features.shaderTessellationAndGeometryPointSize));
+		info!(target: "Prelude::DiagAdapter", "-- depthClamp: {}", bool_to_str(features.depthClamp));
+		info!(target: "Prelude::DiagAdapter", "-- depthBiasClamp: {}", bool_to_str(features.depthBiasClamp));
+		info!(target: "Prelude::DiagAdapter", "-- wideLines: {}", bool_to_str(features.wideLines));
+		info!(target: "Prelude::DiagAdapter", "-- alphaToOne: {}", bool_to_str(features.alphaToOne));
+		info!(target: "Prelude::DiagAdapter", "-- multiViewport: {}", bool_to_str(features.multiViewport));
+		info!(target: "Prelude::DiagAdapter", "-- shaderCullDistance: {}", bool_to_str(features.shaderCullDistance));
+		info!(target: "Prelude::DiagAdapter", "-- shaderClipDistance: {}", bool_to_str(features.shaderClipDistance));
+		info!(target: "Prelude::DiagAdapter", "-- shaderResourceResidency: {}", bool_to_str(features.shaderResourceResidency));
 		// if features.depthClamp == false as VkBool32 { panic!("DepthClamp Feature is required in device"); }
 
 		// Vulkan and XCB Integration Check //

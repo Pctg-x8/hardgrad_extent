@@ -1,5 +1,7 @@
 // Vulkan C to Rust FFI Type Aliases
 
+use std;
+
 pub type VkFlags = u32;
 pub type VkBool32 = u32;
 pub type VkDeviceSize = u64;
@@ -64,3 +66,8 @@ pub type VkCompositeAlphaFlagsKHR = VkFlags;
 pub type VkSwapchainCreateFlagsKHR = VkFlags;
 
 pub type VkDebugReportFlagsEXT = VkFlags;
+
+pub fn bool_to_str(val: VkBool32) -> &'static str
+{
+	if val == true as VkBool32 { "true" } else { "false" }
+}

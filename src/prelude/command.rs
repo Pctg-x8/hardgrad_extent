@@ -1,5 +1,7 @@
 // Prelude: Command Pool and Buffers
 
+#![allow(dead_code)]
+
 use prelude::internals::*;
 use std;
 use std::rc::Rc;
@@ -59,11 +61,11 @@ pub struct BufferMemoryBarrier<'a>
 {
 	pub src_access_mask: VkAccessFlags, pub dst_access_mask: VkAccessFlags,
 	pub src_queue_family_index: u32, pub dst_queue_family_index: u32,
-	pub buffer: &'a BufferResource, pub range: std::ops::Range<VkDeviceSize>
+	pub buffer: &'a BufferResource, pub range: std::ops::Range<usize>
 }
 impl <'a> BufferMemoryBarrier<'a>
 {
-	pub fn hold_ownership(buf: &'a BufferResource, range: std::ops::Range<VkDeviceSize>,
+	pub fn hold_ownership(buf: &'a BufferResource, range: std::ops::Range<usize>,
 		src_access_mask: VkAccessFlags, dst_access_mask: VkAccessFlags) -> Self
 	{
 		BufferMemoryBarrier
@@ -83,7 +85,7 @@ impl <'a> std::convert::Into<VkBufferMemoryBarrier> for &'a BufferMemoryBarrier<
 			sType: VkStructureType::BufferMemoryBarrier, pNext: std::ptr::null(),
 			srcAccessMask: self.src_access_mask, dstAccessMask: self.dst_access_mask,
 			srcQueueFamilyIndex: self.src_queue_family_index, dstQueueFamilyIndex: self.dst_queue_family_index,
-			buffer: self.buffer.get_resource(), offset: self.range.start, size: self.range.end - self.range.start
+			buffer: self.buffer.get_resource(), offset: self.range.start as VkDeviceSize, size: (self.range.end - self.range.start) as VkDeviceSize
 		}
 	}
 }
@@ -441,6 +443,12 @@ impl <'a> GraphicsCommandRecorder<'a>
 	pub fn draw_indirect(self, param_buffer: &BufferResource, param_offs: usize) -> Self
 	{
 		unsafe { vkCmdDrawIndirect(*self.buffer_ref.unwrap(), param_buffer.get_resource(), param_offs as VkDeviceSize, 1, 0) };
+		self
+	}
+	pub fn draw_indirect_mult(self, param_buffer: &BufferResource, param_offs: usize, param_count: u32) -> Self
+	{
+		unsafe { vkCmdDrawIndirect(*self.buffer_ref.unwrap(), param_buffer.get_resource(), param_offs as VkDeviceSize,
+			param_count, std::mem::size_of::<VkDrawIndirectCommand>() as u32) };
 		self
 	}
 

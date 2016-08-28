@@ -124,7 +124,11 @@ fn app_main() -> Result<(), prelude::EngineError>
 {
 	utils::memory_management_test();
 
-	let engine = try!(prelude::Engine::new("HardGrad->Extent", VK_MAKE_VERSION!(0, 0, 1))).with_assets_in(std::env::current_dir().unwrap());
+	let engine = try!{
+		prelude::Engine::new_with_features("HardGrad->Extent", VK_MAKE_VERSION!(0, 0, 1),
+			prelude::DeviceFeatures::new().enable_multidraw_indirect().enable_draw_indirect_first_instance())
+		.map(|e| e.with_assets_in(std::env::current_dir().unwrap()))
+	};
 	let main_frame = try!(engine.create_render_window(VkExtent2D(640, 480), "HardGrad -> Extent"));
 	let VkExtent2D(frame_width, frame_height) = main_frame.get_extent();
 	let execute_next_signal = try!(engine.create_fence());
@@ -305,15 +309,15 @@ fn app_main() -> Result<(), prelude::EngineError>
 	{
 		let uoffs = application_buffer_prealloc.offset(2);
 		let buffer_barriers = [
-			prelude::BufferMemoryBarrier::hold_ownership(&application_data, uoffs as u64 .. application_buffer_prealloc.total_size(),
+			prelude::BufferMemoryBarrier::hold_ownership(&application_data, uoffs .. application_buffer_prealloc.total_size(),
 				VK_ACCESS_INDEX_READ_BIT | VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT | VK_ACCESS_UNIFORM_READ_BIT, VK_ACCESS_TRANSFER_WRITE_BIT),
-			prelude::BufferMemoryBarrier::hold_ownership(&appdata_stage, uoffs as u64 .. application_buffer_prealloc.total_size(),
+			prelude::BufferMemoryBarrier::hold_ownership(&appdata_stage, uoffs .. application_buffer_prealloc.total_size(),
 				VK_ACCESS_MEMORY_READ_BIT, VK_ACCESS_TRANSFER_READ_BIT)
 		];
 		let buffer_barriers_ret = [
-			prelude::BufferMemoryBarrier::hold_ownership(&application_data, uoffs as u64 .. application_buffer_prealloc.total_size(),
+			prelude::BufferMemoryBarrier::hold_ownership(&application_data, uoffs .. application_buffer_prealloc.total_size(),
 				VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_INDEX_READ_BIT | VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT | VK_ACCESS_UNIFORM_READ_BIT),
-			prelude::BufferMemoryBarrier::hold_ownership(&appdata_stage, uoffs as u64 .. application_buffer_prealloc.total_size(),
+			prelude::BufferMemoryBarrier::hold_ownership(&appdata_stage, uoffs .. application_buffer_prealloc.total_size(),
 				VK_ACCESS_TRANSFER_READ_BIT, VK_ACCESS_MEMORY_READ_BIT)
 		];
 
@@ -324,7 +328,7 @@ fn app_main() -> Result<(), prelude::EngineError>
 		.end()
 	}));
 
-	let mut frame_index = try!(main_frame.execute_rendering(&engine, &framebuffer_commands, None, &execute_next_signal));
+	let mut frame_index = try!(main_frame.execute_rendering(&engine, &framebuffer_commands, None, Some(&debug_info), &execute_next_signal));
 
 	let mapped_range = try!(appdata_stage.map());
 	let mapped_uniform_data = mapped_range.map_mut::<structures::UniformMemory>(application_buffer_prealloc.offset(3));
@@ -368,7 +372,7 @@ fn app_main() -> Result<(), prelude::EngineError>
 				{
 					execute_next_signal.clear().and_then(|()|
 					main_frame.present(&engine, frame_index).and_then(|()|
-					main_frame.execute_rendering(&engine, &framebuffer_commands, Some(&update_commands), &execute_next_signal)))
+					main_frame.execute_rendering(&engine, &framebuffer_commands, Some(&update_commands), Some(&debug_info), &execute_next_signal)))
 				};
 
 				// normal update
@@ -380,9 +384,11 @@ fn app_main() -> Result<(), prelude::EngineError>
 					{
 						warn!("Enemy Datastore is full!!");
 					}
+					else { *enemy_count.borrow_mut() += 1; }
 					enemy_next_appear = false;
 				}
-				fn process_2<'a>(mut livings: LinkedList<Enemy<'a>>, mut purged_after: LinkedList<Enemy<'a>>) -> LinkedList<Enemy<'a>>
+				fn process_2<'a, F>(mut livings: LinkedList<Enemy<'a>>, mut purged_after: LinkedList<Enemy<'a>>,
+					enemy_decrease_cb: F) -> LinkedList<Enemy<'a>> where F: Fn()
 				{
 					if let Some(died_e) = purged_after.pop_front() { died_e.die(); }
 					let mut purge_index: Option<usize> = None;
@@ -390,6 +396,7 @@ fn app_main() -> Result<(), prelude::EngineError>
 					{
 						if e.update()
 						{
+							enemy_decrease_cb();
 							purge_index = Some(idx);
 							break;
 						}
@@ -399,7 +406,7 @@ fn app_main() -> Result<(), prelude::EngineError>
 						let mut purged_before = purged_after;
 						let purged_after = purged_before.split_off(purge_index);
 						livings.append(&mut purged_before);
-						process_2(livings, purged_after)
+						process_2(livings, purged_after, enemy_decrease_cb)
 					}
 					else
 					{
@@ -412,6 +419,7 @@ fn app_main() -> Result<(), prelude::EngineError>
 				{
 					if e.update()
 					{
+						*enemy_count.borrow_mut() -= 1;
 						purge_index = Some(idx);
 						break;
 					}
@@ -419,7 +427,7 @@ fn app_main() -> Result<(), prelude::EngineError>
 				if let Some(purge_index) = purge_index
 				{
 					let purged_after = enemy_entities.split_off(purge_index);
-					enemy_entities = process_2(enemy_entities, purged_after);
+					enemy_entities = process_2(enemy_entities, purged_after, || { *enemy_count.borrow_mut() -= 1; });
 				}
 				player.update();
 

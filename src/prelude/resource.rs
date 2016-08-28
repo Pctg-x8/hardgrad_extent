@@ -1,5 +1,7 @@
 // Prelude: Resources(Buffer and Image)
 
+#![allow(dead_code)]
+
 use prelude::internals::*;
 use std;
 use vkffi::*;
@@ -271,7 +273,7 @@ impl BufferPreallocatorInternals for BufferPreallocator
 impl BufferPreallocator
 {
 	pub fn offset(&self, index: usize) -> usize { self.offsets[index] }
-	pub fn total_size(&self) -> VkDeviceSize { self.offsets.last().map(|&x| x).unwrap_or(0) as VkDeviceSize }
+	pub fn total_size(&self) -> usize { self.offsets.last().map(|&x| x).unwrap_or(0) }
 }
 
 #[allow(non_snake_case)]

@@ -15,8 +15,7 @@ mod debug_info;
 
 // Exported APIs //
 pub use self::error::*;
-pub use self::engine::Engine;
-pub use self::synchronize::{QueueFence, Fence};
+pub use self::engine::DeviceFeatures;
 pub use self::framebuffer::{AttachmentDesc, PassDesc, PassDependency, AttachmentClearValue};
 pub use self::command::{MemoryBarrier, BufferMemoryBarrier, ImageMemoryBarrier, IndirectCallParameter, BufferCopyRegion, ImageCopyRegion};
 pub use self::resource::{
@@ -30,15 +29,21 @@ pub use self::shading::{
 	GraphicsPipelineBuilder
 };
 pub use self::descriptor::{ShaderStage, Descriptor, BufferInfo, ImageInfo, DescriptorSetWriteInfo};
-pub use self::debug_info::{DebugInfo, DebugLine};
+pub use self::debug_info::DebugLine;
 pub mod traits
 {
 	pub use super::command::{PrimaryCommandBuffers, SecondaryCommandBuffers};
 	pub use super::resource::{ImageDescriptor};
 }
 // exported objects
-pub use self::command::{GraphicsCommandBuffers, BundledCommandBuffers, TransferCommandBuffers, TransientTransferCommandBuffers};
+pub use self::engine::Engine;
+pub use self::synchronize::{QueueFence, Fence};
 pub use self::framebuffer::{RenderPass, Framebuffer};
+pub use self::command::{GraphicsCommandBuffers, BundledCommandBuffers, TransferCommandBuffers, TransientTransferCommandBuffers};
+pub use self::resource::{Buffer, Image1D, Image2D, Image3D, LinearImage2D, DeviceBuffer, StagingBuffer, DeviceImage, StagingImage};
+pub use self::shading::{PipelineLayout, GraphicsPipeline};
+pub use self::descriptor::{DescriptorSetLayout, DescriptorSets};
+pub use self::debug_info::DebugInfo;
 
 // For internal exports //
 mod internals
