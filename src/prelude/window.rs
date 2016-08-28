@@ -1,5 +1,7 @@
 // Prelude: Window and RenderWindow
 
+#![allow(dead_code)]
+
 use prelude::internals::*;
 use std;
 use std::rc::Rc;

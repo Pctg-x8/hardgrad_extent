@@ -1,6 +1,5 @@
 use std;
 use vkffi::*;
-use render_vk::wrap as vk;
 
 pub trait ResultValueToObject where Self: std::marker::Sized
 {

@@ -279,6 +279,7 @@ impl BufferPreallocator
 #[allow(non_snake_case)]
 pub mod ImageUsagePresets
 {
+	#![allow(non_upper_case_globals)]
 	use vkffi::*;
 	
 	pub const AsColorTexture: VkImageUsageFlags = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;

@@ -1,9 +1,6 @@
 // Traits
 
 use vkffi::*;
-use render_vk::wrap as vk;
-// use device_resources;
-// use structures;
 
 /// Indicates the object can produce window
 pub trait WindowProvider<WindowHandle>

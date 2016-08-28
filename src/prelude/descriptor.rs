@@ -1,5 +1,7 @@
 // Prelude: Descriptor and its layout in shader
 
+#![allow(dead_code)]
+
 use prelude::internals::*;
 use std;
 use vkffi::*;

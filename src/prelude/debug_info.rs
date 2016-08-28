@@ -1,6 +1,7 @@
 // Prelude: Debug Printing
 
 #![allow(mutable_transmutes)]
+#![allow(dead_code)]
 
 use prelude;
 use prelude::internals::*;

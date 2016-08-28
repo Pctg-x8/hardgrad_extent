@@ -12,7 +12,6 @@ pub type CMatrix4 = [CVector4; 4];
     pub unit_plane_source_vts: [Position; 4],
     pub player_cube_vts: [Position; 8]
 }
-pub fn player_cube_vertex_offs() -> usize { unsafe { std::mem::transmute(&std::mem::transmute::<_, &VertexMemoryForWireRender>(0usize).player_cube_vts) } }
 #[repr(C)] pub struct IndexMemory
 {
     pub player_cube_ids: [u16; 24]

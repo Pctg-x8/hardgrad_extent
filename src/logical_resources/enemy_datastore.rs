@@ -1,5 +1,4 @@
 
-use traits::*;
 use nalgebra::*;
 use utils::*;
 use structures;
