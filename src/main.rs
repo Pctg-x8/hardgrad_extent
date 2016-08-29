@@ -25,19 +25,22 @@ use nalgebra::*;
 use rand::distributions::*;
 mod evdev;
 use evdev::*;
+mod epoll;
+use epoll::*;
 
 use vkffi::*;
 
 use std::collections::LinkedList;
 use std::cell::RefCell;
+use std::rc::Rc;
+use std::sync::{Mutex, Arc};
 
 use prelude::traits::*;
-use std::io::Read;
 
 struct Enemy<'a>
 {
 	datastore_ref: &'a RefCell<logical_resources::EnemyDatastore<'a>>,
-	block_index: u32, left: f32, appear_time: time::PreciseTime
+	block_index: u32, left: f32, living_secs: f32
 }
 impl <'a> Enemy<'a>
 {
@@ -51,26 +54,25 @@ impl <'a> Enemy<'a>
 				&Vector4::new(init_left, 0.0f32, 0.0f32, 0.0f32));
 			Enemy
 			{
-				datastore_ref: datastore, block_index: index, left: init_left, appear_time: time::PreciseTime::now(),
+				datastore_ref: datastore, block_index: index, left: init_left, living_secs: 0.0f32
 			}
 		})
 	}
-	pub fn update(&self) -> bool
+	pub fn update(&mut self, delta_time: f32) -> bool
 	{
-		let delta_time = self.appear_time.to(time::PreciseTime::now());
-		let living_seconds = delta_time.num_milliseconds() as f32 / 1000.0f32;
-		let current_y = if living_seconds < 0.875f32
+		let current_y = if self.living_secs < 0.875f32
 		{
-			15.0f32 * (1.0f32 - (1.0f32 - living_seconds / 0.875f32).powi(2)) - 3.0f32
+			15.0f32 * (1.0f32 - (1.0f32 - self.living_secs / 0.875f32).powi(2)) - 3.0f32
 		}
 		else
 		{
-			15.0f32 + (living_seconds - 0.875f32) * 2.5f32 - 3.0f32
+			15.0f32 + (self.living_secs - 0.875f32) * 2.5f32 - 3.0f32
 		};
 		self.datastore_ref.borrow_mut().update_instance_data(self.block_index,
-			UnitQuaternion::new(Vector3::new(-1.0f32, 0.0f32, 0.75f32).normalize() * (260.0f32 * living_seconds).to_radians()).quaternion(),
-			UnitQuaternion::new(Vector3::new(1.0f32, -1.0f32, 0.5f32).normalize() * (-260.0f32 * living_seconds + 13.0f32).to_radians()).quaternion(),
+			UnitQuaternion::new(Vector3::new(-1.0f32, 0.0f32, 0.75f32).normalize() * (260.0f32 * self.living_secs).to_radians()).quaternion(),
+			UnitQuaternion::new(Vector3::new(1.0f32, -1.0f32, 0.5f32).normalize() * (-260.0f32 * self.living_secs + 13.0f32).to_radians()).quaternion(),
 			&Vector4::new(self.left, current_y, 0.0f32, 0.0f32));
+		self.living_secs += delta_time;
 
 		current_y >= 50.0f32
 	}
@@ -83,7 +85,7 @@ impl <'a> Enemy<'a>
 struct Player<'a>
 {
 	uniform_memory: &'a mut structures::CVector4, instance_memory: &'a mut [structures::CVector4; 2],
-	start_time: time::PreciseTime
+	living_secs: f32
 }
 impl <'a> Player<'a>
 {
@@ -99,21 +101,157 @@ impl <'a> Player<'a>
 		Player
 		{
 			uniform_memory: uniform_ref, instance_memory: instance_ref,
-			start_time: time::PreciseTime::now()
+			living_secs: 0.0f32
 		}
 	}
-	fn update(&mut self)
+	fn update(&mut self, frame_delta: f32, input: &InputSystem<LogicalInputTypes>)
 	{
-		let delta_time = self.start_time.to(time::PreciseTime::now());
-		let living_secs = delta_time.num_milliseconds() as f64 / 1000.0f64;
 		let u_quaternions = [
-			UnitQuaternion::new(Vector3::new(-1.0f32, 0.0f32, 0.75f32).normalize() * (260.0f32 * living_secs as f32).to_radians()),
-			UnitQuaternion::new(Vector3::new(1.0f32, -1.0f32, 0.5f32).normalize() * (-260.0f32 * living_secs as f32 + 13.0f32).to_radians())
+			UnitQuaternion::new(Vector3::new(-1.0f32, 0.0f32, 0.75f32).normalize() * (260.0f32 * self.living_secs as f32).to_radians()),
+			UnitQuaternion::new(Vector3::new(1.0f32, -1.0f32, 0.5f32).normalize() * (-260.0f32 * self.living_secs as f32 + 13.0f32).to_radians())
 		];
 		let mut quaternions = u_quaternions.iter().map(|x| x.quaternion()).map(|q| [q.i, q.j, q.k, q.w]);
+		self.living_secs += frame_delta;
+
+		self.uniform_memory[0] =
+			(self.uniform_memory[0] + input[LogicalInputTypes::Horizontal] * 40.0f32 * frame_delta).max(-33.0f32).min(33.0f32);
+		self.uniform_memory[1] =
+			(self.uniform_memory[1] + input[LogicalInputTypes::Vertical] * 40.0f32 * frame_delta).max(1.5f32).min(45.0f32);
 
 		self.instance_memory[0] = quaternions.next().unwrap();
 		self.instance_memory[1] = quaternions.next().unwrap();
+	}
+}
+
+#[derive(PartialEq, Eq, Hash, Copy, Clone, Debug)]
+pub enum LogicalInputTypes
+{
+	Horizontal, Vertical, Shoot, Slowdown
+}
+pub enum InputType
+{
+	Key(KeyEvents), Axis(AbsoluteAxisEvents), KeyAsAxis(KeyEvents, KeyEvents)
+}
+pub struct InputSystem<InputNames: PartialEq + Eq + std::hash::Hash + Copy + Clone + std::fmt::Debug>
+{
+	key_raw_states: Arc<Mutex<std::collections::HashMap<KeyEvents, bool>>>,
+	axis_raw_states: Arc<Mutex<std::collections::HashMap<AbsoluteAxisEvents, f32>>>,
+	keymap: std::collections::HashMap<InputNames, Vec<InputType>>,
+	input_states: std::collections::HashMap<InputNames, f32>
+}
+impl <InputNames: PartialEq + Eq + std::hash::Hash + Copy + Clone + std::fmt::Debug> InputSystem<InputNames>
+{
+	pub fn new() -> Result<Self, prelude::EngineError>
+	{
+		let key_raw_states = Arc::new(Mutex::new(std::collections::HashMap::new()));
+		let key_raw_states_in_thread = key_raw_states.clone();
+		let axis_raw_states = Arc::new(Mutex::new(std::collections::HashMap::new()));
+		let axis_raw_states_in_thread = axis_raw_states.clone();
+		try!(std::thread::Builder::new().name("Input Polling Thread".into()).spawn(move ||
+		{
+			info!(target: "Prelude::evdev", "Listing Event Devices...");
+			let event_devices = glob::glob("/dev/input/event*").unwrap();
+			let mut ed_files = Vec::new();
+			for evdev in event_devices
+			{
+				if let Ok(ed_path) = evdev
+				{
+					match std::fs::OpenOptions::new().read(true).open(&ed_path)
+					{
+						Ok(fp) =>
+						{
+							let device_params = EventDeviceParams::get_from_fd(ed_path.to_str().unwrap(), &fp);
+							info!(target: "Prelude::evdev", "Event Device {}: [{}/{:?} {:x}:{:x} 0x{:x}]", ed_path.display(), device_params.name,
+								device_params.bus_type, device_params.vendor, device_params.product, device_params.version);
+							info!(target: "Prelude::evdev", "-- Supported Keys: {:?}", device_params.key_events);
+							info!(target: "Prelude::evdev", "-- Supported Axis: {:?}", device_params.axis_events);
+							info!(target: "Prelude::evdev", "-- Supported Syn Events: {:?}", device_params.syn_events);
+							info!(target: "Prelude::evdev", "-- Force Feedback Params");
+							info!(target: "Prelude::evdev", "---- Supported Effects: {:?}", device_params.ff_effect_types);
+							info!(target: "Prelude::evdev", "---- Supported Waveforms: {:?}", device_params.ff_waveforms);
+							info!(target: "Prelude::evdev", "---- Supported Properties: {:?}", device_params.ff_properties);
+							if device_params.key_events.contains(&KeyEvents::A)
+							{
+								info!(target: "Prelude::evdev", "-- Identified as Keyboard Device");
+								let edev = EventDevice::from_params(&device_params).expect("Failed to open event device");
+								// edev.grab_device().unwrap();
+								ed_files.push(Rc::new(RefCell::new(edev)));
+							}
+							else if device_params.key_events.contains(&KeyEvents::ButtonA)
+							{
+								info!(target: "Prelude::evdev", "-- Identified as Gamepad Device");
+								ed_files.push(Rc::new(RefCell::new(EventDevice::from_params(&device_params).expect("Failed to open event device"))));
+							}
+						},
+						Err(e) => info!(target: "Prelude::evdev", "Failed to open event device({}): {:?}", ed_path.display(), e)
+					}
+				}
+			}
+			let mut polling = EPoll::new(&ed_files).expect("Unable to start polling with epoll");
+			while let Ok(events) = polling.wait()
+			{
+				let (mut key_states, mut axis_states) = (key_raw_states_in_thread.lock().unwrap(), axis_raw_states_in_thread.lock().unwrap());
+
+				for event in events
+				{
+					match event.borrow_mut().wait_event().unwrap()
+					{
+						DeviceEvent::Syn(_, _) => (),
+						DeviceEvent::Key(_, k, p) => match p
+						{
+							PressedState::Released => *key_states.entry(k).or_insert(false) = false,
+							PressedState::Pressed => *key_states.entry(k).or_insert(true) = true,
+							PressedState::Repeating => ()
+						},
+						DeviceEvent::Absolute(_, x, v) => *axis_states.entry(x).or_insert(v) = v,
+						_ => ()
+					}
+				}
+			}
+		}));
+
+		Ok(InputSystem
+		{
+			key_raw_states: key_raw_states,
+			axis_raw_states: axis_raw_states,
+			keymap: std::collections::HashMap::new(),
+			input_states: std::collections::HashMap::new()
+		})
+	}
+	pub fn add_input(mut self, to: InputNames, from: InputType) -> Self
+	{
+		self.keymap.entry(to).or_insert(Vec::new()).push(from);
+		self.input_states.insert(to, 0.0f32);
+		self
+	}
+	pub fn update(&mut self)
+	{
+		let (mut key_states, mut axis_states) = (self.key_raw_states.lock().unwrap(), self.axis_raw_states.lock().unwrap());
+		for (t, v) in &self.keymap
+		{
+			let mut total_value = 0.0f32;
+			for f in v
+			{
+				total_value += match f
+				{
+					&InputType::Axis(x) => *axis_states.entry(x).or_insert(0.0f32),
+					&InputType::Key(k) => *key_states.entry(k).or_insert(false) as u32 as f32,
+					&InputType::KeyAsAxis(n, p) =>
+						(if *key_states.entry(p).or_insert(false) { 1.0f32 } else { 0.0f32 }) -
+						(if *key_states.entry(n).or_insert(false) { 1.0f32 } else { 0.0f32 })
+				};
+			}
+			*self.input_states.entry(*t).or_insert(total_value) = total_value.max(-1.0f32).min(1.0f32);
+		}
+	}
+}
+impl <InputNames: PartialEq + Eq + std::hash::Hash + Copy + Clone + std::fmt::Debug> std::ops::Index<InputNames> for InputSystem<InputNames>
+{
+	type Output = f32;
+	fn index(&self, name: InputNames) -> &f32
+	{
+		static DEFAULT_F32: f32 = 0.0f32;
+		self.input_states.get(&name).unwrap_or(&DEFAULT_F32)
 	}
 }
 
@@ -351,77 +489,17 @@ fn app_main() -> Result<(), prelude::EngineError>
 				if let Err(_) = ftsig_sender.send(()) { break; }
 			}
 		}).map_err(|_| prelude::EngineError::GenericError("Couldn't start FixedUpdate Timer Thread")));
-		try!(std::thread::Builder::new().name("Keyboard Thread".into()).spawn(move ||
-		{
-			let event_devices = glob::glob("/dev/input/event*").unwrap();
-			let mut available_devices: Vec<EventDeviceParams> = Vec::new();
-			for evdev in event_devices
-			{
-				if let Ok(ed_path) = evdev
-				{
-					match std::fs::OpenOptions::new().read(true).open(&ed_path)
-					{
-						Ok(fp) =>
-						{
-							let device_params = EventDeviceParams::get_from_fd(ed_path.to_str().unwrap(), &fp);
-							info!(target: "Prelude::evdev", "Event Device {}: [{}/{:?} {:x}:{:x} 0x{:x}]", ed_path.display(), device_params.name,
-								device_params.bus_type, device_params.vendor, device_params.product, device_params.version);
-							info!(target: "Prelude::evdev", "-- Supported Keys: {:?}", device_params.key_events);
-							info!(target: "Prelude::evdev", "-- Supported Axis: {:?}", device_params.axis_events);
-							info!(target: "Prelude::evdev", "-- Supported Syn Events: {:?}", device_params.syn_events);
-							info!(target: "Prelude::evdev", "-- Force Feedback Params");
-							info!(target: "Prelude::evdev", "---- Supported Effects: {:?}", device_params.ff_effect_types);
-							info!(target: "Prelude::evdev", "---- Supported Waveforms: {:?}", device_params.ff_waveforms);
-							info!(target: "Prelude::evdev", "---- Supported Properties: {:?}", device_params.ff_properties);
-							available_devices.push(device_params);
-						},
-						Err(e) => info!(target: "Prelude::evdev", "Failed to open event device({}): {:?}", ed_path.display(), e)
-					}
-				}
-			}
-			info!(target: "Prelude::evdev", "Using Default Device: {}", available_devices[0].fs_location);
-			let fp = std::fs::File::open(&available_devices[0].fs_location).expect("Failed to open event device");
-			let mut buffered_reader = std::io::BufReader::new(fp);
-			let mut event_data = vec![0u8; std::mem::size_of::<input_event>()];
-			loop
-			{
-				buffered_reader.read_exact(&mut event_data).unwrap();
-				let mapped_event = unsafe { std::mem::transmute::<_, &input_event>(event_data.as_ptr()) };
-				match unsafe { std::mem::transmute::<_, Event>(mapped_event._type as u32) }
-				{
-					Event::Syn =>
-					{
-						let code = unsafe { std::mem::transmute::<_, SynEvents>(mapped_event.code as u32) };
-						info!(target: "Prelude::evdev", "Syn Event: {:?} at {}.{}", code, mapped_event.time.tv_sec, mapped_event.time.tv_usec);
-					},
-					Event::Key =>
-					{
-						let code = unsafe { std::mem::transmute::<_, KeyEvents>(mapped_event.code as u32) };
-						if mapped_event.value == 1
-						{
-							info!(target: "Prelude::evdev", "Pressed Key {:?} at {}.{}", code, mapped_event.time.tv_sec, mapped_event.time.tv_usec);
-						}
-						else if mapped_event.value == 2
-						{
-							info!(target: "Prelude::evdev", "Repeating Key {:?} at {}.{}", code, mapped_event.time.tv_sec, mapped_event.time.tv_usec);
-						}
-						else
-						{
-							info!(target: "Prelude::evdev", "Released Key {:?} at {}.{}", code, mapped_event.time.tv_sec, mapped_event.time.tv_usec);
-						}
-					},
-					Event::Absolute =>
-					{
-						let code = unsafe { std::mem::transmute::<_, AbsoluteAxisEvents>(mapped_event.code as u32) };
-						info!(target: "Prelude::evdev", "Axis Input: {:?} = {} at {}.{}", code, mapped_event.value,
-							mapped_event.time.tv_sec, mapped_event.time.tv_usec);
-					},
-					_ => info!(target: "Prelude::evdev", "Received Event {:?} at {}.{}",
-						unsafe { std::mem::transmute::<_, Event>(mapped_event._type as u32) }, mapped_event.time.tv_sec, mapped_event.time.tv_usec)
-				}
-			}
-		}).map_err(|_| prelude::EngineError::GenericError("Couldn't start Keyboard Thread")));
 
+		let mut input = try!(InputSystem::new())
+			.add_input(LogicalInputTypes::Horizontal, InputType::Axis(AbsoluteAxisEvents::X))
+			.add_input(LogicalInputTypes::Horizontal, InputType::KeyAsAxis(KeyEvents::Left, KeyEvents::Right))
+			.add_input(LogicalInputTypes::Vertical, InputType::Axis(AbsoluteAxisEvents::Y))
+			.add_input(LogicalInputTypes::Vertical, InputType::KeyAsAxis(KeyEvents::Up, KeyEvents::Down))
+			.add_input(LogicalInputTypes::Shoot, InputType::Key(KeyEvents::ButtonA))
+			.add_input(LogicalInputTypes::Shoot, InputType::Key(KeyEvents::Z))
+			.add_input(LogicalInputTypes::Slowdown, InputType::Axis(AbsoluteAxisEvents::RZ))
+			.add_input(LogicalInputTypes::Slowdown, InputType::Key(KeyEvents::ButtonX))
+			.add_input(LogicalInputTypes::Slowdown, InputType::Key(KeyEvents::X));
 		let mut randomizer = rand::thread_rng();
 		let background_appear_rate = rand::distributions::Range::new(0, 6);
 		let enemy_appear_rate = rand::distributions::Range::new(0, 40);
@@ -444,7 +522,10 @@ fn app_main() -> Result<(), prelude::EngineError>
 				};
 
 				// normal update
-				background_datastore.update(&mut randomizer, delta_time, background_next_appear);
+				input.update();
+				let timescale = 1.0f32 + input[LogicalInputTypes::Slowdown] * 2.0f32;
+				let delta_time_sec = (delta_time.num_milliseconds() as f32 / 1000.0f32) / timescale;
+				background_datastore.update(&mut randomizer, delta_time_sec, background_next_appear);
 
 				if enemy_next_appear
 				{
@@ -456,13 +537,13 @@ fn app_main() -> Result<(), prelude::EngineError>
 					enemy_next_appear = false;
 				}
 				fn process_2<'a, F>(mut livings: LinkedList<Enemy<'a>>, mut purged_after: LinkedList<Enemy<'a>>,
-					enemy_decrease_cb: F) -> LinkedList<Enemy<'a>> where F: Fn()
+					enemy_decrease_cb: F, delta_time_sec: f32) -> LinkedList<Enemy<'a>> where F: Fn()
 				{
 					if let Some(died_e) = purged_after.pop_front() { died_e.die(); }
 					let mut purge_index: Option<usize> = None;
 					for (idx, e) in purged_after.iter_mut().enumerate()
 					{
-						if e.update()
+						if e.update(delta_time_sec)
 						{
 							enemy_decrease_cb();
 							purge_index = Some(idx);
@@ -474,7 +555,7 @@ fn app_main() -> Result<(), prelude::EngineError>
 						let mut purged_before = purged_after;
 						let purged_after = purged_before.split_off(purge_index);
 						livings.append(&mut purged_before);
-						process_2(livings, purged_after, enemy_decrease_cb)
+						process_2(livings, purged_after, enemy_decrease_cb, delta_time_sec)
 					}
 					else
 					{
@@ -485,7 +566,7 @@ fn app_main() -> Result<(), prelude::EngineError>
 				let mut purge_index: Option<usize> = None;
 				for (idx, e) in enemy_entities.iter_mut().enumerate()
 				{
-					if e.update()
+					if e.update(delta_time_sec)
 					{
 						*enemy_count.borrow_mut() -= 1;
 						purge_index = Some(idx);
@@ -495,9 +576,9 @@ fn app_main() -> Result<(), prelude::EngineError>
 				if let Some(purge_index) = purge_index
 				{
 					let purged_after = enemy_entities.split_off(purge_index);
-					enemy_entities = process_2(enemy_entities, purged_after, || { *enemy_count.borrow_mut() -= 1; });
+					enemy_entities = process_2(enemy_entities, purged_after, || { *enemy_count.borrow_mut() -= 1; }, delta_time_sec);
 				}
-				player.update();
+				player.update(delta_time_sec, &input);
 
 				background_next_appear = false;
 				prev_time = time::PreciseTime::now();

@@ -14,6 +14,10 @@
 #![allow(dead_code)]
 
 use {std, libc};
+use prelude;
+use std::io::Read;
+use std::collections::HashMap;
+use std::os::unix::io::AsRawFd;
 
 // ioctl macros
 const _IOC_NRBITS: u64 = 8;
@@ -38,6 +42,13 @@ macro_rules! _IOR
 	($g: expr, $n: expr, $t: ty) =>
 	{
 		_IOC!(_IOC_READ, $g, $n, std::mem::size_of::<$t>() as u32)
+	}
+}
+macro_rules! _IOW
+{
+	($g: expr, $n: expr, $t: ty) =>
+	{
+		_IOC!(_IOC_WRITE, $g, $n, std::mem::size_of::<$t>() as u32)
 	}
 }
 
@@ -76,11 +87,12 @@ const SND_CNT: u64 = 0x07 + 1;
 const FF_CNT: u64 = 0x7f + 1;
 const FFS_CNT: u64 = 0x01 + 1;
 
-#[repr(C)]
+#[repr(C)] #[derive(Clone)]
 pub struct input_event
 {
 	pub time: libc::timeval, pub _type: u16, pub code: u16, pub value: i32
 }
+const INPUT_EVENT_SIZE: usize = (64 + 64 + 16 + 16 + 32) / 8;
 const EV_VERSION: u32 = 0x010001;
 #[repr(C)]
 struct input_id
@@ -112,12 +124,16 @@ macro_rules! EVIOCGABS
 {
 	($axis: expr) => { _IOR!('E', 0x40 + $axis, input_absinfo) }
 }
+macro_rules! EVIOCGRAB
+{
+	() => { _IOW!('E', 0x90, libc::c_int) }
+}
 
 // safety wrappers //
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum BusType
 {
-	PCI, ISAPnP, USB, HIL, Bluetooth, Virtual,
+	Unknown, PCI, ISAPnP, USB, HIL, Bluetooth, Virtual,
 	ISA, I8042, XTKBD, RS232, Gameport, ParallelPort, Amiga, ADB, I2C, Host,
 	GSC, Atari, SPI, RMI, CEC
 }
@@ -137,12 +153,12 @@ pub enum Event
 	Power = 0x16,
 	ForceFeedbackStatus = 0x17
 }
-#[repr(C)] #[derive(Debug)]
+#[repr(C)] #[derive(Debug, Clone, Copy)]
 pub enum SynEvents
 {
 	Report = 0, Config, MultitouchReport, Dropped
 }
-#[repr(C)] #[derive(Debug)]
+#[repr(C)] #[derive(Debug, Clone, PartialEq, Eq, Hash, Copy)]
 pub enum KeyEvents
 {
 	Reserved = 0,
@@ -210,7 +226,7 @@ pub enum KeyEvents
 	TriggerHappy21, TriggerHappy22, TriggerHappy23, TriggerHappy24, TriggerHappy25, TriggerHappy26, TriggerHappy27, TriggerHappy28, TriggerHappy29, TriggerHappy30,
 	TriggerHappy31, TriggerHappy32, TriggerHappy33, TriggerHappy34, TriggerHappy35, TriggerHappy36, TriggerHappy37, TriggerHappy38, TriggerHappy39, TriggerHappy40
 }
-#[repr(C)] #[derive(Debug)]
+#[repr(C)] #[derive(Debug, Clone, PartialEq, Eq, Hash, Copy)]
 pub enum AbsoluteAxisEvents
 {
 	X = 0x00, Y, Z, RX, RY, RZ, Throttle, Rudder, Wheel, Gas, Brake,
@@ -221,39 +237,40 @@ pub enum AbsoluteAxisEvents
 	MTOrientation, MTPositionX, MTPositionY, MTToolType, MTBlobID,
 	MTTrackingID, MTPressure, MTDistance, MTToolX, MTToolY
 }
-#[repr(C)] #[derive(Debug)]
+#[repr(C)] #[derive(Debug, Clone)]
 pub enum ForceFeedbackEffectTypes
 {
 	Rumble = 0x50, Periodic, Constant, Spring, Friction, Damper, Inertia, Ramp
 }
-#[repr(C)] #[derive(Debug)]
+#[repr(C)] #[derive(Debug, Clone)]
 pub enum ForceFeedbackWaveforms
 {
 	Square = 0x58, Triangle, Sine, SawUp, SawDown, Custom
 }
-#[repr(C)] #[derive(Debug)]
+#[repr(C)] #[derive(Debug, Clone)]
 pub enum ForceFeedbackDeviceProperties
 {
 	Gain = 0x60, AutoCenter
 }
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct AxisProperties
 {
 	pub axis: AbsoluteAxisEvents, pub range: std::ops::Range<i32>,
 	pub fuzz: i32, pub dead: i32, pub resolution: i32
 }
 
+#[derive(Clone)]
 pub struct EventDeviceParams
 {
 	pub fs_location: String,
 	pub bus_type: BusType, pub vendor: u16, pub product: u16, pub version: u16, pub name: String,
-	pub syn_events: Vec<SynEvents>, pub key_events: Vec<KeyEvents>, pub axis_events: Vec<AxisProperties>,
+	pub syn_events: Vec<SynEvents>, pub key_events: Vec<KeyEvents>, pub axis_events: HashMap<AbsoluteAxisEvents, AxisProperties>,
 	pub ff_effect_types: Vec<ForceFeedbackEffectTypes>, pub ff_waveforms: Vec<ForceFeedbackWaveforms>,
 	pub ff_properties: Vec<ForceFeedbackDeviceProperties>
 }
 impl EventDeviceParams
 {
-	pub fn get_from_fd<FileHandle: std::os::unix::io::AsRawFd>(fs_location: &str, file: &FileHandle) -> Self
+	pub fn get_from_fd<FileHandle: AsRawFd>(fs_location: &str, file: &FileHandle) -> Self
 	{
 		let fd = file.as_raw_fd();
 		let evdev_id = unsafe
@@ -268,7 +285,7 @@ impl EventDeviceParams
 			let mut ret: [u8; 256] = std::mem::uninitialized();
 			let iores = libc::ioctl(fd, EVIOCGNAME!(256), ret.as_mut_ptr());
 			if iores == -1 { panic!("Failed to perform ioctl: {:?}", std::io::Error::last_os_error()); }
-			Vec::from(&ret[..iores as usize])
+			Vec::from(&ret[..(iores - 1) as usize])
 		};
 
 		fn perform_event_ioctl(fd: std::os::unix::io::RawFd, e: Event, len_bits: usize) -> Vec<u8>
@@ -301,12 +318,12 @@ impl EventDeviceParams
 						if iores == -1 { warn!(target: "Prelude::evdev", "Failed to perform ioctl: {:?}", std::io::Error::last_os_error()); }
 						ret
 					};
-					AxisProperties
+					(axis.clone(), AxisProperties
 					{
-						axis: axis, range: info.minimum .. info.maximum + 1,
+						axis: axis, range: info.minimum .. info.maximum,
 						fuzz: info.fuzz, dead: info.flat, resolution: info.resolution
-					}
-				})).collect::<Vec<_>>()
+					})
+				})).collect::<HashMap<_, _>>()
 		};
 		let (ff_effect_types, ff_waveforms, ff_device_props) = {
 			let d = perform_event_ioctl(fd, Event::ForceFeedback, FF_CNT as usize);
@@ -349,7 +366,7 @@ impl EventDeviceParams
 				BUS_SPI => BusType::SPI,
 				BUS_RMI => BusType::RMI,
 				BUS_CEC => BusType::CEC,
-				_ => unreachable!()
+				_ => BusType::Unknown
 			},
 			vendor: evdev_id.vendor, product: evdev_id.product, version: evdev_id.version,
 			name: String::from_utf8(evdev_name).unwrap(),
@@ -357,4 +374,82 @@ impl EventDeviceParams
 			ff_effect_types: ff_effect_types, ff_waveforms: ff_waveforms, ff_properties: ff_device_props
 		}
 	}
+}
+
+pub enum PressedState
+{
+	Released, Pressed, Repeating
+}
+pub enum DeviceEvent
+{
+	Syn(libc::timeval, SynEvents),
+	Key(libc::timeval, KeyEvents, PressedState),
+	Absolute(libc::timeval, AbsoluteAxisEvents, f32),
+	Generic(input_event)
+}
+
+pub struct EventDevice
+{
+	params: EventDeviceParams, reader: std::io::BufReader<std::fs::File>, data_u8: Vec<u8>
+}
+impl EventDevice
+{
+	pub fn from_params(params: &EventDeviceParams) -> Result<Self, prelude::EngineError>
+	{
+		info!(target: "Prelude::evdev", "Opening Event Device {}", params.name);
+		std::fs::OpenOptions::new().read(true).open(&params.fs_location).map_err(prelude::EngineError::from).map(|fp| EventDevice
+		{
+			params: params.clone(), reader: std::io::BufReader::new(fp),
+			data_u8: vec![0u8; std::mem::size_of::<input_event>()]
+		})
+	}
+	pub fn grab_device(&self) -> Result<(), prelude::EngineError>
+	{
+		let grab_flag: libc::c_int = 1;
+		let iores = unsafe { libc::ioctl(self.as_raw_fd(), EVIOCGRAB!(), &grab_flag) };
+		if iores == -1 { Err(prelude::EngineError::GenericError("Failed to grabbing event device")) } else { Ok(()) }
+	}
+	pub fn wait_event(&mut self) -> Result<DeviceEvent, prelude::EngineError>
+	{
+		self.reader.read_exact(&mut self.data_u8)
+			.map(|()| unsafe { std::mem::transmute::<_, &input_event>(self.data_u8.as_ptr()) })
+			.map(|ev| match unsafe { std::mem::transmute::<_, Event>(ev._type as u32) }
+			{
+				Event::Syn => DeviceEvent::Syn(ev.time, unsafe { std::mem::transmute::<_, SynEvents>(ev.code as u32) }),
+				Event::Key => DeviceEvent::Key(ev.time, unsafe { std::mem::transmute::<_, KeyEvents>(ev.code as u32) },
+					match ev.value { 1 => PressedState::Pressed, 2 => PressedState::Repeating, _ => PressedState::Released }),
+				Event::Absolute =>
+				{
+					let axis = unsafe { std::mem::transmute::<_, AbsoluteAxisEvents>(ev.code as u32) };
+					self.params.axis_events.get(&axis).map(|ap| if ev.value.abs() <= ap.dead { 0.0f32 }
+					else
+					{
+						if ap.range.start == 0
+						{
+							// unidirectional
+							(ev.value as f32 / ap.range.end as f32).min(1.0f32)
+						}
+						else
+						{
+							// bidirectional
+							(2.0f32 * (ev.value as f32 - ap.range.start as f32)
+								/ ap.range.len() as f32 - 1.0f32).max(-1.0f32).min(1.0f32)
+						}
+					}).map(|value_norm| DeviceEvent::Absolute(ev.time, axis, value_norm))
+						.unwrap_or(DeviceEvent::Generic(ev.clone()))
+				},
+				_ => DeviceEvent::Generic(ev.clone())
+			}).map_err(prelude::EngineError::from)
+	}
+	pub fn send_to(&mut self, sender: std::sync::mpsc::Sender<DeviceEvent>)
+	{
+		while let Ok(e) = self.wait_event()
+		{
+			if sender.send(e).is_err() { break; }
+		}
+	}
+}
+impl std::os::unix::io::AsRawFd for EventDevice
+{
+	fn as_raw_fd(&self) -> std::os::unix::io::RawFd { self.reader.get_ref().as_raw_fd() }
 }

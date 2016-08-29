@@ -1,5 +1,5 @@
 
-use rand; use time;
+use rand;
 use rand::distributions::*;
 use structures;
 use constants::*;
@@ -19,9 +19,8 @@ impl <'a> BackgroundDatastore<'a>
 			instance_data: instance_data_ref
 		}
 	}
-	pub fn update(&mut self, mut randomizer: &mut rand::Rng, delta_time: time::Duration, appear: bool)
+	pub fn update(&mut self, mut randomizer: &mut rand::Rng, delta_time: f32, appear: bool)
 	{
-		let delta_sec = delta_time.num_microseconds().unwrap_or(0) as f32 / 1_000_000.0f32;
 		let mut require_appear = appear;
 		let mut left_range = rand::distributions::Range::new(-14.0f32, 14.0f32);
 		let mut count_range = rand::distributions::Range::new(2, 10);
@@ -42,7 +41,7 @@ impl <'a> BackgroundDatastore<'a>
 			}
 			else
 			{
-				self.buffer_data[i].offset[1] += delta_sec * 22.0f32;
+				self.buffer_data[i].offset[1] += delta_time * 22.0f32;
 				*m = if self.buffer_data[i].offset[1] >= 20.0f32 { 0 } else { 1 };
 			}
 		}
