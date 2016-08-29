@@ -126,7 +126,7 @@ impl <'a> Player<'a>
 #[derive(PartialEq, Eq, Hash, Copy, Clone, Debug)]
 pub enum LogicalInputTypes
 {
-	Horizontal, Vertical, Shoot, Slowdown
+	Horizontal, Vertical, Shoot, Slowdown, Overdrive
 }
 pub enum InputType
 {
@@ -422,7 +422,7 @@ fn app_main() -> Result<(), prelude::EngineError>
 			.bind_pipeline(background_render)
 			.bind_vertex_buffers_partial(1, &[(&application_data, application_buffer_prealloc.offset(2) + structures::background_instance_offs())])
 			.push_constants(&wire_render_layout, &[prelude::ShaderStage::Vertex],
-				0 .. std::mem::size_of::<f32>() as u32 * 4, &[0.125f32, 0.5f32, 0.25f32, 0.75f32])
+				0 .. std::mem::size_of::<f32>() as u32 * 4, &[0.125f32, 0.5f32, 0.1875f32, 0.625f32])
 			.draw(4, MAX_BK_COUNT as u32)
 			.bind_pipeline(enemy_render)
 			.bind_vertex_buffers_partial(1, &[(&application_data, application_buffer_prealloc.offset(2))])
@@ -478,123 +478,111 @@ fn app_main() -> Result<(), prelude::EngineError>
 	let mut enemy_entities: LinkedList<Enemy> = LinkedList::new();
 	let mut player = Player::new(uref_player_center, iref_player);
 
-	let ft_thread =
+	let mut secs_from_last_fixed = 0.0f32;
+	let mut input = try!(InputSystem::new())
+		.add_input(LogicalInputTypes::Horizontal, InputType::Axis(AbsoluteAxisEvents::X))
+		.add_input(LogicalInputTypes::Horizontal, InputType::KeyAsAxis(KeyEvents::Left, KeyEvents::Right))
+		.add_input(LogicalInputTypes::Vertical, InputType::Axis(AbsoluteAxisEvents::Y))
+		.add_input(LogicalInputTypes::Vertical, InputType::KeyAsAxis(KeyEvents::Up, KeyEvents::Down))
+		.add_input(LogicalInputTypes::Shoot, InputType::Key(KeyEvents::ButtonA))
+		.add_input(LogicalInputTypes::Shoot, InputType::Key(KeyEvents::Z))
+		.add_input(LogicalInputTypes::Slowdown, InputType::Axis(AbsoluteAxisEvents::RZ))
+		.add_input(LogicalInputTypes::Slowdown, InputType::Key(KeyEvents::ButtonX))
+		.add_input(LogicalInputTypes::Slowdown, InputType::Key(KeyEvents::X))
+		.add_input(LogicalInputTypes::Overdrive, InputType::Axis(AbsoluteAxisEvents::Z));
+	let mut randomizer = rand::thread_rng();
+	let background_appear_rate = rand::distributions::Range::new(0, 6);
+	let enemy_appear_rate = rand::distributions::Range::new(0, 40);
+	let enemy_left_range = rand::distributions::Range::new(-25.0f32, 25.0f32);
+	let mut background_next_appear = false;
+	let mut enemy_next_appear = false;
+	let mut prev_time = time::PreciseTime::now();
+	while engine.process_messages()
 	{
-		let (ftsig_sender, ftsig_receiver) = std::sync::mpsc::channel();
-		let ft_thread = try!(std::thread::Builder::new().name("FixedUpdateTimerThread".into()).spawn(move ||
+		// Render code...
+		if execute_next_signal.get_status().is_ok()
 		{
-			loop
+			let delta_time = prev_time.to(time::PreciseTime::now());
+			*frame_time_ms.borrow_mut() = delta_time.num_microseconds().unwrap_or(-1) as f64 / 1000.0f64;
+			frame_index = try!
 			{
-				std::thread::sleep(std::time::Duration::from_millis(16));
-				if let Err(_) = ftsig_sender.send(()) { break; }
+				execute_next_signal.clear().and_then(|()|
+				main_frame.present(&engine, frame_index).and_then(|()|
+				main_frame.execute_rendering(&engine, &framebuffer_commands, Some(&update_commands), Some(&debug_info), &execute_next_signal)))
+			};
+
+			// normal update
+			input.update();
+			let timescale = (1.0f32 + input[LogicalInputTypes::Slowdown] * 2.0f32) / (1.0f32 + input[LogicalInputTypes::Overdrive]);
+			let delta_time_sec = (delta_time.num_milliseconds() as f32 / 1000.0f32) / timescale;
+			secs_from_last_fixed += delta_time_sec;
+			background_datastore.update(&mut randomizer, delta_time_sec, background_next_appear);
+
+			if enemy_next_appear
+			{
+				if Enemy::new(&enemy_datastore, enemy_left_range.ind_sample(&mut randomizer)).map(|e| enemy_entities.push_back(e)) == None
+				{
+					warn!("Enemy Datastore is full!!");
+				}
+				else { *enemy_count.borrow_mut() += 1; }
+				enemy_next_appear = false;
 			}
-		}).map_err(|_| prelude::EngineError::GenericError("Couldn't start FixedUpdate Timer Thread")));
-
-		let mut input = try!(InputSystem::new())
-			.add_input(LogicalInputTypes::Horizontal, InputType::Axis(AbsoluteAxisEvents::X))
-			.add_input(LogicalInputTypes::Horizontal, InputType::KeyAsAxis(KeyEvents::Left, KeyEvents::Right))
-			.add_input(LogicalInputTypes::Vertical, InputType::Axis(AbsoluteAxisEvents::Y))
-			.add_input(LogicalInputTypes::Vertical, InputType::KeyAsAxis(KeyEvents::Up, KeyEvents::Down))
-			.add_input(LogicalInputTypes::Shoot, InputType::Key(KeyEvents::ButtonA))
-			.add_input(LogicalInputTypes::Shoot, InputType::Key(KeyEvents::Z))
-			.add_input(LogicalInputTypes::Slowdown, InputType::Axis(AbsoluteAxisEvents::RZ))
-			.add_input(LogicalInputTypes::Slowdown, InputType::Key(KeyEvents::ButtonX))
-			.add_input(LogicalInputTypes::Slowdown, InputType::Key(KeyEvents::X));
-		let mut randomizer = rand::thread_rng();
-		let background_appear_rate = rand::distributions::Range::new(0, 6);
-		let enemy_appear_rate = rand::distributions::Range::new(0, 40);
-		let enemy_left_range = rand::distributions::Range::new(-25.0f32, 25.0f32);
-		let mut background_next_appear = false;
-		let mut enemy_next_appear = false;
-		let mut prev_time = time::PreciseTime::now();
-		while engine.process_messages()
-		{
-			// Render code...
-			if execute_next_signal.get_status().is_ok()
+			fn process_2<'a, F>(mut livings: LinkedList<Enemy<'a>>, mut purged_after: LinkedList<Enemy<'a>>,
+				enemy_decrease_cb: F, delta_time_sec: f32) -> LinkedList<Enemy<'a>> where F: Fn()
 			{
-				let delta_time = prev_time.to(time::PreciseTime::now());
-				*frame_time_ms.borrow_mut() = delta_time.num_microseconds().unwrap_or(-1) as f64 / 1000.0f64;
-				frame_index = try!
-				{
-					execute_next_signal.clear().and_then(|()|
-					main_frame.present(&engine, frame_index).and_then(|()|
-					main_frame.execute_rendering(&engine, &framebuffer_commands, Some(&update_commands), Some(&debug_info), &execute_next_signal)))
-				};
-
-				// normal update
-				input.update();
-				let timescale = 1.0f32 + input[LogicalInputTypes::Slowdown] * 2.0f32;
-				let delta_time_sec = (delta_time.num_milliseconds() as f32 / 1000.0f32) / timescale;
-				background_datastore.update(&mut randomizer, delta_time_sec, background_next_appear);
-
-				if enemy_next_appear
-				{
-					if Enemy::new(&enemy_datastore, enemy_left_range.ind_sample(&mut randomizer)).map(|e| enemy_entities.push_back(e)) == None
-					{
-						warn!("Enemy Datastore is full!!");
-					}
-					else { *enemy_count.borrow_mut() += 1; }
-					enemy_next_appear = false;
-				}
-				fn process_2<'a, F>(mut livings: LinkedList<Enemy<'a>>, mut purged_after: LinkedList<Enemy<'a>>,
-					enemy_decrease_cb: F, delta_time_sec: f32) -> LinkedList<Enemy<'a>> where F: Fn()
-				{
-					if let Some(died_e) = purged_after.pop_front() { died_e.die(); }
-					let mut purge_index: Option<usize> = None;
-					for (idx, e) in purged_after.iter_mut().enumerate()
-					{
-						if e.update(delta_time_sec)
-						{
-							enemy_decrease_cb();
-							purge_index = Some(idx);
-							break;
-						}
-					}
-					if let Some(purge_index) = purge_index
-					{
-						let mut purged_before = purged_after;
-						let purged_after = purged_before.split_off(purge_index);
-						livings.append(&mut purged_before);
-						process_2(livings, purged_after, enemy_decrease_cb, delta_time_sec)
-					}
-					else
-					{
-						livings.append(&mut purged_after);
-						livings
-					}
-				}
+				if let Some(died_e) = purged_after.pop_front() { died_e.die(); }
 				let mut purge_index: Option<usize> = None;
-				for (idx, e) in enemy_entities.iter_mut().enumerate()
+				for (idx, e) in purged_after.iter_mut().enumerate()
 				{
 					if e.update(delta_time_sec)
 					{
-						*enemy_count.borrow_mut() -= 1;
+						enemy_decrease_cb();
 						purge_index = Some(idx);
 						break;
 					}
 				}
 				if let Some(purge_index) = purge_index
 				{
-					let purged_after = enemy_entities.split_off(purge_index);
-					enemy_entities = process_2(enemy_entities, purged_after, || { *enemy_count.borrow_mut() -= 1; }, delta_time_sec);
+					let mut purged_before = purged_after;
+					let purged_after = purged_before.split_off(purge_index);
+					livings.append(&mut purged_before);
+					process_2(livings, purged_after, enemy_decrease_cb, delta_time_sec)
 				}
-				player.update(delta_time_sec, &input);
-
-				background_next_appear = false;
-				prev_time = time::PreciseTime::now();
+				else
+				{
+					livings.append(&mut purged_after);
+					livings
+				}
 			}
-
-			if let Ok(()) = ftsig_receiver.try_recv()
+			let mut purge_index: Option<usize> = None;
+			for (idx, e) in enemy_entities.iter_mut().enumerate()
 			{
-				// fixed update
-				background_next_appear = background_appear_rate.ind_sample(&mut randomizer) == 0;
-				enemy_next_appear = enemy_appear_rate.ind_sample(&mut randomizer) == 0;
+				if e.update(delta_time_sec)
+				{
+					*enemy_count.borrow_mut() -= 1;
+					purge_index = Some(idx);
+					break;
+				}
 			}
+			if let Some(purge_index) = purge_index
+			{
+				let purged_after = enemy_entities.split_off(purge_index);
+				enemy_entities = process_2(enemy_entities, purged_after, || { *enemy_count.borrow_mut() -= 1; }, delta_time_sec);
+			}
+			player.update(delta_time_sec, &input);
+
+			background_next_appear = false;
+			prev_time = time::PreciseTime::now();
 		}
 
-		ft_thread
-	};
-	ft_thread.join().unwrap();
+		if secs_from_last_fixed >= 1.0f32 / 60.0f32
+		{
+			// fixed update
+			background_next_appear = background_appear_rate.ind_sample(&mut randomizer) == 0;
+			enemy_next_appear = enemy_appear_rate.ind_sample(&mut randomizer) == 0;
+			secs_from_last_fixed = 0.0f32;
+		}
+	}
 	try!(engine.wait_device());
 
 	Ok(())
