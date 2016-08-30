@@ -261,9 +261,8 @@ fn app_main() -> Result<(), prelude::EngineError>
 	utils::memory_management_test();
 
 	let engine = try!{
-		prelude::Engine::new_with_features("HardGrad->Extent", VK_MAKE_VERSION!(0, 0, 1),
-			prelude::DeviceFeatures::new().enable_multidraw_indirect().enable_draw_indirect_first_instance())
-		.map(|e| e.with_assets_in(std::env::current_dir().unwrap()))
+		prelude::Engine::new("HardGrad->Extent", VK_MAKE_VERSION!(0, 0, 1))
+			.map(|e| e.with_assets_in(std::env::current_dir().unwrap()))
 	};
 	let main_frame = try!(engine.create_render_window(VkExtent2D(640, 480), "HardGrad -> Extent"));
 	let VkExtent2D(frame_width, frame_height) = main_frame.get_extent();

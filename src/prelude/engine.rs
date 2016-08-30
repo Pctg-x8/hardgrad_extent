@@ -75,6 +75,7 @@ pub trait EngineExports
 	fn get_device(&self) -> &DeviceExports;
 	fn get_memory_type_index_for_device_local(&self) -> u32;
 	fn get_memory_type_index_for_host_visible(&self) -> u32;
+	fn is_optimized_debug_render_support(&self) -> bool;
 }
 pub struct Engine
 {
@@ -82,7 +83,8 @@ pub struct Engine
 	device: Device, pools: CommandPool, pipeline_cache: Rc<vk::PipelineCache>,
 	asset_dir: std::path::PathBuf,
 	physical_device_limits: VkPhysicalDeviceLimits,
-	memory_type_index_for_device_local: u32, memory_type_index_for_host_visible: u32
+	memory_type_index_for_device_local: u32, memory_type_index_for_host_visible: u32,
+	optimized_debug_render: bool
 }
 impl std::ops::Drop for Engine
 {
@@ -95,6 +97,7 @@ impl EngineExports for Engine
 	fn get_device(&self) -> &DeviceExports { &self.device }
 	fn get_memory_type_index_for_device_local(&self) -> u32 { self.memory_type_index_for_device_local }
 	fn get_memory_type_index_for_host_visible(&self) -> u32 { self.memory_type_index_for_host_visible }
+	fn is_optimized_debug_render_support(&self) -> bool { self.optimized_debug_render }
 }
 impl Engine
 {
@@ -116,6 +119,17 @@ impl Engine
 		let adapter = try!(instance.enumerate_adapters().map_err(|e| EngineError::from(e))
 			.and_then(|aa| aa.into_iter().next().ok_or(EngineError::GenericError("PhysicalDevices are not found")))
 			.map(|a| Rc::new(vk::PhysicalDevice::from(a, &instance))));
+		let features = adapter.get_features();
+		let (odr, extra_features) = if features.multiDrawIndirect != 0 && features.drawIndirectFirstInstance != 0
+		{
+			// Required for optimized debug rendering
+			(true, extra_features.enable_multidraw_indirect().enable_draw_indirect_first_instance())
+		}
+		else
+		{
+			info!(target: "Prelude::DiagAdapter", "MultiDrawIndirect or DrawIndirectFirstInstance features are not available.");
+			(false, extra_features)
+		};
 		let device =
 		{
 			let queue_family_properties = adapter.enumerate_queue_family_properties();
@@ -137,7 +151,7 @@ impl Engine
 		let mt_index_for_host_visible = try!(memory_types.memoryTypes[..memory_types.memoryTypeCount as usize].iter()
 			.enumerate().find(|&(_, &VkMemoryType(flags, _))| (flags & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) != 0)
 			.map(|(i, _)| i as u32).ok_or(EngineError::GenericError("Host Visible Memory is not found")));
-		
+
 		info!(target: "Prelude", "MemoryType[Device Local] Index = {}: {:?}", mt_index_for_device_local, mtflags_decomposite(memory_types.memoryTypes[mt_index_for_device_local as usize].0));
 		info!(target: "Prelude", "MemoryType[Host Visible] Index = {}: {:?}", mt_index_for_host_visible, mtflags_decomposite(memory_types.memoryTypes[mt_index_for_host_visible as usize].0));
 
@@ -148,7 +162,8 @@ impl Engine
 			asset_dir: std::env::current_exe().unwrap().parent().unwrap().to_path_buf().join("assets"),
 			physical_device_limits: adapter.get_properties().limits,
 			memory_type_index_for_device_local: mt_index_for_device_local,
-			memory_type_index_for_host_visible: mt_index_for_host_visible
+			memory_type_index_for_host_visible: mt_index_for_host_visible,
+			optimized_debug_render: odr
 		}))
 	}
 	pub fn with_assets_in(mut self, asset_dir_base: std::path::PathBuf) -> Self
@@ -165,7 +180,7 @@ impl Engine
 		info!(target: "Prelude", "Creating Render Window \"{}\" ({}x{})", title, size.0, size.1);
 		Window::create_unresizable(self, size, title).map(|x| x as Box<RenderWindow>)
 	}
-	
+
 	pub fn create_fence(&self) -> Result<Fence, EngineError>
 	{
 		vk::Fence::new(&self.device).map(Fence::new).map_err(EngineError::from)
@@ -283,7 +298,7 @@ impl Engine
 		let linear_image2 = try!(prealloc.dim2_images().iter().map(|desc| desc.get_internal())
 			.filter(|desc| desc.mipLevels == 1 && desc.arrayLayers == 1 && desc.samples == VK_SAMPLE_COUNT_1_BIT)
 			.map(|desc| LinearImage2D::new(self, VkExtent2D(desc.extent.0, desc.extent.1), desc.format)).collect::<Result<Vec<_>, EngineError>>());
-		
+
 		DeviceImage::new(self, image1, image2, image3).and_then(|dev|
 		if !linear_image2.is_empty()
 		{
@@ -310,7 +325,7 @@ impl Engine
 		})).fold((0, 0), |(u, cs), (u2, cs2)| (u + u2, cs + cs2));
 		let pool_sizes = [Descriptor::Uniform(uniform_total, vec![]), Descriptor::CombinedSampler(combined_sampler_total, vec![])]
 			.into_iter().filter(|&desc| desc.count() != 0).map(|desc| desc.into_pool_size()).collect::<Vec<_>>();
-		
+
 		vk::DescriptorPool::new(self.device.get_internal(), set_count as u32, &pool_sizes).and_then(|pool|
 		pool.allocate_sets(self.device.get_internal(), &layouts.into_iter().map(|x| x.get_internal().get()).collect::<Vec<_>>())
 			.map(|sets| DescriptorSets::new(pool, sets))).map_err(EngineError::from)
@@ -373,7 +388,7 @@ impl Engine
 		let signals_on_complete = signal_on_complete.map(|q| vec![q.get_internal().get()]).unwrap_or(vec![]);
 		let wait_stages = if wait_for_execute.is_empty() { vec![VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT] }
 		else { wait_for_execute.into_iter().map(|&(_, s)| s).collect::<Vec<_>>() };
-		
+
 		self.device.get_graphics_queue().submit_commands(commands,
 			&wait_for_execute.into_iter().map(|&(q, _)| q.get_internal().get()).collect::<Vec<_>>(), &wait_stages,
 			&signals_on_complete, signal_on_complete_host.map(|f| f.get_internal()))

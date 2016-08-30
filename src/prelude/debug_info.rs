@@ -130,6 +130,27 @@ enum OptimizedDebugLine<'a>
 	UnsignedInt(usize, f32, StrRenderData, &'a RefCell<u32>, Option<StrRenderData>),
 	Float(usize, f32, StrRenderData, &'a RefCell<f64>, Option<StrRenderData>)
 }
+impl <'a> OptimizedDebugLine<'a>
+{
+	fn has_unit(&self) -> bool
+	{
+		match self
+		{
+			&OptimizedDebugLine::Integer(_, _, _, _, ref opt) => opt.is_some(),
+			&OptimizedDebugLine::UnsignedInt(_, _, _, _, ref opt) => opt.is_some(),
+			&OptimizedDebugLine::Float(_, _, _, _, ref opt) => opt.is_some()
+		}
+	}
+	fn render_param_offset(&self) -> u32
+	{
+		match self
+		{
+			&OptimizedDebugLine::Integer(n, _, _, _, _) => n as u32,
+			&OptimizedDebugLine::UnsignedInt(n, _, _, _, _) => n as u32,
+			&OptimizedDebugLine::Float(n, _, _, _, _) => n as u32
+		}
+	}
+}
 
 // xoffs, yoffs, wscale hscale, uoffs, voffs, uscale, vscale
 #[repr(C)] struct StrRenderInstanceData(f32, f32, f32, f32, f32, f32, f32, f32);
@@ -149,7 +170,8 @@ pub struct DebugInfo<'a>
 	buffer_mapped_ptr: *mut std::os::raw::c_void,
 	baseline: i32, rendering_params_count: usize,
 	num_glyph_data: [StrRenderData; 12],
-	transfer_completion: QueueFence
+	transfer_completion: QueueFence,
+	use_optimized_render: bool
 }
 pub trait DebugInfoInternals
 {
@@ -282,6 +304,7 @@ impl <'a> DebugInfo<'a>
 			let call_params = mapped_buf.range_mut::<prelude::IndirectCallParameter>(rendering_params_prealloc.offset(1), lines.len());
 			let mut rp_current_index = 0;
 			let mut top = 4u32;
+			let offset_mult = if engine.is_optimized_debug_render_support() { 1 } else { 0 };
 			for (n, line) in lines.into_iter().enumerate()
 			{
 				let base = top as f32 + typeface.baseline as f32;
@@ -302,7 +325,7 @@ impl <'a> DebugInfo<'a>
 							rp_current_index += 1;
 						}
 						rp_current_index += 8;
-						call_params[n] = prelude::IndirectCallParameter(4, rp_current_index as u32 - start_rp_index as u32 - 8, 0, start_rp_index as u32);
+						call_params[n] = prelude::IndirectCallParameter(4, rp_current_index as u32 - start_rp_index as u32 - 8, 0, start_rp_index as u32 * offset_mult);
 						OptimizedDebugLine::Integer(start_rp_index, base, param_name, vref, unit_str)
 					},
 					&DebugLine::UnsignedInt(ref param, vref, ref unit) =>
@@ -320,7 +343,7 @@ impl <'a> DebugInfo<'a>
 							rp_current_index += 1;
 						}
 						rp_current_index += 8;
-						call_params[n] = prelude::IndirectCallParameter(4, rp_current_index as u32 - start_rp_index as u32 - 8, 0, start_rp_index as u32);
+						call_params[n] = prelude::IndirectCallParameter(4, rp_current_index as u32 - start_rp_index as u32 - 8, 0, start_rp_index as u32 * offset_mult);
 						OptimizedDebugLine::UnsignedInt(start_rp_index, base, param_name, vref, unit_str)
 					},
 					&DebugLine::Float(ref param, vref, ref unit) =>
@@ -338,7 +361,7 @@ impl <'a> DebugInfo<'a>
 							rp_current_index += 1;
 						}
 						rp_current_index += 8;
-						call_params[n] = prelude::IndirectCallParameter(4, rp_current_index as u32 - start_rp_index as u32 - 8, 0, start_rp_index as u32);
+						call_params[n] = prelude::IndirectCallParameter(4, rp_current_index as u32 - start_rp_index as u32 - 8, 0, start_rp_index as u32 * offset_mult);
 						OptimizedDebugLine::Float(start_rp_index, base, param_name, vref, unit_str)
 					}
 				});
@@ -438,7 +461,8 @@ impl <'a> DebugInfo<'a>
 			baseline: typeface.baseline,
 			rendering_params_count: max_instance_count,
 			num_glyph_data: num_glyph_data,
-			transfer_completion: try!(engine.create_queue_fence())
+			transfer_completion: try!(engine.create_queue_fence()),
+			use_optimized_render: engine.is_optimized_debug_render_support()
 		}))
 	}
 	fn allocate_rect(horizons: &mut LinkedList<Horizon>, rect: VkExtent2D) -> Option<TextureRegion>
@@ -545,10 +569,23 @@ impl <'a> DebugInfo<'a>
 
 	pub fn inject_render_commands<'_>(&self, recorder: GraphicsCommandRecorder<'_>) -> GraphicsCommandRecorder<'_>
 	{
-		recorder.bind_pipeline(&self.render_tech)
+		let recorder = recorder.bind_pipeline(&self.render_tech)
 			.bind_descriptor_sets(&self.playout, &self.descriptor_sets[0 .. 1])
-			.bind_vertex_buffers(&[(&self.dres_buf, self.vertex_offs), (&self.dres_buf, self.instance_offs)])
-			.draw_indirect_mult(&self.dres_buf, self.indirect_param_offs, self.optimized_lines.len() as u32)
+			.bind_vertex_buffers(&[(&self.dres_buf, self.vertex_offs), (&self.dres_buf, self.instance_offs)]);
+
+		if self.use_optimized_render
+		{
+			recorder.draw_indirect_mult(&self.dres_buf, self.indirect_param_offs, self.optimized_lines.len() as u32)
+		}
+		else
+		{
+			let mut recorder_state = recorder;
+			for (n, _) in self.optimized_lines.iter().enumerate()
+			{
+				recorder_state = recorder_state.draw_indirect(&self.dres_buf, self.indirect_param_offs + n * std::mem::size_of::<prelude::IndirectCallParameter>());
+			}
+			recorder_state
+		}
 	}
 
 	#[allow(dead_code)]
@@ -561,95 +598,57 @@ impl <'a> DebugInfo<'a>
 			std::slice::from_raw_parts_mut(self.buffer_mapped_ptr.offset(self.instance_offs as isize) as *mut StrRenderInstanceData,
 				self.rendering_params_count))
 		};
+		let offset_mult = if self.use_optimized_render { 1 } else { 0 };
 		for (line, call_param) in self.optimized_lines.iter().zip(call_params)
 		{
-			match line
+			// max 8 characters
+			let mut character_indices = [0usize; 8];
+			let (ybase, rp_index, param_advance, has_unit, total_len) = match line
 			{
-				&OptimizedDebugLine::Integer(start_rp_index, base, ref param, vref, ref unit) =>
+				&OptimizedDebugLine::Integer(start_rp_index, base, ref param, vref, ref unit) => (base, start_rp_index, param.advance_left, unit.is_some(), if *vref.borrow() == 0
+				{
+					character_indices[0] = 0;
+					1
+				}
+				else
 				{
 					// maximum 7 digits + sign
-					let mut character_indices = [0usize; 8];
-					let total_len = if *vref.borrow() == 0
+					let is_minus = *vref.borrow() < 0;
+					let mut ipart_abs = if is_minus { -*vref.borrow() } else { *vref.borrow() } % 10_000_000;
+					let total_len = if is_minus { 1 } else { 0 } + (ipart_abs as f32).log(10.0f32) as usize + 1;
+					let mut current_ptr = total_len;
+					while ipart_abs > 0
 					{
-						character_indices[0] = 0;
-						1
+						current_ptr -= 1;
+						character_indices[current_ptr] = (ipart_abs % 10) as usize;
+						ipart_abs = ipart_abs / 10;
 					}
-					else
-					{
-						let is_minus = *vref.borrow() < 0;
-						let mut ipart_abs = if is_minus { -*vref.borrow() } else { *vref.borrow() } % 10_000_000;
-						let total_len = if is_minus { 1 } else { 0 } + (ipart_abs as f32).log(10.0f32) as usize + 1;
-						let mut current_ptr = total_len;
-						while ipart_abs > 0
-						{
-							current_ptr -= 1;
-							character_indices[current_ptr] = (ipart_abs % 10) as usize;
-							ipart_abs = ipart_abs / 10;
-						}
-						if is_minus { character_indices[0] = 11; }		// minus sign
-						total_len
-					};
-
-					let header_offs = if unit.is_some() { 2 } else { 1 };
-					let mut left = DEBUG_LEFT_OFFSET + param.advance_left.ceil();
-					for (n, ci) in character_indices[..total_len].into_iter().enumerate()
-					{
-						let ref glyph_data = self.num_glyph_data[*ci];
-						rendering_params[start_rp_index + header_offs + n] = StrRenderInstanceData(left, base - glyph_data.offset_from_baseline,
-							glyph_data.width, glyph_data.height, glyph_data.texcoord.u, glyph_data.texcoord.v,
-							glyph_data.texcoord.uw, glyph_data.texcoord.vh);
-						left += glyph_data.advance_left;
-					}
-					if unit.is_some()
-					{
-						rendering_params[start_rp_index + 1].0 = left;
-					}
-					*call_param = prelude::IndirectCallParameter(4, if unit.is_some() { 2 } else { 1 } + total_len as u32, 0, start_rp_index as u32);
-				},
-				&OptimizedDebugLine::UnsignedInt(start_rp_index, base, ref param, vref, ref unit) =>
+					if is_minus { character_indices[0] = 11; }		// minus sign
+					total_len
+				}),
+				&OptimizedDebugLine::UnsignedInt(start_rp_index, base, ref param, vref, ref unit) => (base, start_rp_index, param.advance_left, unit.is_some(), if *vref.borrow() == 0
+				{
+					character_indices[0] = 0;
+					1
+				}
+				else
 				{
 					// maximum 8 digits
-					let mut character_indices = [0usize; 8];
 					let mut ipart = *vref.borrow() % 100_000_000;
-					let total_len = if ipart == 0
+					let total_len = (ipart as f32).log(10.0f32) as usize + 1;
+					let mut current_ptr = total_len;
+					while ipart > 0
 					{
-						character_indices[0] = 0;
-						1
+						current_ptr -= 1;
+						character_indices[current_ptr] = (ipart % 10) as usize;
+						ipart = ipart / 10;
 					}
-					else
-					{
-						let total_len = (ipart as f32).log(10.0f32) as usize + 1;
-						let mut current_ptr = total_len;
-						while ipart > 0
-						{
-							current_ptr -= 1;
-							character_indices[current_ptr] = (ipart % 10) as usize;
-							ipart = ipart / 10;
-						}
-						total_len
-					};
-
-					let header_offs = if unit.is_some() { 2 } else { 1 };
-					let mut left = DEBUG_LEFT_OFFSET + param.advance_left.ceil();
-					for (n, ci) in character_indices[..total_len].into_iter().enumerate()
-					{
-						let ref glyph_data = self.num_glyph_data[*ci];
-						rendering_params[start_rp_index + header_offs + n] = StrRenderInstanceData(left, base - glyph_data.offset_from_baseline,
-							glyph_data.width, glyph_data.height, glyph_data.texcoord.u, glyph_data.texcoord.v,
-							glyph_data.texcoord.uw, glyph_data.texcoord.vh);
-						left += glyph_data.advance_left;
-					}
-					if unit.is_some()
-					{
-						rendering_params[start_rp_index + 1].0 = left;
-					}
-					*call_param = prelude::IndirectCallParameter(4, if unit.is_some() { 2 } else { 1 } + total_len as u32, 0, start_rp_index as u32);
-				},
-				&OptimizedDebugLine::Float(start_rp_index, base, ref param, vref, ref unit) =>
+					total_len
+				}),
+				&OptimizedDebugLine::Float(start_rp_index, base, ref param, vref, ref unit) => (base, start_rp_index, param.advance_left, unit.is_some(),
 				{
 					// maximum 3.3 digits + sign
-					let mut character_indices = [0usize; 8];
-					let is_minus = *vref.borrow() < 0.0f64;
+					let is_minus = vref.borrow().is_sign_negative();
 					let (mut ipart_abs, mut fpart) = (vref.borrow().abs().floor() as u32 % 1_000, *vref.borrow() - vref.borrow().floor());
 					let first_idx = if is_minus { 1 } else { 0 };
 					let ipart_len = if ipart_abs == 0
@@ -685,24 +684,23 @@ impl <'a> DebugInfo<'a>
 					else { 0 };
 					if is_minus { character_indices[0] = 11; }		// minus
 
-					let total_len = ipart_len + cont_len;
-					let header_offs = if unit.is_some() { 2 } else { 1 };
-					let mut left = DEBUG_LEFT_OFFSET + param.advance_left.ceil();
-					for (n, ci) in character_indices[..total_len].into_iter().enumerate()
-					{
-						let ref glyph_data = self.num_glyph_data[*ci];
-						rendering_params[start_rp_index + header_offs + n] = StrRenderInstanceData(left, base - glyph_data.offset_from_baseline,
-							glyph_data.width, glyph_data.height, glyph_data.texcoord.u, glyph_data.texcoord.v,
-							glyph_data.texcoord.uw, glyph_data.texcoord.vh);
-						left += glyph_data.advance_left;
-					}
-					if unit.is_some()
-					{
-						rendering_params[start_rp_index + 1].0 = left;
-					}
-					*call_param = prelude::IndirectCallParameter(4, if unit.is_some() { 2 } else { 1 } + total_len as u32, 0, start_rp_index as u32);
-				}
+					ipart_len + cont_len
+				})
+			};
+
+			// build digit characters and update call parameter
+			let header_offs = if has_unit { 2 } else { 1 };
+			let mut left = DEBUG_LEFT_OFFSET + param_advance.ceil();
+			for (n, ci) in character_indices[..total_len].into_iter().enumerate()
+			{
+				let ref glyph_data = self.num_glyph_data[*ci];
+				rendering_params[rp_index + header_offs + n] = StrRenderInstanceData(left, ybase - glyph_data.offset_from_baseline,
+					glyph_data.width, glyph_data.height, glyph_data.texcoord.u, glyph_data.texcoord.v,
+					glyph_data.texcoord.uw, glyph_data.texcoord.vh);
+				left += glyph_data.advance_left;
 			}
+			if has_unit { rendering_params[rp_index + 1].0 = left; }
+			*call_param = prelude::IndirectCallParameter(4, (header_offs + total_len) as u32, 0, line.render_param_offset() * offset_mult);
 		}
 	}
 
