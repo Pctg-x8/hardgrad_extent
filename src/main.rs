@@ -333,7 +333,7 @@ fn app_main() -> Result<(), prelude::EngineError>
 			prelude::BufferInfo(&application_data, application_buffer_prealloc.offset(3) .. application_buffer_prealloc.total_size() as usize)
 		])
 	]);
-	
+
 	// Shading Structures //
 	let raw_output_vert = try!(engine.create_vertex_shader_from_asset("shaders.RawOutput", "main", &[
 		prelude::VertexBinding::PerVertex(std::mem::size_of::<vertex_formats::Position>() as u32),
@@ -366,7 +366,7 @@ fn app_main() -> Result<(), prelude::EngineError>
 	let ref background_render = pipeline_states[0];
 	let ref enemy_render = pipeline_states[1];
 	let ref player_render = pipeline_states[2];
-	
+
 	// Initial Data Transmission, Layouting for Swapchain Backbuffer Images //
 	try!(engine.allocate_transient_transfer_command_buffers(1).and_then(|setup_commands|
 	{
@@ -385,7 +385,7 @@ fn app_main() -> Result<(), prelude::EngineError>
 		let image_memory_barriers = main_frame.get_back_images().iter()
 			.map(|x| prelude::ImageMemoryBarrier::hold_ownership(*x, prelude::ImageSubresourceRange::base_color(),
 			0, VK_ACCESS_MEMORY_READ_BIT, VkImageLayout::Undefined, VkImageLayout::PresentSrcKHR)).collect::<Vec<_>>();
-		
+
 		try!(setup_commands.begin(0).and_then(|recorder|
 			recorder.pipeline_barrier(VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, false,
 				&[], &buffer_memory_barriers, &image_memory_barriers)
@@ -412,7 +412,7 @@ fn app_main() -> Result<(), prelude::EngineError>
 			main_frame.get_back_images()[i], prelude::ImageSubresourceRange::base_color(),
 			VK_ACCESS_MEMORY_READ_BIT, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
 			VkImageLayout::PresentSrcKHR, VkImageLayout::ColorAttachmentOptimal);
-		
+
 		recorder
 			.pipeline_barrier(VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, false, &[], &[],
 				&[color_output_barrier])

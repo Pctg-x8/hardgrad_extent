@@ -48,7 +48,7 @@ impl TypefaceProvider
 		let face = unsafe
 		{
 			let mut ptr: FT_Face = std::mem::uninitialized();
-			let path = CString::new(engine.parse_asset("engine.fonts.open-sans_regular", "ttf").to_str().unwrap()).unwrap();
+			let path = CString::new(engine.parse_asset("engine.fonts.OpenSans-Regular", "ttf").to_str().unwrap()).unwrap();
 			try!(FT_New_Face(ftl, path.as_ptr(), 0, &mut ptr).map(|| ptr))
 		};
 		try!(unsafe { FT_Set_Char_Size(face, 0, 9 << 6, 100, 100).into_result() });
@@ -238,7 +238,7 @@ impl <'a> DebugInfo<'a>
 		let mut glyph_coords = HashMap::new();
 		let mut horizons = LinkedList::new();
 		let mut optimized_lines = Vec::new();
-		
+
 		// Generate Textures and Rendering Params
 		let mut num_glyph_data: [StrRenderData; 12] = unsafe { std::mem::uninitialized() };
 		try!(bstage.map().and_then(|mapped_buf| istage.map().map(move |mapped| (mapped_buf, mapped))).and_then(|(mapped_buf, mapped)|
