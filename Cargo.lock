@@ -3,6 +3,7 @@ name = "hardgrad_extent"
 version = "0.1.0"
 dependencies = [
  "ansi_term 0.8.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "epoll 0.6.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "freetype-sys 0.4.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "glob 0.2.11 (registry+https://github.com/rust-lang/crates.io-index)",
  "libc 0.2.15 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -19,6 +20,21 @@ dependencies = [
 name = "ansi_term"
 version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
+
+[[package]]
+name = "bitflags"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+
+[[package]]
+name = "epoll"
+version = "0.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+dependencies = [
+ "bitflags 0.7.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "libc 0.2.15 (registry+https://github.com/rust-lang/crates.io-index)",
+ "simple-slab 0.2.3 (registry+https://github.com/rust-lang/crates.io-index)",
+]
 
 [[package]]
 name = "freetype-sys"
@@ -162,6 +178,14 @@ dependencies = [
 name = "rustc-serialize"
 version = "0.3.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
+
+[[package]]
+name = "simple-slab"
+version = "0.2.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+dependencies = [
+ "libc 0.2.15 (registry+https://github.com/rust-lang/crates.io-index)",
+]
 
 [[package]]
 name = "thread-scoped"

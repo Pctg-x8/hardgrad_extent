@@ -9,6 +9,7 @@ extern crate thread_scoped;
 extern crate ansi_term;
 extern crate freetype_sys;
 extern crate glob;
+extern crate epoll;
 #[macro_use] mod vkffi;
 mod render_vk;
 mod prelude;
@@ -25,8 +26,8 @@ use nalgebra::*;
 use rand::distributions::*;
 mod evdev;
 use evdev::*;
-mod epoll;
-use epoll::*;
+mod epoll_wp;
+use epoll_wp::*;
 
 use vkffi::*;
 
@@ -187,24 +188,27 @@ impl <InputNames: PartialEq + Eq + std::hash::Hash + Copy + Clone + std::fmt::De
 					}
 				}
 			}
-			let mut polling = EPoll::new(&ed_files).expect("Unable to start polling with epoll");
+			let mut polling = EPoll::new(ed_files.iter().map(|x| x.clone()).collect::<Vec<_>>()).expect("Unable to start polling with epoll");
 			while let Ok(events) = polling.wait()
 			{
 				let (mut key_states, mut axis_states) = (key_raw_states_in_thread.lock().unwrap(), axis_raw_states_in_thread.lock().unwrap());
 
 				for event in events
 				{
-					match event.borrow_mut().wait_event().unwrap()
+					if let Ok(ev) = event.borrow_mut().wait_event()
 					{
-						DeviceEvent::Syn(_, _) => (),
-						DeviceEvent::Key(_, k, p) => match p
+						match ev
 						{
-							PressedState::Released => *key_states.entry(k).or_insert(false) = false,
-							PressedState::Pressed => *key_states.entry(k).or_insert(true) = true,
-							PressedState::Repeating => ()
-						},
-						DeviceEvent::Absolute(_, x, v) => *axis_states.entry(x).or_insert(v) = v,
-						_ => ()
+							DeviceEvent::Syn(_, _) => (),
+							DeviceEvent::Key(_, k, p) => match p
+							{
+								PressedState::Released => *key_states.entry(k).or_insert(false) = false,
+								PressedState::Pressed => *key_states.entry(k).or_insert(true) = true,
+								PressedState::Repeating => ()
+							},
+							DeviceEvent::Absolute(_, x, v) => *axis_states.entry(x).or_insert(v) = v,
+							_ => ()
+						}
 					}
 				}
 			}

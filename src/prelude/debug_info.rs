@@ -580,9 +580,11 @@ impl <'a> DebugInfo<'a>
 		else
 		{
 			let mut recorder_state = recorder;
-			for (n, _) in self.optimized_lines.iter().enumerate()
+			for (n, l) in self.optimized_lines.iter().enumerate()
 			{
-				recorder_state = recorder_state.draw_indirect(&self.dres_buf, self.indirect_param_offs + n * std::mem::size_of::<prelude::IndirectCallParameter>());
+				recorder_state = recorder_state
+					.bind_vertex_buffers_partial(1, &[(&self.dres_buf, self.instance_offs + std::mem::size_of::<StrRenderInstanceData>() * l.render_param_offset() as usize)])
+					.draw_indirect(&self.dres_buf, self.indirect_param_offs + n * std::mem::size_of::<prelude::IndirectCallParameter>());
 			}
 			recorder_state
 		}
