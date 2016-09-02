@@ -674,19 +674,19 @@ impl <'a> DebugInfo<'a>
 					{
 						character_indices[first_idx + ipart_len] = 10;		// period
 						let mut fplen = 0;
-						while fpart > 0.0f64 && fplen < 4
+						while fpart > 0.0f64 && fplen < 3
 						{
 							fplen += 1;
 							fpart *= 10.0f64;
 							character_indices[first_idx + ipart_len + fplen] = fpart as usize % 10;
 							fpart -= fpart.floor();
 						}
-						fplen
+						fplen + 1
 					}
 					else { 0 };
 					if is_minus { character_indices[0] = 11; }		// minus
 
-					ipart_len + cont_len
+					first_idx + ipart_len + cont_len
 				})
 			};
 

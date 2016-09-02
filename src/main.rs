@@ -225,51 +225,47 @@ impl <InputNames: PartialEq + Eq + std::hash::Hash + Copy + Clone + std::fmt::De
 			
 			info!(target: "Prelude::Input", "Listing Event Devices...");
 			let enumerator = udev.new_enumerator().unwrap().filter_match_subsystem("input");
-			for dev in enumerator.get_devices()
+			let event_devices = enumerator.get_devices().filter(|d| d.name().and_then(|x| x.to_str().ok()).and_then(|d| d.split('/').last())
+				.map(|final_name| final_name.starts_with("event")).unwrap_or(false));
+			for dev in event_devices
 			{
-				let device_name = dev.name().and_then(|x| x.to_str().ok());
-				let is_event_device = device_name.and_then(|dev_name| dev_name.split('/').last())
-					.map(|final_name| final_name.starts_with("event")).unwrap_or(false);
-				if is_event_device
+				// event_device
+				let dev_name = dev.name().unwrap().to_str().unwrap();
+				debug!(target: "Prelude::Input", "Event Device: {:?}", dev_name);
+				let device = udev.new_device_from_syspath(&dev_name);
+				// search device name ascending parent
+				let mut par_dev_opt = device.parent();
+				let mut device_name = None;
+				while let Some(pardev) = par_dev_opt
 				{
-					// event_device
-					let dev_name = device_name.unwrap();
-					debug!(target: "Prelude::Input", "Event Device: {:?}", dev_name);
-					let device = udev.new_device_from_syspath(&dev_name);
-					// search device name ascending parent
-					let mut par_dev_opt = device.parent();
-					let mut device_name = None;
-					while let Some(pardev) = par_dev_opt
+					if let Some(dn) = pardev.property_value("NAME")
 					{
-						if let Some(dn) = pardev.property_value("NAME")
-						{
-							device_name = Some(dn.to_str().unwrap().to_owned());
-							break;
-						}
-						par_dev_opt = pardev.parent();
+						device_name = Some(dn.to_str().unwrap().to_owned());
+						break;
 					}
-					let device_name = device_name.unwrap_or(String::from("Unknown Device"));
-					let device_node = device.device_node().unwrap().to_str().unwrap().to_owned();
-					let node_number = device_node["/dev/input/event".len()..].parse::<u32>().unwrap();
-					info!(target: "Prelude::Input", "Initializing for Input: {} [{}]", device_name, device_node);
-					debug!(target: "Prelude::Input", "-- Initialized: {}", device.is_initialized());
-					let joystick_device = device.property_value("ID_INPUT_JOYSTICK").and_then(|f| f.to_str().ok()).map(|n| n == "1").unwrap_or(false);
-					let keyboard_device = device.property_value("ID_INPUT_KEYBOARD").and_then(|f| f.to_str().ok()).map(|n| n == "1").unwrap_or(false);
-					if joystick_device
-					{
-						info!(target: "Prelude::Input", "-- Identified as Joystick");
-						input_devices.insert(node_number, InputDevice::new(&device_node).unwrap());
-					}
-					else if keyboard_device
-					{
-						info!(target: "Prelude::Input", "-- Identified as Keyboard");
-						input_devices.insert(node_number, InputDevice::new(&device_node).unwrap());
-					}
-					/*for props in device.properties()
-					{
-						info!(target: "Prelude::Input", "-- Property: {:?} = {:?}", props.name(), props.value());
-					}*/
+					par_dev_opt = pardev.parent();
 				}
+				let device_name = device_name.unwrap_or("Unknown Device".to_owned());
+				let device_node = device.device_node().unwrap().to_str().unwrap();
+				let node_number = device_node["/dev/input/event".len()..].parse::<u32>().unwrap();
+				info!(target: "Prelude::Input", "Initializing for Input: {} [{}]", device_name, device_node);
+				debug!(target: "Prelude::Input", "-- Initialized: {}", device.is_initialized());
+				let joystick_device = device.property_value("ID_INPUT_JOYSTICK").and_then(|f| f.to_str().ok()).map(|n| n == "1").unwrap_or(false);
+				let keyboard_device = device.property_value("ID_INPUT_KEYBOARD").and_then(|f| f.to_str().ok()).map(|n| n == "1").unwrap_or(false);
+				if joystick_device
+				{
+					info!(target: "Prelude::Input", "-- Identified as Joystick");
+					input_devices.insert(node_number, InputDevice::new(&device_node).unwrap());
+				}
+				else if keyboard_device
+				{
+					info!(target: "Prelude::Input", "-- Identified as Keyboard");
+					input_devices.insert(node_number, InputDevice::new(&device_node).unwrap());
+				}
+				/*for props in device.properties()
+				{
+					info!(target: "Prelude::Input", "-- Property: {:?} = {:?}", props.name(), props.value());
+				}*/
 			}
 
 			let udev_monitor = udev.new_monitor().unwrap().add_filter_subsystem("input").enable_receiving();
@@ -552,8 +548,8 @@ fn app_main() -> Result<(), prelude::EngineError>
 	let frame_time_ms = RefCell::new(0.0f64);
 	let enemy_count = RefCell::new(0u32);
 	let debug_info = try!(prelude::DebugInfo::new(&engine, &[
-		prelude::DebugLine::Float("Frame Time".to_string(), &frame_time_ms, Some("ms".to_string())),
-		prelude::DebugLine::UnsignedInt("Enemy Count".to_string(), &enemy_count, None)
+		prelude::DebugLine::Float("Frame Time".to_owned(), &frame_time_ms, Some("ms".to_string())),
+		prelude::DebugLine::UnsignedInt("Enemy Count".to_owned(), &enemy_count, None)
 	], &rp_framebuffer_form, 0, swapchain_viewport));
 
 	// Rendering Commands //

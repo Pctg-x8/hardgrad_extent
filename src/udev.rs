@@ -1,5 +1,7 @@
 // libudev
 
+#![allow(dead_code)]
+
 mod ffi
 {
 /***

@@ -420,7 +420,7 @@ impl EventDevice
 				Event::Absolute =>
 				{
 					let axis = unsafe { std::mem::transmute::<_, AbsoluteAxisEvents>(ev.code as u32) };
-					self.params.axis_events.get(&axis).map(|ap| if ev.value.abs() <= ap.dead { 0.0f32 }
+					self.params.axis_events.get(&axis).map(|ap| if ev.value.abs() <= ap.dead * 2 { 0.0f32 }
 					else
 					{
 						if ap.range.start == 0
