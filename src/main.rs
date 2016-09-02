@@ -10,6 +10,7 @@ extern crate ansi_term;
 extern crate freetype_sys;
 extern crate glob;
 extern crate epoll;
+extern crate socket;
 #[macro_use] mod vkffi;
 mod render_vk;
 mod prelude;
@@ -26,14 +27,13 @@ use nalgebra::*;
 use rand::distributions::*;
 mod evdev;
 use evdev::*;
-mod epoll_wp;
-use epoll_wp::*;
+mod udev;
+use udev::*;
 
 use vkffi::*;
 
 use std::collections::LinkedList;
 use std::cell::RefCell;
-use std::rc::Rc;
 use std::sync::{Mutex, Arc};
 
 use prelude::traits::*;
@@ -124,6 +124,8 @@ impl <'a> Player<'a>
 	}
 }
 
+use std::collections::HashMap;
+type AsyncExclusiveHashMap<K, V> = Arc<Mutex<HashMap<K, V>>>;
 #[derive(PartialEq, Eq, Hash, Copy, Clone, Debug)]
 pub enum LogicalInputTypes
 {
@@ -133,81 +135,229 @@ pub enum InputType
 {
 	Key(KeyEvents), Axis(AbsoluteAxisEvents), KeyAsAxis(KeyEvents, KeyEvents)
 }
+pub struct InputDevice
+{
+	dev: EventDevice,
+	key_states: HashMap<KeyEvents, bool>,
+	axis_prev_values: HashMap<AbsoluteAxisEvents, f32>
+}
+impl InputDevice
+{
+	pub fn new(node_path: &str) -> Result<InputDevice, prelude::EngineError>
+	{
+		EventDevice::new(node_path).map(|ev| InputDevice
+		{
+			dev: ev,
+			key_states: HashMap::new(),
+			axis_prev_values: HashMap::new()
+		})
+	}
+	pub fn update(&mut self, aggregate_key_states: &mut HashMap<KeyEvents, u32>, aggregate_axis_states: &mut HashMap<AbsoluteAxisEvents, f32>)
+	{
+		if let Ok(ev) = self.dev.wait_event()
+		{
+			match ev
+			{
+				DeviceEvent::Syn(_, _) => (),
+				DeviceEvent::Key(_, k, p) => match p
+				{
+					PressedState::Released =>
+					{
+						*self.key_states.entry(k).or_insert(false) = false;
+						*aggregate_key_states.entry(k).or_insert(1) -= 1;
+					},
+					PressedState::Pressed =>
+					{
+						*self.key_states.entry(k).or_insert(true) = true;
+						*aggregate_key_states.entry(k).or_insert(0) += 1;
+					},
+					PressedState::Repeating => ()
+				},
+				DeviceEvent::Absolute(_, x, v) =>
+				{
+					let old_value = *self.axis_prev_values.entry(x).or_insert(0.0f32);
+					*aggregate_axis_states.entry(x).or_insert(0.0f32) -= old_value;
+					*aggregate_axis_states.entry(x).or_insert(0.0f32) += v;
+					*self.axis_prev_values.entry(x).or_insert(0.0f32) = v;
+				},
+				_ => ()
+			}
+		}
+	}
+	pub fn unplug(self, aggregate_key_states: &mut HashMap<KeyEvents, u32>, aggregate_axis_states: &mut HashMap<AbsoluteAxisEvents, f32>)
+	{
+		for (k, v) in self.key_states
+		{
+			if v { *aggregate_key_states.entry(k).or_insert(1) -= 1; }
+		}
+		for (x, v) in self.axis_prev_values
+		{
+			*aggregate_axis_states.entry(x).or_insert(v) -= v;
+		}
+	}
+}
+impl std::os::unix::io::AsRawFd for InputDevice
+{
+	fn as_raw_fd(&self) -> std::os::unix::io::RawFd { self.dev.as_raw_fd() }
+}
 pub struct InputSystem<InputNames: PartialEq + Eq + std::hash::Hash + Copy + Clone + std::fmt::Debug>
 {
-	key_raw_states: Arc<Mutex<std::collections::HashMap<KeyEvents, bool>>>,
-	axis_raw_states: Arc<Mutex<std::collections::HashMap<AbsoluteAxisEvents, f32>>>,
 	keymap: std::collections::HashMap<InputNames, Vec<InputType>>,
+	aggregate_key_states: AsyncExclusiveHashMap<KeyEvents, u32>,
+	aggregate_axis_states: AsyncExclusiveHashMap<AbsoluteAxisEvents, f32>,
 	input_states: std::collections::HashMap<InputNames, f32>
 }
+use std::os::unix::io::AsRawFd;
 impl <InputNames: PartialEq + Eq + std::hash::Hash + Copy + Clone + std::fmt::Debug> InputSystem<InputNames>
 {
 	pub fn new() -> Result<Self, prelude::EngineError>
 	{
-		let key_raw_states = Arc::new(Mutex::new(std::collections::HashMap::new()));
-		let key_raw_states_in_thread = key_raw_states.clone();
-		let axis_raw_states = Arc::new(Mutex::new(std::collections::HashMap::new()));
-		let axis_raw_states_in_thread = axis_raw_states.clone();
-		try!(std::thread::Builder::new().name("Input Polling Thread".into()).spawn(move ||
+		let aks = Arc::new(Mutex::new(HashMap::new()));
+		let aas = Arc::new(Mutex::new(HashMap::new()));
+		let aks_thread = aks.clone();
+		let aas_thread = aas.clone();
+
+		try!(std::thread::Builder::new().name("Input Thread".into()).spawn(move ||
 		{
-			info!(target: "Prelude::evdev", "Listing Event Devices...");
-			let event_devices = glob::glob("/dev/input/event*").unwrap();
-			let mut ed_files = Vec::new();
-			for evdev in event_devices
+			let mut input_devices = HashMap::new();
+			info!(target: "Prelude::Input", "Starting udev...");
+			let udev = UserspaceDeviceManager::new().unwrap();
+			
+			info!(target: "Prelude::Input", "Listing Event Devices...");
+			let enumerator = udev.new_enumerator().unwrap().filter_match_subsystem("input");
+			for dev in enumerator.get_devices()
 			{
-				if let Ok(ed_path) = evdev
+				let device_name = dev.name().and_then(|x| x.to_str().ok());
+				let is_event_device = device_name.and_then(|dev_name| dev_name.split('/').last())
+					.map(|final_name| final_name.starts_with("event")).unwrap_or(false);
+				if is_event_device
 				{
-					match std::fs::OpenOptions::new().read(true).open(&ed_path)
+					// event_device
+					let dev_name = device_name.unwrap();
+					debug!(target: "Prelude::Input", "Event Device: {:?}", dev_name);
+					let device = udev.new_device_from_syspath(&dev_name);
+					// search device name ascending parent
+					let mut par_dev_opt = device.parent();
+					let mut device_name = None;
+					while let Some(pardev) = par_dev_opt
 					{
-						Ok(fp) =>
+						if let Some(dn) = pardev.property_value("NAME")
 						{
-							let device_params = EventDeviceParams::get_from_fd(ed_path.to_str().unwrap(), &fp);
-							info!(target: "Prelude::evdev", "Event Device {}: [{}/{:?} {:x}:{:x} 0x{:x}]", ed_path.display(), device_params.name,
-								device_params.bus_type, device_params.vendor, device_params.product, device_params.version);
-							info!(target: "Prelude::evdev", "-- Supported Keys: {:?}", device_params.key_events);
-							info!(target: "Prelude::evdev", "-- Supported Axis: {:?}", device_params.axis_events);
-							info!(target: "Prelude::evdev", "-- Supported Syn Events: {:?}", device_params.syn_events);
-							info!(target: "Prelude::evdev", "-- Force Feedback Params");
-							info!(target: "Prelude::evdev", "---- Supported Effects: {:?}", device_params.ff_effect_types);
-							info!(target: "Prelude::evdev", "---- Supported Waveforms: {:?}", device_params.ff_waveforms);
-							info!(target: "Prelude::evdev", "---- Supported Properties: {:?}", device_params.ff_properties);
-							if device_params.key_events.contains(&KeyEvents::A)
-							{
-								info!(target: "Prelude::evdev", "-- Identified as Keyboard Device");
-								let edev = EventDevice::from_params(&device_params).expect("Failed to open event device");
-								// edev.grab_device().unwrap();
-								ed_files.push(Rc::new(RefCell::new(edev)));
-							}
-							else if device_params.key_events.contains(&KeyEvents::ButtonA)
-							{
-								info!(target: "Prelude::evdev", "-- Identified as Gamepad Device");
-								ed_files.push(Rc::new(RefCell::new(EventDevice::from_params(&device_params).expect("Failed to open event device"))));
-							}
-						},
-						Err(e) => info!(target: "Prelude::evdev", "Failed to open event device({}): {:?}", ed_path.display(), e)
+							device_name = Some(dn.to_str().unwrap().to_owned());
+							break;
+						}
+						par_dev_opt = pardev.parent();
 					}
+					let device_name = device_name.unwrap_or(String::from("Unknown Device"));
+					let device_node = device.device_node().unwrap().to_str().unwrap().to_owned();
+					let node_number = device_node["/dev/input/event".len()..].parse::<u32>().unwrap();
+					info!(target: "Prelude::Input", "Initializing for Input: {} [{}]", device_name, device_node);
+					debug!(target: "Prelude::Input", "-- Initialized: {}", device.is_initialized());
+					let joystick_device = device.property_value("ID_INPUT_JOYSTICK").and_then(|f| f.to_str().ok()).map(|n| n == "1").unwrap_or(false);
+					let keyboard_device = device.property_value("ID_INPUT_KEYBOARD").and_then(|f| f.to_str().ok()).map(|n| n == "1").unwrap_or(false);
+					if joystick_device
+					{
+						info!(target: "Prelude::Input", "-- Identified as Joystick");
+						input_devices.insert(node_number, InputDevice::new(&device_node).unwrap());
+					}
+					else if keyboard_device
+					{
+						info!(target: "Prelude::Input", "-- Identified as Keyboard");
+						input_devices.insert(node_number, InputDevice::new(&device_node).unwrap());
+					}
+					/*for props in device.properties()
+					{
+						info!(target: "Prelude::Input", "-- Property: {:?} = {:?}", props.name(), props.value());
+					}*/
 				}
 			}
-			let mut polling = EPoll::new(ed_files.iter().map(|x| x.clone()).collect::<Vec<_>>()).expect("Unable to start polling with epoll");
-			while let Ok(events) = polling.wait()
-			{
-				let (mut key_states, mut axis_states) = (key_raw_states_in_thread.lock().unwrap(), axis_raw_states_in_thread.lock().unwrap());
 
+			let udev_monitor = udev.new_monitor().unwrap().add_filter_subsystem("input").enable_receiving();
+			let mut polling = epoll::EpollInstance::new().expect("Unable to create polling object");
+			for (n, d) in input_devices.iter()
+			{
+				polling.add_interest(epoll::Interest::new(d.as_raw_fd(), epoll::EPOLLIN, *n as u64)).unwrap();
+			}
+			polling.add_interest(epoll::Interest::new(udev_monitor.as_raw_fd(), epoll::EPOLLIN, std::u64::MAX)).unwrap();
+			while let Ok(events) = polling.wait(-1, input_devices.len())
+			{
 				for event in events
 				{
-					if let Ok(ev) = event.borrow_mut().wait_event()
+					if event.data() == std::u64::MAX
 					{
-						match ev
+						// from udev_monitor
+						if let Ok(dev) = udev_monitor.receive_device()
 						{
-							DeviceEvent::Syn(_, _) => (),
-							DeviceEvent::Key(_, k, p) => match p
+							let is_event_device = dev.device_node().and_then(|d| d.to_str().ok()).map(|d| d.starts_with("/dev/input/event")).unwrap_or(false);
+							if is_event_device
 							{
-								PressedState::Released => *key_states.entry(k).or_insert(false) = false,
-								PressedState::Pressed => *key_states.entry(k).or_insert(true) = true,
-								PressedState::Repeating => ()
-							},
-							DeviceEvent::Absolute(_, x, v) => *axis_states.entry(x).or_insert(v) = v,
-							_ => ()
+								// event device
+								let device_action = dev.action().unwrap().to_str().unwrap().to_owned();
+								debug!(target: "Prelude::Input", "hotplug notified from udev");
+								debug!(target: "Prelude::Input", "-- Action: {}", device_action);
+								let device_node = dev.device_node().unwrap().to_str().unwrap().to_owned();
+								let node_number = device_node["/dev/input/event".len()..].parse::<u32>().unwrap();
+								// search device name ascending parent
+								let mut par_dev_opt = dev.parent();
+								let mut device_name = None;
+								while let Some(pardev) = par_dev_opt
+								{
+									if let Some(dn) = pardev.property_value("NAME")
+									{
+										device_name = Some(dn.to_str().unwrap().to_owned());
+										break;
+									}
+									par_dev_opt = pardev.parent();
+								}
+								let device_name = device_name.unwrap_or(String::from("Unknown Device"));
+								debug!(target: "Prelude::Input", "-- Name = {}", device_name);
+								debug!(target: "Prelude::Input", "-- Node = {:?}", device_node);
+								debug!(target: "Prelude::Input", "-- Node Number = {}", node_number);
+								debug!(target: "Prelude::Input", "-- Initialized: {}", dev.is_initialized());
+
+								match dev.action().and_then(|cs| cs.to_str().ok())
+								{
+									Some("remove") => if let Some(removed_device) = input_devices.remove(&node_number)
+									{
+										info!(target: "Prelude::Input", "Removed Device {}", device_name);
+										polling.del_interest(&epoll::Interest::new(removed_device.as_raw_fd(), epoll::EPOLLIN, node_number as u64)).unwrap();
+										removed_device.unplug(&mut aks_thread.lock().unwrap(), &mut aas_thread.lock().unwrap());
+									},
+									Some("add") =>
+									{
+										let joystick_device = dev.property_value("ID_INPUT_JOYSTICK").and_then(|f| f.to_str().ok()).map(|n| n == "1").unwrap_or(false);
+										let keyboard_device = dev.property_value("ID_INPUT_KEYBOARD").and_then(|f| f.to_str().ok()).map(|n| n == "1").unwrap_or(false);
+										if joystick_device
+										{
+											info!(target: "Prelude::Input", "Added Device {} as Joystick", device_name);
+											let idev = InputDevice::new(&device_node).unwrap();
+											polling.add_interest(epoll::Interest::new(idev.as_raw_fd(), epoll::EPOLLIN, node_number as u64)).unwrap();
+											input_devices.insert(node_number, idev);
+										}
+										else if keyboard_device
+										{
+											info!(target: "Prelude::Input", "Added Device {} as Keyboard", device_name);
+											let idev = InputDevice::new(&device_node).unwrap();
+											polling.add_interest(epoll::Interest::new(idev.as_raw_fd(), epoll::EPOLLIN, node_number as u64)).unwrap();
+											input_devices.insert(node_number, idev);
+										}
+									},
+									_ => ()
+								}
+							}
+						}
+						else { warn!(target: "Prelude::Input", "Failed to receive device from udev monitor"); }
+					}
+					else
+					{
+						// from input devices
+						match input_devices.get_mut(&(event.data() as u32))
+						{
+							Some(input_device) => input_device.update(&mut aks_thread.lock().unwrap(), &mut aas_thread.lock().unwrap()),
+							None =>
+							{
+								warn!(target: "Prelude::Input", "Input Device is not found?");
+							}
 						}
 					}
 				}
@@ -216,9 +366,8 @@ impl <InputNames: PartialEq + Eq + std::hash::Hash + Copy + Clone + std::fmt::De
 
 		Ok(InputSystem
 		{
-			key_raw_states: key_raw_states,
-			axis_raw_states: axis_raw_states,
 			keymap: std::collections::HashMap::new(),
+			aggregate_key_states: aks, aggregate_axis_states: aas,
 			input_states: std::collections::HashMap::new()
 		})
 	}
@@ -230,7 +379,7 @@ impl <InputNames: PartialEq + Eq + std::hash::Hash + Copy + Clone + std::fmt::De
 	}
 	pub fn update(&mut self)
 	{
-		let (mut key_states, mut axis_states) = (self.key_raw_states.lock().unwrap(), self.axis_raw_states.lock().unwrap());
+		let (mut key_states, mut axis_states) = (self.aggregate_key_states.lock().unwrap(), self.aggregate_axis_states.lock().unwrap());
 		for (t, v) in &self.keymap
 		{
 			let mut total_value = 0.0f32;
@@ -239,10 +388,10 @@ impl <InputNames: PartialEq + Eq + std::hash::Hash + Copy + Clone + std::fmt::De
 				total_value += match f
 				{
 					&InputType::Axis(x) => *axis_states.entry(x).or_insert(0.0f32),
-					&InputType::Key(k) => *key_states.entry(k).or_insert(false) as u32 as f32,
+					&InputType::Key(k) => if *key_states.entry(k).or_insert(0) > 0 { 1.0f32 } else { 0.0f32 },
 					&InputType::KeyAsAxis(n, p) =>
-						(if *key_states.entry(p).or_insert(false) { 1.0f32 } else { 0.0f32 }) -
-						(if *key_states.entry(n).or_insert(false) { 1.0f32 } else { 0.0f32 })
+						(if *key_states.entry(p).or_insert(0) > 0 { 1.0f32 } else { 0.0f32 }) -
+						(if *key_states.entry(n).or_insert(0) > 0 { 1.0f32 } else { 0.0f32 })
 				};
 			}
 			*self.input_states.entry(*t).or_insert(total_value) = total_value.max(-1.0f32).min(1.0f32);

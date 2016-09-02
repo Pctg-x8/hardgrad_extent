@@ -158,6 +158,7 @@ impl WindowServer for XServer
 						}
 						else { recursive(this, unsafe { xcb_poll_for_event(this.internal) }) }
 					},
+					34 => recursive(this, unsafe { xcb_poll_for_event(this.internal) })/* keymap change event(ignore) */,
 					_ =>
 					{
 						info!(target: "Prelude <- XServer", "xcb_event_response: {}", event.response_type);

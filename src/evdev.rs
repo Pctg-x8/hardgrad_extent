@@ -394,12 +394,11 @@ pub struct EventDevice
 }
 impl EventDevice
 {
-	pub fn from_params(params: &EventDeviceParams) -> Result<Self, prelude::EngineError>
+	pub fn new(node_path: &str) -> Result<Self, prelude::EngineError>
 	{
-		info!(target: "Prelude::evdev", "Opening Event Device {}", params.name);
-		std::fs::OpenOptions::new().read(true).open(&params.fs_location).map_err(prelude::EngineError::from).map(|fp| EventDevice
+		std::fs::OpenOptions::new().read(true).open(node_path).map_err(prelude::EngineError::from).map(|fp| EventDevice
 		{
-			params: params.clone(), reader: std::io::BufReader::new(fp),
+			params: EventDeviceParams::get_from_fd(node_path, &fp), reader: std::io::BufReader::new(fp),
 			data_u8: vec![0u8; std::mem::size_of::<input_event>()]
 		})
 	}
