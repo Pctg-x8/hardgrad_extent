@@ -10,6 +10,7 @@ mod shading;
 mod window;
 mod descriptor;
 mod input;
+mod data;
 mod internal_traits;
 
 // platform dependents
@@ -20,7 +21,7 @@ mod debug_info;
 // Exported APIs //
 pub use self::error::*;
 pub use self::engine::DeviceFeatures;
-pub use self::framebuffer::{AttachmentDesc, PassDesc, PassDependency, AttachmentClearValue};
+pub use self::framebuffer::{AttachmentDesc, AttachmentRef, PassDesc, PassDependency, AttachmentClearValue};
 pub use self::command::{MemoryBarrier, BufferMemoryBarrier, ImageMemoryBarrier, IndirectCallParameter, BufferCopyRegion, ImageCopyRegion};
 pub use self::resource::{
 	ImageSubresourceRange, ImageSubresourceLayers, BufferDataType, ImageUsagePresets,
@@ -35,11 +36,12 @@ pub use self::shading::{
 pub use self::descriptor::{ShaderStage, Descriptor, BufferInfo, ImageInfo, DescriptorSetWriteInfo};
 pub use self::debug_info::DebugLine;
 pub use self::input::*;
+pub use self::data::*;
 
 pub mod traits
 {
 	pub use super::command::{PrimaryCommandBuffers, SecondaryCommandBuffers};
-	pub use super::resource::{ImageDescriptor};
+	pub use super::resource::{ImageDescriptor, ImageView};
 }
 // exported objects
 pub use self::engine::Engine;
@@ -66,4 +68,5 @@ mod internals
 	pub use super::shading::*;
 	pub use super::descriptor::*;
 	pub use super::debug_info::*;
+	pub use super::data::*;
 }

@@ -129,6 +129,7 @@ impl ShaderProgramInternals for ShaderProgram
 	}
 }
 
+#[derive(Clone)]
 pub struct PushConstantDesc(pub VkShaderStageFlags, pub std::ops::Range<u32>);
 impl <'a> std::convert::Into<VkPushConstantRange> for &'a PushConstantDesc
 {

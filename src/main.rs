@@ -28,6 +28,9 @@ mod utils;
 use nalgebra::*;
 use rand::distributions::*;
 
+mod smaa_extra_textures;
+use smaa_extra_textures::*;
+
 use vkffi::*;
 
 use std::collections::LinkedList;
@@ -139,23 +142,114 @@ fn app_main() -> Result<(), interlude::EngineError>
 	let VkExtent2D(frame_width, frame_height) = main_frame.get_extent();
 	let execute_next_signal = try!(engine.create_fence());
 
+	let gbuffer_desc = interlude::ImageDescriptor2::new(VkFormat::R8G8B8A8_UNORM, main_frame.get_extent(), interlude::ImageUsagePresets::AsColorTexture).device_resource();
+	let edgebuffer_desc = interlude::ImageDescriptor2::new(VkFormat::R8G8_UNORM, main_frame.get_extent(), interlude::ImageUsagePresets::AsColorTexture).device_resource();
+	let blend_weight_desc = interlude::ImageDescriptor2::new(VkFormat::R8G8B8A8_UNORM, main_frame.get_extent(), interlude::ImageUsagePresets::AsColorTexture).device_resource();
+	let smaa_areatex_desc = interlude::ImageDescriptor2::new(VkFormat::R8G8_UNORM, VkExtent2D(AREATEX_WIDTH, AREATEX_HEIGHT), interlude::ImageUsagePresets::AsColorTexture);
+	let smaa_searchtex_desc = interlude::ImageDescriptor2::new(VkFormat::R8_UNORM, VkExtent2D(SEARCHTEX_WIDTH, SEARCHTEX_HEIGHT), interlude::ImageUsagePresets::AsColorTexture);
+	let imagebuffer_placement = interlude::ImagePreallocator::new().image_2d(vec![&gbuffer_desc, &edgebuffer_desc, &blend_weight_desc, &smaa_areatex_desc, &smaa_searchtex_desc]);
+	let (backbuffers, stage_images) = try!(engine.create_double_image(&imagebuffer_placement));
+	let (backbuffers, stage_images) = (backbuffers, stage_images.unwrap());
+	let gbuffer_view = try!(engine.create_image_view_2d(backbuffers.dim2(0), VkFormat::R8G8B8A8_UNORM,
+		interlude::ComponentMapping::straight(), interlude::ImageSubresourceRange::base_color()));
+	let edgebuffer_view = try!(engine.create_image_view_2d(backbuffers.dim2(1), VkFormat::R8G8_UNORM,
+		interlude::ComponentMapping::straight(), interlude::ImageSubresourceRange::base_color()));
+	let blend_weight_view = try!(engine.create_image_view_2d(backbuffers.dim2(2), VkFormat::R8G8B8A8_UNORM,
+		interlude::ComponentMapping::straight(), interlude::ImageSubresourceRange::base_color()));
+	let smaa_areatex_view = try!(engine.create_image_view_2d(backbuffers.dim2(3), VkFormat::R8G8_UNORM,
+		interlude::ComponentMapping::double_swizzle_rep(interlude::ComponentSwizzle::R, interlude::ComponentSwizzle::G), interlude::ImageSubresourceRange::base_color()));
+	let smaa_searchtex_view = try!(engine.create_image_view_2d(backbuffers.dim2(4), VkFormat::R8_UNORM,
+		interlude::ComponentMapping::single_swizzle(interlude::ComponentSwizzle::R), interlude::ImageSubresourceRange::base_color()));
+	let gbuffer_sampler = try!(engine.create_sampler(&interlude::SamplerState::new()));
+	try!(stage_images.map().map(|mapped|
+	{
+		mapped.map_mut::<[u8; AREATEX_SIZE as usize]>(stage_images.image2d_offset(0) as usize).copy_from_slice(&AREATEX_BYTES);
+		mapped.map_mut::<[u8; SEARCHTEX_SIZE as usize]>(stage_images.image2d_offset(1) as usize).copy_from_slice(&SEARCHTEX_BYTES);
+	}));
+
 	let rp_attachment_descs =
 	[
 		interlude::AttachmentDesc
-		{
+		{ // gbuffer
+			format: VkFormat::R8G8B8A8_UNORM, clear_on_load: Some(true), preserve_stored_value: false,
+			initial_layout: VkImageLayout::ColorAttachmentOptimal, final_layout: VkImageLayout::ColorAttachmentOptimal,
+			.. Default::default()
+		},
+		interlude::AttachmentDesc
+		{ // SMAA edgebuffer
+			format: VkFormat::R8G8_UNORM, clear_on_load: Some(true), preserve_stored_value: false,
+			initial_layout: VkImageLayout::ColorAttachmentOptimal, final_layout: VkImageLayout::ColorAttachmentOptimal,
+			.. Default::default()
+		},
+		interlude::AttachmentDesc
+		{ // SMAA blend weight buffer
+			format: VkFormat::R8G8B8A8_UNORM, clear_on_load: Some(true), preserve_stored_value: false,
+			initial_layout: VkImageLayout::ColorAttachmentOptimal, final_layout: VkImageLayout::ColorAttachmentOptimal,
+			.. Default::default()
+		},
+		interlude::AttachmentDesc
+		{ // swapchain buffer
 			format: main_frame.get_format(), clear_on_load: Some(true), preserve_stored_value: true,
 			initial_layout: VkImageLayout::ColorAttachmentOptimal, final_layout: VkImageLayout::PresentSrcKHR,
 			.. Default::default()
 		}
 	];
-	let render_passes = [interlude::PassDesc::single_fragment_output(0)];
-	let rp_framebuffer_form = try!(engine.create_render_pass(&rp_attachment_descs, &render_passes, &[]));
+	let render_passes =
+	[
+		interlude::PassDesc::single_fragment_output(0),
+		interlude::PassDesc
+		{
+			color_attachment_indices: vec![interlude::AttachmentRef::color(1)],
+			preserved_attachment_indices: vec![0],
+			.. Default::default()
+		},
+		interlude::PassDesc
+		{
+			color_attachment_indices: vec![interlude::AttachmentRef::color(2)],
+			preserved_attachment_indices: vec![0, 1],
+			.. Default::default()
+		},
+		interlude::PassDesc { color_attachment_indices: vec![interlude::AttachmentRef::color(3)], .. Default::default() }
+	];
+	let pass_deps =
+	[
+		interlude::PassDependency
+		{
+			src: 0, dst: 1,
+			src_stage_mask: VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, dst_stage_mask: VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+			src_access_mask: VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, dst_access_mask: VK_ACCESS_COLOR_ATTACHMENT_READ_BIT,
+			depend_by_region: false
+		},
+		interlude::PassDependency
+		{
+			src: 1, dst: 2,
+			src_stage_mask: VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, dst_stage_mask: VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+			src_access_mask: VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, dst_access_mask: VK_ACCESS_COLOR_ATTACHMENT_READ_BIT,
+			depend_by_region: false
+		},
+		interlude::PassDependency
+		{
+			src: 0, dst: 3,
+			src_stage_mask: VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, dst_stage_mask: VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+			src_access_mask: VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, dst_access_mask: VK_ACCESS_COLOR_ATTACHMENT_READ_BIT,
+			depend_by_region: false
+		},
+		interlude::PassDependency
+		{
+			src: 2, dst: 3,
+			src_stage_mask: VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, dst_stage_mask: VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+			src_access_mask: VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, dst_access_mask: VK_ACCESS_COLOR_ATTACHMENT_READ_BIT,
+			depend_by_region: false
+		}
+	];
+	let rp_framebuffer_form = try!(engine.create_render_pass(&rp_attachment_descs, &render_passes, &pass_deps));
 	let framebuffers = try!(main_frame.get_back_images().iter()
-		.map(|x| engine.create_framebuffer(&rp_framebuffer_form, &[&x.view], VkExtent3D(frame_width, frame_height, 1)))
+		.map(|&x| engine.create_framebuffer(&rp_framebuffer_form, &[&gbuffer_view, &edgebuffer_view, &blend_weight_view, x], VkExtent3D(frame_width, frame_height, 1)))
 		.collect::<Result<Vec<_>, _>>());
 
 	// Resources //
 	let application_buffer_prealloc = engine.buffer_preallocate(&[
+		(std::mem::size_of::<[interlude::PosUV; 4]>(), interlude::BufferDataType::Vertex),
 		(std::mem::size_of::<structures::VertexMemoryForWireRender>(), interlude::BufferDataType::Vertex),
 		(std::mem::size_of::<structures::IndexMemory>(), interlude::BufferDataType::Index),
 		(std::mem::size_of::<structures::InstanceMemory>(), interlude::BufferDataType::Vertex),
@@ -166,8 +260,12 @@ fn app_main() -> Result<(), interlude::EngineError>
 	// setup initial data //
 	try!(appdata_stage.map().map(|mapped|
 	{
-		let vertices = mapped.map_mut::<structures::VertexMemoryForWireRender>(application_buffer_prealloc.offset(0));
-		let indices = mapped.map_mut::<structures::IndexMemory>(application_buffer_prealloc.offset(1));
+		*mapped.map_mut::<[interlude::PosUV; 4]>(application_buffer_prealloc.offset(0)) = [
+			interlude::PosUV(-1.0f32, -1.0f32, 0.0f32, 0.0f32), interlude::PosUV(1.0f32, -1.0f32, 1.0f32, 0.0f32),
+			interlude::PosUV(-1.0f32, 1.0f32, 0.0f32, 1.0f32), interlude::PosUV(1.0f32, 1.0f32, 1.0f32, 1.0f32)
+		];
+		let vertices = mapped.map_mut::<structures::VertexMemoryForWireRender>(application_buffer_prealloc.offset(1));
+		let indices = mapped.map_mut::<structures::IndexMemory>(application_buffer_prealloc.offset(2));
 		vertices.unit_plane_source_vts = [
 			Position(-1.0f32, -1.0f32, 0.0f32, 1.0f32),
 			Position( 1.0f32, -1.0f32, 0.0f32, 1.0f32),
@@ -189,7 +287,7 @@ fn app_main() -> Result<(), interlude::EngineError>
 			4, 5, 5, 6, 6, 7, 7, 4,
 			0, 4, 1, 5, 2, 6, 3, 7
 		];
-		let uniforms = mapped.map_mut::<structures::UniformMemory>(application_buffer_prealloc.offset(3));
+		let uniforms = mapped.map_mut::<structures::UniformMemory>(application_buffer_prealloc.offset(4));
 		logical_resources::projection_matrixes::setup_parameters(uniforms, main_frame.get_extent());
 	}));
 
@@ -197,11 +295,32 @@ fn app_main() -> Result<(), interlude::EngineError>
 	let dslayout_u1 = try!(engine.create_descriptor_set_layout(&[
 		interlude::Descriptor::Uniform(1, vec![interlude::ShaderStage::Vertex, interlude::ShaderStage::Geometry])
 	]));
-	let all_descriptor_sets = try!(engine.preallocate_all_descriptor_sets(&[&dslayout_u1]));
+	let dslayout_pp = try!(engine.create_descriptor_set_layout(&[
+		interlude::Descriptor::CombinedSampler(1, vec![interlude::ShaderStage::Fragment])
+	]));
+	let dslayout_pp_bw = try!(engine.create_descriptor_set_layout(&[
+		interlude::Descriptor::CombinedSampler(3, vec![interlude::ShaderStage::Fragment])
+	]));
+	let dslayout_smaa_combine = try!(engine.create_descriptor_set_layout(&[
+		interlude::Descriptor::CombinedSampler(2, vec![interlude::ShaderStage::Fragment])
+	]));
+	let all_descriptor_sets = try!(engine.preallocate_all_descriptor_sets(&[&dslayout_u1, &dslayout_pp, &dslayout_pp_bw, &dslayout_smaa_combine]));
 	engine.update_descriptors(&[
 		interlude::DescriptorSetWriteInfo::UniformBuffer(all_descriptor_sets[0], 0, vec![
-			interlude::BufferInfo(&application_data, application_buffer_prealloc.offset(3) .. application_buffer_prealloc.total_size() as usize)
-		])
+			interlude::BufferInfo(&application_data, application_buffer_prealloc.offset(4) .. application_buffer_prealloc.total_size() as usize)
+		]),
+		interlude::DescriptorSetWriteInfo::CombinedImageSampler(all_descriptor_sets[1], 0, vec![
+			interlude::ImageInfo(&gbuffer_sampler, &gbuffer_view, VkImageLayout::ShaderReadOnlyOptimal)
+		]),
+		interlude::DescriptorSetWriteInfo::CombinedImageSampler(all_descriptor_sets[2], 0, vec![
+			interlude::ImageInfo(&gbuffer_sampler, &edgebuffer_view, VkImageLayout::ShaderReadOnlyOptimal),
+			interlude::ImageInfo(&gbuffer_sampler, &smaa_areatex_view, VkImageLayout::ShaderReadOnlyOptimal),
+			interlude::ImageInfo(&gbuffer_sampler, &smaa_searchtex_view, VkImageLayout::ShaderReadOnlyOptimal)
+		]),
+		interlude::DescriptorSetWriteInfo::CombinedImageSampler(all_descriptor_sets[3], 0, vec![
+			interlude::ImageInfo(&gbuffer_sampler, &gbuffer_view, VkImageLayout::ShaderReadOnlyOptimal),
+			interlude::ImageInfo(&gbuffer_sampler, &blend_weight_view, VkImageLayout::ShaderReadOnlyOptimal)
+		]),
 	]);
 
 	// Shading Structures //
@@ -213,12 +332,22 @@ fn app_main() -> Result<(), interlude::EngineError>
 		interlude::VertexBinding::PerVertex(std::mem::size_of::<vertex_formats::Position>() as u32),
 		interlude::VertexBinding::PerInstance(std::mem::size_of::<structures::CVector4>() as u32)
 	], &[interlude::VertexAttribute(0, VkFormat::R32G32B32A32_SFLOAT, 0), interlude::VertexAttribute(1, VkFormat::R32G32B32A32_SFLOAT, 0)]));
+	let smaa_edge_ppv = try!(engine.create_postprocess_vertex_shader_from_asset("shaders.smaa.EdgeDetectionV", "main"));
+	let smaa_bw_ppv = try!(engine.create_postprocess_vertex_shader_from_asset("shaders.smaa.BlendWeightCalcV", "main"));
+	let smaa_combine_ppv = try!(engine.create_postprocess_vertex_shader_from_asset("shaders.smaa.CombineV", "main"));
 	let backline_duplicator = try!(engine.create_geometry_shader_from_asset("shaders.BackLineDuplicator", "main"));
 	let enemy_duplicator = try!(engine.create_geometry_shader_from_asset("shaders.EnemyDuplicator", "main"));
 	let through_color_frag = try!(engine.create_fragment_shader_from_asset("shaders.ThroughColor", "main"));
+	let smaa_edge_detection_frag = try!(engine.create_fragment_shader_from_asset("shaders.smaa.EdgeDetection", "main"));
+	let smaa_blend_weight_frag = try!(engine.create_fragment_shader_from_asset("shaders.smaa.BlendWeightCalc", "main"));
+	let smaa_combine_frag = try!(engine.create_fragment_shader_from_asset("shaders.smaa.Combine", "main"));
 
 	let swapchain_viewport = VkViewport(0.0f32, 0.0f32, frame_width as f32, frame_height as f32, 0.0f32, 1.0f32);
+	let smaa_rt_parameter = interlude::PushConstantDesc(VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0 .. 16);
 	let wire_render_layout = try!(engine.create_pipeline_layout(&[&dslayout_u1], &[interlude::PushConstantDesc(VK_SHADER_STAGE_VERTEX_BIT, 0 .. 16)]));
+	let pp_smaa_ed_layout = try!(engine.create_pipeline_layout(&[&dslayout_pp], &[smaa_rt_parameter.clone()]));
+	let pp_smaa_bw_layout = try!(engine.create_pipeline_layout(&[&dslayout_pp_bw], &[smaa_rt_parameter.clone()]));
+	let pp_smaa_combine_layout = try!(engine.create_pipeline_layout(&[&dslayout_smaa_combine], &[smaa_rt_parameter]));
 	let background_render_state = interlude::GraphicsPipelineBuilder::new(&wire_render_layout, &rp_framebuffer_form, 0)
 		.vertex_shader(&raw_output_vert).geometry_shader(&backline_duplicator).fragment_shader(&through_color_frag)
 		.primitive_topology(interlude::PrimitiveTopology::LineList(true))
@@ -232,10 +361,31 @@ fn app_main() -> Result<(), interlude::EngineError>
 		.primitive_topology(interlude::PrimitiveTopology::LineList(false))
 		.viewport_scissors(&[interlude::ViewportWithScissorRect::default_scissor(swapchain_viewport)])
 		.blend_state(&[interlude::AttachmentBlendState::Disabled]);
-	let pipeline_states = try!(engine.create_graphics_pipelines(&[&background_render_state, &enemy_render_state, &player_render_state]));
+	// PostProcessing //
+	let pp_smaa_edge_detection_state = interlude::GraphicsPipelineBuilder::new(&pp_smaa_ed_layout, &rp_framebuffer_form, 1)
+		.vertex_shader(&smaa_edge_ppv).fragment_shader(&smaa_edge_detection_frag)
+		.primitive_topology(interlude::PrimitiveTopology::TriangleStrip(false))
+		.viewport_scissors(&[interlude::ViewportWithScissorRect::default_scissor(swapchain_viewport)])
+		.blend_state(&[interlude::AttachmentBlendState::Disabled]);
+	let pp_smaa_blend_weight_state = interlude::GraphicsPipelineBuilder::new(&pp_smaa_bw_layout, &rp_framebuffer_form, 2)
+		.vertex_shader(&smaa_bw_ppv).fragment_shader(&smaa_blend_weight_frag)
+		.primitive_topology(interlude::PrimitiveTopology::TriangleStrip(false))
+		.viewport_scissors(&[interlude::ViewportWithScissorRect::default_scissor(swapchain_viewport)])
+		.blend_state(&[interlude::AttachmentBlendState::Disabled]);
+	let pp_smaa_combine_state = interlude::GraphicsPipelineBuilder::new(&pp_smaa_combine_layout, &rp_framebuffer_form, 3)
+		.vertex_shader(&smaa_combine_ppv).fragment_shader(&smaa_combine_frag)
+		.primitive_topology(interlude::PrimitiveTopology::TriangleStrip(false))
+		.viewport_scissors(&[interlude::ViewportWithScissorRect::default_scissor(swapchain_viewport)])
+		.blend_state(&[interlude::AttachmentBlendState::Disabled]);
+	let pipeline_states = try!(engine.create_graphics_pipelines(
+		&[&background_render_state, &enemy_render_state, &player_render_state, &pp_smaa_edge_detection_state, &pp_smaa_blend_weight_state, &pp_smaa_combine_state]
+	));
 	let ref background_render = pipeline_states[0];
 	let ref enemy_render = pipeline_states[1];
 	let ref player_render = pipeline_states[2];
+	let ref pp_smaa_edge_detection = pipeline_states[3];
+	let ref pp_smaa_blend_weight_calc = pipeline_states[4];
+	let ref pp_smaa_combine = pipeline_states[5];
 
 	// Initial Data Transmission, Layouting for Swapchain Backbuffer Images //
 	try!(engine.allocate_transient_transfer_command_buffers(1).and_then(|setup_commands|
@@ -252,15 +402,41 @@ fn app_main() -> Result<(), interlude::EngineError>
 			interlude::BufferMemoryBarrier::hold_ownership(&application_data, 0 .. application_buffer_prealloc.total_size(),
 				VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT | VK_ACCESS_INDEX_READ_BIT | VK_ACCESS_UNIFORM_READ_BIT)
 		];
+		let transferred_image_templates =
+		[
+			interlude::ImageMemoryBarrier::template(&**backbuffers.dim2(3), interlude::ImageSubresourceRange::base_color()),
+			interlude::ImageMemoryBarrier::template(&**backbuffers.dim2(4), interlude::ImageSubresourceRange::base_color()),
+			interlude::ImageMemoryBarrier::template(stage_images.dim2(0), interlude::ImageSubresourceRange::base_color()),
+			interlude::ImageMemoryBarrier::template(stage_images.dim2(1), interlude::ImageSubresourceRange::base_color())
+		];
 		let image_memory_barriers = main_frame.get_back_images().iter()
 			.map(|x| interlude::ImageMemoryBarrier::hold_ownership(*x, interlude::ImageSubresourceRange::base_color(),
-			0, VK_ACCESS_MEMORY_READ_BIT, VkImageLayout::Undefined, VkImageLayout::PresentSrcKHR)).collect::<Vec<_>>();
+			0, VK_ACCESS_MEMORY_READ_BIT, VkImageLayout::Undefined, VkImageLayout::PresentSrcKHR)).chain([
+				interlude::ImageMemoryBarrier::hold_ownership(&**backbuffers.dim2(0), interlude::ImageSubresourceRange::base_color(), VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VkImageLayout::Preinitialized, VkImageLayout::ColorAttachmentOptimal),
+				interlude::ImageMemoryBarrier::hold_ownership(&**backbuffers.dim2(1), interlude::ImageSubresourceRange::base_color(), VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VkImageLayout::Preinitialized, VkImageLayout::ColorAttachmentOptimal),
+				interlude::ImageMemoryBarrier::hold_ownership(&**backbuffers.dim2(2), interlude::ImageSubresourceRange::base_color(), VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VkImageLayout::Preinitialized, VkImageLayout::ColorAttachmentOptimal),
+				transferred_image_templates[0].hold_ownership(VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VkImageLayout::Preinitialized, VkImageLayout::TransferDestOptimal),
+				transferred_image_templates[1].hold_ownership(VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VkImageLayout::Preinitialized, VkImageLayout::TransferDestOptimal),
+				transferred_image_templates[2].hold_ownership(VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT, VkImageLayout::Preinitialized, VkImageLayout::TransferSrcOptimal),
+				transferred_image_templates[3].hold_ownership(VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT, VkImageLayout::Preinitialized, VkImageLayout::TransferSrcOptimal)
+			].into_iter().map(|&x| x)).collect::<Vec<_>>();
+		let image_memory_barriers_ret =
+		[
+			transferred_image_templates[0].hold_ownership(VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT, VkImageLayout::TransferDestOptimal, VkImageLayout::ShaderReadOnlyOptimal),
+			transferred_image_templates[1].hold_ownership(VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT, VkImageLayout::TransferDestOptimal, VkImageLayout::ShaderReadOnlyOptimal),
+			transferred_image_templates[2].hold_ownership(VK_ACCESS_TRANSFER_READ_BIT, VK_ACCESS_HOST_WRITE_BIT, VkImageLayout::TransferSrcOptimal, VkImageLayout::General),
+			transferred_image_templates[3].hold_ownership(VK_ACCESS_TRANSFER_READ_BIT, VK_ACCESS_HOST_WRITE_BIT, VkImageLayout::TransferSrcOptimal, VkImageLayout::General)
+		];
 
 		try!(setup_commands.begin(0).and_then(|recorder|
 			recorder.pipeline_barrier(VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, false,
 				&[], &buffer_memory_barriers, &image_memory_barriers)
 			.copy_buffer(&appdata_stage, &application_data, &[interlude::BufferCopyRegion(0, 0, application_buffer_prealloc.total_size() as usize)])
-			.pipeline_barrier(VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, false, &[], &buffer_memory_barriers_ret, &[])
+			.copy_image(stage_images.dim2(0), &**backbuffers.dim2(3), VkImageLayout::TransferSrcOptimal, VkImageLayout::TransferDestOptimal,
+				&[interlude::ImageCopyRegion(interlude::ImageSubresourceLayers::base_color(), VkOffset3D(0, 0, 0), interlude::ImageSubresourceLayers::base_color(), VkOffset3D(0, 0, 0), VkExtent3D(AREATEX_WIDTH, AREATEX_HEIGHT, 1))])
+			.copy_image(stage_images.dim2(1), &**backbuffers.dim2(4), VkImageLayout::TransferSrcOptimal, VkImageLayout::TransferDestOptimal,
+				&[interlude::ImageCopyRegion(interlude::ImageSubresourceLayers::base_color(), VkOffset3D(0, 0, 0), interlude::ImageSubresourceLayers::base_color(), VkOffset3D(0, 0, 0), VkExtent3D(SEARCHTEX_WIDTH, SEARCHTEX_HEIGHT, 1))])
+			.pipeline_barrier(VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, false, &[], &buffer_memory_barriers_ret, &image_memory_barriers_ret)
 			.end()
 		));
 		setup_commands.execute()
@@ -282,29 +458,54 @@ fn app_main() -> Result<(), interlude::EngineError>
 			main_frame.get_back_images()[i], interlude::ImageSubresourceRange::base_color(),
 			VK_ACCESS_MEMORY_READ_BIT, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
 			VkImageLayout::PresentSrcKHR, VkImageLayout::ColorAttachmentOptimal);
+		let clear_values = [
+			interlude::AttachmentClearValue::Color(0.0f32, 0.0f32, 0.015625f32, 1.0f32),
+			interlude::AttachmentClearValue::Color(0.0f32, 0.0f32, 0.0f32, 0.0f32),
+			interlude::AttachmentClearValue::Color(0.0f32, 0.0f32, 0.0f32, 0.0f32),
+			interlude::AttachmentClearValue::Color(0.0f32, 0.0f32, 0.0f32, 0.0f32)
+		];
 
 		recorder
 			.pipeline_barrier(VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, false, &[], &[],
 				&[color_output_barrier])
-			.begin_render_pass(&framebuffers[i], &[interlude::AttachmentClearValue::Color(0.0f32, 0.0f32, 0.015625f32, 1.0f32)], false)
+			.begin_render_pass(&framebuffers[i], &clear_values, false)
 			.bind_descriptor_sets(&wire_render_layout, &all_descriptor_sets[0..1])
-			.bind_vertex_buffers(&[(&application_data, application_buffer_prealloc.offset(0))])
+			.bind_vertex_buffers(&[(&application_data, application_buffer_prealloc.offset(1))])
 			.bind_pipeline(background_render)
-			.bind_vertex_buffers_partial(1, &[(&application_data, application_buffer_prealloc.offset(2) + structures::background_instance_offs())])
+			.bind_vertex_buffers_partial(1, &[(&application_data, application_buffer_prealloc.offset(3) + structures::background_instance_offs())])
 			.push_constants(&wire_render_layout, &[interlude::ShaderStage::Vertex],
 				0 .. std::mem::size_of::<f32>() as u32 * 4, &[0.125f32, 0.5f32, 0.1875f32, 0.625f32])
 			.draw(4, MAX_BK_COUNT as u32)
 			.bind_pipeline(enemy_render)
-			.bind_vertex_buffers_partial(1, &[(&application_data, application_buffer_prealloc.offset(2))])
+			.bind_vertex_buffers_partial(1, &[(&application_data, application_buffer_prealloc.offset(3))])
 			.push_constants(&wire_render_layout, &[interlude::ShaderStage::Vertex],
 				0 .. std::mem::size_of::<f32>() as u32 * 4, &[0.25f32, 0.9875f32, 1.5f32, 1.0f32])
 			.draw(4, MAX_ENEMY_COUNT as u32)
 			.bind_pipeline(player_render)
-			.bind_vertex_buffers_partial(1, &[(&application_data, application_buffer_prealloc.offset(2) + structures::player_instance_offs())])
-			.bind_index_buffer(&application_data, application_buffer_prealloc.offset(1))
+			.bind_vertex_buffers_partial(1, &[(&application_data, application_buffer_prealloc.offset(3) + structures::player_instance_offs())])
+			.bind_index_buffer(&application_data, application_buffer_prealloc.offset(2))
 			.push_constants(&wire_render_layout, &[interlude::ShaderStage::Vertex],
 				0 .. std::mem::size_of::<f32>() as u32 * 4, &[1.5f32, 1.25f32, 0.375f32, 1.0f32])
 			.draw_indexed(24, 2, 4)
+			.next_subpass(false)
+			.bind_vertex_buffers(&[(&application_data, application_buffer_prealloc.offset(0))])
+			.bind_pipeline(pp_smaa_edge_detection)
+			.bind_descriptor_sets(&pp_smaa_ed_layout, &all_descriptor_sets[1 .. 2])
+			.push_constants(&pp_smaa_ed_layout, &[interlude::ShaderStage::Vertex, interlude::ShaderStage::Fragment],
+				0 .. std::mem::size_of::<f32>() as u32 * 4, &[(frame_width as f32).recip(), (frame_height as f32).recip(), frame_width as f32, frame_height as f32])
+			.draw(4, 1)
+			.next_subpass(false)
+			.bind_pipeline(pp_smaa_blend_weight_calc)
+			.bind_descriptor_sets(&pp_smaa_bw_layout, &all_descriptor_sets[2 .. 3])
+			.push_constants(&pp_smaa_bw_layout, &[interlude::ShaderStage::Vertex, interlude::ShaderStage::Fragment],
+				0 .. std::mem::size_of::<f32>() as u32 * 4, &[(frame_width as f32).recip(), (frame_height as f32).recip(), frame_width as f32, frame_height as f32])
+			.draw(4, 1)
+			.next_subpass(false)
+			.bind_pipeline(pp_smaa_combine)
+			.bind_descriptor_sets(&pp_smaa_combine_layout, &all_descriptor_sets[3 .. 4])
+			.push_constants(&pp_smaa_combine_layout, &[interlude::ShaderStage::Vertex, interlude::ShaderStage::Fragment],
+				0 .. std::mem::size_of::<f32>() as u32 * 4, &[(frame_width as f32).recip(), (frame_height as f32).recip(), frame_width as f32, frame_height as f32])
+			.draw(4, 1)
 			.inject_commands(|r| debug_info.inject_render_commands(r))
 			.end_render_pass()
 		.end()
@@ -313,7 +514,7 @@ fn app_main() -> Result<(), interlude::EngineError>
 	let update_commands = try!(engine.allocate_transfer_command_buffers(1));
 	try!(update_commands.begin(0).and_then(|recorder|
 	{
-		let uoffs = application_buffer_prealloc.offset(2);
+		let uoffs = application_buffer_prealloc.offset(3);
 		let buffer_barriers = [
 			interlude::BufferMemoryBarrier::hold_ownership(&application_data, uoffs .. application_buffer_prealloc.total_size(),
 				VK_ACCESS_INDEX_READ_BIT | VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT | VK_ACCESS_UNIFORM_READ_BIT, VK_ACCESS_TRANSFER_WRITE_BIT),
@@ -337,8 +538,8 @@ fn app_main() -> Result<(), interlude::EngineError>
 	let mut frame_index = try!(main_frame.execute_rendering(&engine, &framebuffer_commands, None, Some(&debug_info), &execute_next_signal));
 
 	let mapped_range = try!(appdata_stage.map());
-	let mapped_uniform_data = mapped_range.map_mut::<structures::UniformMemory>(application_buffer_prealloc.offset(3));
-	let mapped_instance_data = mapped_range.map_mut::<structures::InstanceMemory>(application_buffer_prealloc.offset(2));
+	let mapped_uniform_data = mapped_range.map_mut::<structures::UniformMemory>(application_buffer_prealloc.offset(4));
+	let mapped_instance_data = mapped_range.map_mut::<structures::InstanceMemory>(application_buffer_prealloc.offset(3));
 	let (_, uref_enemy, uref_bk, uref_player_center) = mapped_uniform_data.partial_borrow();
 	let (iref_enemy, iref_bk, iref_player) = mapped_instance_data.partial_borrow();
 	let mut background_datastore = logical_resources::BackgroundDatastore::new(uref_bk, iref_bk);

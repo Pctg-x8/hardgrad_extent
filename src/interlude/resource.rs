@@ -112,7 +112,7 @@ pub trait ImageDescriptor : std::marker::Sized + InternalExports<VkImageCreateIn
 	fn sample_flags(mut self, samples: &[SampleCount]) -> Self;
 }
 pub struct ImageDescriptor1 { internal: VkImageCreateInfo }
-pub struct ImageDescriptor2 { internal: VkImageCreateInfo }
+pub struct ImageDescriptor2 { internal: VkImageCreateInfo, device_resource: bool }
 pub struct ImageDescriptor3 { internal: VkImageCreateInfo }
 impl ImageDescriptor1
 {
@@ -145,8 +145,14 @@ impl ImageDescriptor2
 				mipLevels: 1, arrayLayers: 1, samples: VK_SAMPLE_COUNT_1_BIT, tiling: VkImageTiling::Optimal,
 				usage: usage, sharingMode: VkSharingMode::Exclusive, initialLayout: VkImageLayout::Preinitialized,
 				queueFamilyIndexCount: 0, pQueueFamilyIndices: std::ptr::null()
-			}
+			},
+			device_resource: false
 		}
+	}
+	pub fn device_resource(mut self) -> Self
+	{
+		self.device_resource = true;
+		self
 	}
 }
 impl ImageDescriptor3
@@ -205,6 +211,11 @@ macro_rules! ImplImageDescriptor
 ImplImageDescriptor!(for ImageDescriptor1);
 ImplImageDescriptor!(for ImageDescriptor2);
 ImplImageDescriptor!(for ImageDescriptor3);
+pub trait ImageDescriptor2Internals { fn is_device_resource(&self) -> bool; }
+impl ImageDescriptor2Internals for ImageDescriptor2
+{
+	fn is_device_resource(&self) -> bool { self.device_resource }
+}
 
 #[derive(Clone, Copy)]
 pub struct ImageSubresourceRange(VkImageAspectFlags, u32, u32, u32, u32);
@@ -417,7 +428,6 @@ impl DeviceImageInternals for DeviceImage
 			d1_image_requirements.chain(d2_image_requirements).chain(d3_image_requirements)
 				.chain([VkMemoryRequirements { size: 0, alignment: 1, memoryTypeBits: 0 }].into_iter().map(|&x| x)).scan(0, |offs, req|
 				{
-					info!(target: "Prelude::DeviceResource", "Memory Requirement Bits: {:b}", req.memoryTypeBits);
 					let current_offs = ((*offs as f64 / req.alignment as f64).ceil() as VkDeviceSize) * req.alignment;
 					*offs = current_offs + req.size;
 					Some(current_offs)
@@ -680,6 +690,14 @@ impl ComponentMapping
 	pub fn double_swizzle_rep(org1: ComponentSwizzle, org2: ComponentSwizzle) -> Self
 	{
 		ComponentMapping(org1, org2, org1, org2)
+	}
+	pub fn straight() -> Self
+	{
+		ComponentMapping(ComponentSwizzle::R, ComponentSwizzle::G, ComponentSwizzle::B, ComponentSwizzle::A)
+	}
+	pub fn reversed() -> Self
+	{
+		ComponentMapping(ComponentSwizzle::B, ComponentSwizzle::G, ComponentSwizzle::R, ComponentSwizzle::A)
 	}
 }
 impl std::convert::Into<VkComponentMapping> for ComponentMapping

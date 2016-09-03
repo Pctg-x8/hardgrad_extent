@@ -222,6 +222,7 @@ pub trait RenderWindow
 }
 pub struct EntireImage { pub resource: VkImage, pub view: vk::ImageView }
 impl ImageResource for EntireImage { fn get_resource(&self) -> VkImage { self.resource } }
+impl ImageView for EntireImage { fn get_native(&self) -> VkImageView { self.view.get() } }
 pub struct Window
 {
 	#[allow(dead_code)] server: Rc<WindowServer>, #[allow(dead_code)] native: Box<NativeWindow>,

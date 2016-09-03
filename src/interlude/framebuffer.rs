@@ -47,6 +47,7 @@ pub type AttachmentRef = VkAttachmentReference;
 impl AttachmentRef
 {
 	pub fn color(index: u32) -> Self { VkAttachmentReference(index, VkImageLayout::ColorAttachmentOptimal) }
+	pub fn input(index: u32) -> Self { VkAttachmentReference(index, VkImageLayout::ShaderReadOnlyOptimal) }
 }
 pub struct PassDesc
 {
@@ -130,6 +131,7 @@ impl <'a> std::convert::Into<VkSubpassDependency> for &'a PassDependency
 		}
 	}
 }
+#[derive(Clone, Copy)]
 pub enum AttachmentClearValue
 {
 	Color(f32, f32, f32, f32), DepthStencil(f32, u32)

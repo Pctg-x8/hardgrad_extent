@@ -101,6 +101,7 @@ impl <'a> ImageMemoryBarrierTemplate<'a>
 		ImageMemoryBarrier::hold_ownership(self.image, self.subresource_range.clone(), src_access_mask, dst_access_mask, src_layout, dst_layout)
 	}
 }
+#[derive(Clone, Copy)]
 pub struct ImageMemoryBarrier<'a>
 {
 	src_access_mask: VkAccessFlags, dst_access_mask: VkAccessFlags,
@@ -386,6 +387,11 @@ impl <'a> GraphicsCommandRecorder<'a>
 		};
 		unsafe { vkCmdBeginRenderPass(*self.buffer_ref.unwrap(), &begin_info,
 			if use_bundles { VkSubpassContents::SecondaryCommandBuffers } else { VkSubpassContents::Inline }) };
+		self
+	}
+	pub fn next_subpass(self, use_bundles: bool) -> Self
+	{
+		unsafe { vkCmdNextSubpass(*self.buffer_ref.unwrap(), if use_bundles { VkSubpassContents::SecondaryCommandBuffers } else { VkSubpassContents::Inline }) };
 		self
 	}
 	pub fn end_render_pass(self) -> Self

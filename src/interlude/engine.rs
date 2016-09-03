@@ -28,6 +28,7 @@ impl log::Log for EngineLogger
 			println!("{}", match record.level()
 			{
 				log::LogLevel::Error => Style::new().bold().fg(Color::Red).paint(format!("!! [{}|{}] {}", record.target(), record.level(), record.args())),
+				log::LogLevel::Warn => Style::new().bold().fg(Color::Yellow).paint(format!("== [{}|{}] {}", record.target(), record.level(), record.args())),
 				_ => Style::new().bold().paint(format!("** [{}|{}] {}", record.target(), record.level(), record.args()))
 			});
 		}
@@ -204,9 +205,9 @@ impl Engine
 		};
 		vk::RenderPass::new(&self.device, &rp_info).map(RenderPass::new).map_err(EngineError::from)
 	}
-	pub fn create_framebuffer(&self, mold: &RenderPass, attachments: &[&vk::ImageView], form: VkExtent3D) -> Result<Framebuffer, EngineError>
+	pub fn create_framebuffer(&self, mold: &RenderPass, attachments: &[&ImageView], form: VkExtent3D) -> Result<Framebuffer, EngineError>
 	{
-		let attachments_native = attachments.into_iter().map(|x| x.get()).collect::<Vec<_>>();
+		let attachments_native = attachments.into_iter().map(|x| x.get_native()).collect::<Vec<_>>();
 		let VkExtent3D(width, height, layers) = form;
 		let info = VkFramebufferCreateInfo
 		{
@@ -295,7 +296,7 @@ impl Engine
 		let image1 = try!(prealloc.dim1_images().iter().map(|desc| Image1D::new(self, desc.get_internal())).collect::<Result<Vec<_>, EngineError>>());
 		let image2 = try!(prealloc.dim2_images().iter().map(|desc| Image2D::new(self, desc.get_internal())).collect::<Result<Vec<_>, EngineError>>());
 		let image3 = try!(prealloc.dim3_images().iter().map(|desc| Image3D::new(self, desc.get_internal())).collect::<Result<Vec<_>, EngineError>>());
-		let linear_image2 = try!(prealloc.dim2_images().iter().map(|desc| desc.get_internal())
+		let linear_image2 = try!(prealloc.dim2_images().iter().filter(|desc| !desc.is_device_resource()).map(|desc| desc.get_internal())
 			.filter(|desc| desc.mipLevels == 1 && desc.arrayLayers == 1 && desc.samples == VK_SAMPLE_COUNT_1_BIT)
 			.map(|desc| LinearImage2D::new(self, VkExtent2D(desc.extent.0, desc.extent.1), desc.format)).collect::<Result<Vec<_>, EngineError>>());
 
@@ -340,6 +341,17 @@ impl Engine
 		ImageView2D::new(self, res, format, c_map, subres)
 	}
 	pub fn wait_device(&self) -> Result<(), EngineError> { self.device.get_internal().wait_for_idle().map_err(EngineError::from) }
+
+	pub fn create_postprocess_vertex_shader(&self) -> Result<ShaderProgram, EngineError>
+	{
+		self.create_vertex_shader_from_asset("engine.shaders.PostProcessVertex", "main",
+			&[VertexBinding::PerVertex(std::mem::size_of::<PosUV>() as u32)], &[VertexAttribute(0, VkFormat::R32G32B32A32_SFLOAT, 0)])
+	}
+	pub fn create_postprocess_vertex_shader_from_asset(&self, asset_path: &str, entry_point: &str) -> Result<ShaderProgram, EngineError>
+	{
+		self.create_vertex_shader_from_asset(asset_path, entry_point,
+			&[VertexBinding::PerVertex(std::mem::size_of::<PosUV>() as u32)], &[VertexAttribute(0, VkFormat::R32G32B32A32_SFLOAT, 0)])
+	}
 
 	pub fn parse_asset(&self, asset_path: &str, extension: &str) -> std::ffi::OsString
 	{
