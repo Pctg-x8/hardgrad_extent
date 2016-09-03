@@ -1,6 +1,6 @@
 // Prelude: Primitive Shading(Shaders and Pipelines)
 
-use prelude::internals::*;
+use super::internals::*;
 use std;
 use vkffi::*;
 use render_vk::wrap as vk;

@@ -1,10 +1,9 @@
-// Prelude: Debug Printing
+// : Debug Printing
 
 #![allow(mutable_transmutes)]
 #![allow(dead_code)]
 
-use prelude;
-use prelude::internals::*;
+use super::internals::*;
 use vkffi::*;
 use std::collections::{LinkedList, HashMap};
 use std;
@@ -163,7 +162,7 @@ pub struct DebugInfo<'a>
 	dres_buf: DeviceBuffer, sres_buf: StagingBuffer,
 	dres_image: DeviceImage, sres_image: StagingImage,
 	optimized_lines: Vec<OptimizedDebugLine<'a>>,
-	update_commands: prelude::TransferCommandBuffers,
+	update_commands: TransferCommandBuffers,
 	ds_layout: DescriptorSetLayout, playout: PipelineLayout,
 	render_tech: GraphicsPipeline, descriptor_sets: DescriptorSets,
 	vertex_offs: usize, instance_offs: usize, indirect_param_offs: usize,
@@ -201,59 +200,59 @@ impl <'a> DebugInfo<'a>
 	pub fn new(engine: &Engine, lines: &[DebugLine<'a>],
 		rendered_pass: &RenderPass, subindex: u32, framebuffer_size: VkViewport) -> Result<Box<Self>, EngineError>
 	{
-		info!(target: "Prelude::DebugInfo", "Starting Visual Debugger...");
+		info!(target: "::DebugInfo", "Starting Visual Debugger...");
 
 		let max_instance_count = lines.iter().fold(0usize, |acc, x| if x.has_unit() { acc + 2 + 8 } else { acc + 1 + 8 });
 		let rendering_params_prealloc = engine.buffer_preallocate(&[
-			(std::mem::size_of::<[Position; 4]>(), prelude::BufferDataType::Vertex),
-			(std::mem::size_of::<prelude::IndirectCallParameter>() * lines.len(), prelude::BufferDataType::IndirectCallParam),
-			(std::mem::size_of::<StrRenderInstanceData>() * max_instance_count, prelude::BufferDataType::Vertex),
-			(std::mem::size_of::<CMatrix4>(), prelude::BufferDataType::Uniform)
+			(std::mem::size_of::<[Position; 4]>(), BufferDataType::Vertex),
+			(std::mem::size_of::<IndirectCallParameter>() * lines.len(), BufferDataType::IndirectCallParam),
+			(std::mem::size_of::<StrRenderInstanceData>() * max_instance_count, BufferDataType::Vertex),
+			(std::mem::size_of::<CMatrix4>(), BufferDataType::Uniform)
 		]);
-		let texture_atlas_desc = prelude::ImageDescriptor2::new(VkFormat::R8_UNORM, VkExtent2D(TEXTURE_SIZE, TEXTURE_SIZE),
-			prelude::ImageUsagePresets::AsColorTexture);
-		let image_prealloc = prelude::ImagePreallocator::new()
+		let texture_atlas_desc = ImageDescriptor2::new(VkFormat::R8_UNORM, VkExtent2D(TEXTURE_SIZE, TEXTURE_SIZE),
+			ImageUsagePresets::AsColorTexture);
+		let image_prealloc = ImagePreallocator::new()
 			.image_2d(vec![&texture_atlas_desc]);
 		let (bdev, bstage) = try!(engine.create_double_buffer(&rendering_params_prealloc));
 		let (idev, istage) = try!(engine.create_double_image(&image_prealloc));
 		let (idev, istage) = (idev, istage.unwrap());
-		let sampler_state = prelude::SamplerState::new();
+		let sampler_state = SamplerState::new();
 		let (image_view, sampler) = (
 			try!(engine.create_image_view_2d(idev.dim2(0), VkFormat::R8_UNORM,
-				prelude::ComponentMapping::single_swizzle(prelude::ComponentSwizzle::R), prelude::ImageSubresourceRange::base_color())),
+				ComponentMapping::single_swizzle(ComponentSwizzle::R), ImageSubresourceRange::base_color())),
 			try!(engine.create_sampler(&sampler_state))
 		);
 
 		let (vshader, fshader) = (
 			try!(engine.create_vertex_shader_from_asset("engine.shaders.DebugInfoV", "main", &[
-				prelude::VertexBinding::PerVertex(std::mem::size_of::<Position>() as u32),
-				prelude::VertexBinding::PerInstance(std::mem::size_of::<StrRenderInstanceData>() as u32)
+				VertexBinding::PerVertex(std::mem::size_of::<Position>() as u32),
+				VertexBinding::PerInstance(std::mem::size_of::<StrRenderInstanceData>() as u32)
 			], &[
-				prelude::VertexAttribute(0, VkFormat::R32G32B32A32_SFLOAT, 0),
-				prelude::VertexAttribute(1, VkFormat::R32G32B32A32_SFLOAT, 0),
-				prelude::VertexAttribute(1, VkFormat::R32G32B32A32_SFLOAT, std::mem::size_of::<f32>() as u32 * 4)
+				VertexAttribute(0, VkFormat::R32G32B32A32_SFLOAT, 0),
+				VertexAttribute(1, VkFormat::R32G32B32A32_SFLOAT, 0),
+				VertexAttribute(1, VkFormat::R32G32B32A32_SFLOAT, std::mem::size_of::<f32>() as u32 * 4)
 			])),
 			try!(engine.create_fragment_shader_from_asset("engine.shaders.DebugInfoF", "main"))
 		);
 		let ds_layout = try!(engine.create_descriptor_set_layout(&[
-			prelude::Descriptor::Uniform(1, vec![prelude::ShaderStage::Vertex]),
-			prelude::Descriptor::CombinedSampler(1, vec![prelude::ShaderStage::Fragment])
+			Descriptor::Uniform(1, vec![ShaderStage::Vertex]),
+			Descriptor::CombinedSampler(1, vec![ShaderStage::Fragment])
 		]));
 		let playout = try!(engine.create_pipeline_layout(&[&ds_layout], &[]));
 		let pipeline = {
-			let pipeline_builder = prelude::GraphicsPipelineBuilder::new(&playout, rendered_pass, subindex)
+			let pipeline_builder = GraphicsPipelineBuilder::new(&playout, rendered_pass, subindex)
 				.vertex_shader(&vshader).fragment_shader(&fshader)
-				.primitive_topology(prelude::PrimitiveTopology::TriangleStrip(false))
-				.viewport_scissors(&[prelude::ViewportWithScissorRect::default_scissor(framebuffer_size)])
-				.blend_state(&[prelude::AttachmentBlendState::PremultipliedAlphaBlend]);
+				.primitive_topology(PrimitiveTopology::TriangleStrip(false))
+				.viewport_scissors(&[ViewportWithScissorRect::default_scissor(framebuffer_size)])
+				.blend_state(&[AttachmentBlendState::PremultipliedAlphaBlend]);
 			try!(engine.create_graphics_pipelines(&[&pipeline_builder])).remove(0)
 		};
 		let descriptor_sets = try!(engine.preallocate_all_descriptor_sets(&[&ds_layout]));
 		engine.update_descriptors(&[
-			prelude::DescriptorSetWriteInfo::UniformBuffer(descriptor_sets[0], 0,
-				vec![prelude::BufferInfo(&bdev, rendering_params_prealloc.offset(3) .. rendering_params_prealloc.offset(4))]),
-			prelude::DescriptorSetWriteInfo::CombinedImageSampler(descriptor_sets[0], 1,
-				vec![prelude::ImageInfo(&sampler, &image_view, VkImageLayout::ShaderReadOnlyOptimal)])
+			DescriptorSetWriteInfo::UniformBuffer(descriptor_sets[0], 0,
+				vec![BufferInfo(&bdev, rendering_params_prealloc.offset(3) .. rendering_params_prealloc.offset(4))]),
+			DescriptorSetWriteInfo::CombinedImageSampler(descriptor_sets[0], 1,
+				vec![ImageInfo(&sampler, &image_view, VkImageLayout::ShaderReadOnlyOptimal)])
 		]);
 
 		let typeface = try!(TypefaceProvider::new(engine));
@@ -301,7 +300,7 @@ impl <'a> DebugInfo<'a>
 			}
 
 			// Add Debug Lines //
-			let call_params = mapped_buf.range_mut::<prelude::IndirectCallParameter>(rendering_params_prealloc.offset(1), lines.len());
+			let call_params = mapped_buf.range_mut::<IndirectCallParameter>(rendering_params_prealloc.offset(1), lines.len());
 			let mut rp_current_index = 0;
 			let mut top = 4u32;
 			let offset_mult = if engine.is_optimized_debug_render_support() { 1 } else { 0 };
@@ -325,7 +324,7 @@ impl <'a> DebugInfo<'a>
 							rp_current_index += 1;
 						}
 						rp_current_index += 8;
-						call_params[n] = prelude::IndirectCallParameter(4, rp_current_index as u32 - start_rp_index as u32 - 8, 0, start_rp_index as u32 * offset_mult);
+						call_params[n] = IndirectCallParameter(4, rp_current_index as u32 - start_rp_index as u32 - 8, 0, start_rp_index as u32 * offset_mult);
 						OptimizedDebugLine::Integer(start_rp_index, base, param_name, vref, unit_str)
 					},
 					&DebugLine::UnsignedInt(ref param, vref, ref unit) =>
@@ -343,7 +342,7 @@ impl <'a> DebugInfo<'a>
 							rp_current_index += 1;
 						}
 						rp_current_index += 8;
-						call_params[n] = prelude::IndirectCallParameter(4, rp_current_index as u32 - start_rp_index as u32 - 8, 0, start_rp_index as u32 * offset_mult);
+						call_params[n] = IndirectCallParameter(4, rp_current_index as u32 - start_rp_index as u32 - 8, 0, start_rp_index as u32 * offset_mult);
 						OptimizedDebugLine::UnsignedInt(start_rp_index, base, param_name, vref, unit_str)
 					},
 					&DebugLine::Float(ref param, vref, ref unit) =>
@@ -361,7 +360,7 @@ impl <'a> DebugInfo<'a>
 							rp_current_index += 1;
 						}
 						rp_current_index += 8;
-						call_params[n] = prelude::IndirectCallParameter(4, rp_current_index as u32 - start_rp_index as u32 - 8, 0, start_rp_index as u32 * offset_mult);
+						call_params[n] = IndirectCallParameter(4, rp_current_index as u32 - start_rp_index as u32 - 8, 0, start_rp_index as u32 * offset_mult);
 						OptimizedDebugLine::Float(start_rp_index, base, param_name, vref, unit_str)
 					}
 				});
@@ -376,8 +375,8 @@ impl <'a> DebugInfo<'a>
 		{
 			let update_start_offs = rendering_params_prealloc.offset(1);
 			let update_end_offs = rendering_params_prealloc.offset(3);
-			let imb_stage_template = prelude::ImageMemoryBarrier::template(istage.dim2(0), prelude::ImageSubresourceRange::base_color());
-			let imb_dev_template = prelude::ImageMemoryBarrier::template(&**idev.dim2(0), prelude::ImageSubresourceRange::base_color());
+			let imb_stage_template = ImageMemoryBarrier::template(istage.dim2(0), ImageSubresourceRange::base_color());
+			let imb_dev_template = ImageMemoryBarrier::template(&**idev.dim2(0), ImageSubresourceRange::base_color());
 			let image_memory_barriers = [
 				imb_stage_template.hold_ownership(VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT, VkImageLayout::General, VkImageLayout::TransferSrcOptimal),
 				imb_dev_template.hold_ownership(VK_ACCESS_SHADER_READ_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VkImageLayout::ShaderReadOnlyOptimal, VkImageLayout::TransferDestOptimal)
@@ -387,20 +386,20 @@ impl <'a> DebugInfo<'a>
 				imb_dev_template.hold_ownership(VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT, VkImageLayout::TransferDestOptimal, VkImageLayout::ShaderReadOnlyOptimal)
 			];
 			let buffer_memory_barriers = [
-				prelude::BufferMemoryBarrier::hold_ownership(&bstage, update_start_offs .. update_end_offs, VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT),
-				prelude::BufferMemoryBarrier::hold_ownership(&bdev, update_start_offs .. update_end_offs, VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT | VK_ACCESS_UNIFORM_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_READ_BIT, VK_ACCESS_TRANSFER_WRITE_BIT)
+				BufferMemoryBarrier::hold_ownership(&bstage, update_start_offs .. update_end_offs, VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT),
+				BufferMemoryBarrier::hold_ownership(&bdev, update_start_offs .. update_end_offs, VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT | VK_ACCESS_UNIFORM_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_READ_BIT, VK_ACCESS_TRANSFER_WRITE_BIT)
 			];
 			let buffer_memory_barriers_ret = [
-				prelude::BufferMemoryBarrier::hold_ownership(&bstage, update_start_offs .. update_end_offs, VK_ACCESS_TRANSFER_READ_BIT, VK_ACCESS_HOST_WRITE_BIT),
-				prelude::BufferMemoryBarrier::hold_ownership(&bdev, update_start_offs .. update_end_offs, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT | VK_ACCESS_UNIFORM_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_READ_BIT)
+				BufferMemoryBarrier::hold_ownership(&bstage, update_start_offs .. update_end_offs, VK_ACCESS_TRANSFER_READ_BIT, VK_ACCESS_HOST_WRITE_BIT),
+				BufferMemoryBarrier::hold_ownership(&bdev, update_start_offs .. update_end_offs, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT | VK_ACCESS_UNIFORM_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_READ_BIT)
 			];
 
 			recorder
 				.pipeline_barrier(VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, false,
 					&[], &buffer_memory_barriers, &image_memory_barriers)
 				.copy_image(istage.dim2(0), &**idev.dim2(0), VkImageLayout::TransferSrcOptimal, VkImageLayout::TransferDestOptimal,
-					&[prelude::ImageCopyRegion(prelude::ImageSubresourceLayers::base_color(), VkOffset3D(0, 0, 0), prelude::ImageSubresourceLayers::base_color(), VkOffset3D(0, 0, 0), VkExtent3D(TEXTURE_SIZE, TEXTURE_SIZE, 1))])
-				.copy_buffer(&bstage, &bdev, &[prelude::BufferCopyRegion(update_start_offs, update_start_offs, (update_end_offs - update_start_offs) as usize)])
+					&[ImageCopyRegion(ImageSubresourceLayers::base_color(), VkOffset3D(0, 0, 0), ImageSubresourceLayers::base_color(), VkOffset3D(0, 0, 0), VkExtent3D(TEXTURE_SIZE, TEXTURE_SIZE, 1))])
+				.copy_buffer(&bstage, &bdev, &[BufferCopyRegion(update_start_offs, update_start_offs, (update_end_offs - update_start_offs) as usize)])
 				.pipeline_barrier(VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, false,
 					&[], &buffer_memory_barriers_ret, &image_memory_barriers_ret)
 			.end()
@@ -412,8 +411,8 @@ impl <'a> DebugInfo<'a>
 
 			try!(setup_commands.begin(0).and_then(|recorder|
 			{
-				let imb_stage_template = prelude::ImageMemoryBarrier::template(istage.dim2(0), prelude::ImageSubresourceRange::base_color());
-				let imb_dev_template = prelude::ImageMemoryBarrier::template(&**idev.dim2(0), prelude::ImageSubresourceRange::base_color());
+				let imb_stage_template = ImageMemoryBarrier::template(istage.dim2(0), ImageSubresourceRange::base_color());
+				let imb_dev_template = ImageMemoryBarrier::template(&**idev.dim2(0), ImageSubresourceRange::base_color());
 				let image_memory_barriers = [
 					imb_stage_template.hold_ownership(VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT, VkImageLayout::Preinitialized, VkImageLayout::TransferSrcOptimal),
 					imb_dev_template.hold_ownership(VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VkImageLayout::Preinitialized, VkImageLayout::TransferDestOptimal)
@@ -423,20 +422,20 @@ impl <'a> DebugInfo<'a>
 					imb_dev_template.hold_ownership(VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT, VkImageLayout::TransferDestOptimal, VkImageLayout::ShaderReadOnlyOptimal)
 				];
 				let buffer_memory_barriers = [
-					prelude::BufferMemoryBarrier::hold_ownership(&bstage, 0 .. rendering_params_prealloc.total_size(), VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT),
-					prelude::BufferMemoryBarrier::hold_ownership(&bdev, 0 .. rendering_params_prealloc.total_size(), VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_TRANSFER_WRITE_BIT)
+					BufferMemoryBarrier::hold_ownership(&bstage, 0 .. rendering_params_prealloc.total_size(), VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT),
+					BufferMemoryBarrier::hold_ownership(&bdev, 0 .. rendering_params_prealloc.total_size(), VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_TRANSFER_WRITE_BIT)
 				];
 				let buffer_memory_barriers_ret = [
-					prelude::BufferMemoryBarrier::hold_ownership(&bstage, 0 .. rendering_params_prealloc.total_size(), VK_ACCESS_TRANSFER_READ_BIT, VK_ACCESS_HOST_WRITE_BIT),
-					prelude::BufferMemoryBarrier::hold_ownership(&bdev, 0 .. rendering_params_prealloc.total_size(), VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT | VK_ACCESS_UNIFORM_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_READ_BIT)
+					BufferMemoryBarrier::hold_ownership(&bstage, 0 .. rendering_params_prealloc.total_size(), VK_ACCESS_TRANSFER_READ_BIT, VK_ACCESS_HOST_WRITE_BIT),
+					BufferMemoryBarrier::hold_ownership(&bdev, 0 .. rendering_params_prealloc.total_size(), VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT | VK_ACCESS_UNIFORM_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_READ_BIT)
 				];
 
 				recorder
 					.pipeline_barrier(VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, false,
 						&[], &buffer_memory_barriers, &image_memory_barriers)
 					.copy_image(istage.dim2(0), &**idev.dim2(0), VkImageLayout::TransferSrcOptimal, VkImageLayout::TransferDestOptimal,
-						&[prelude::ImageCopyRegion(prelude::ImageSubresourceLayers::base_color(), VkOffset3D(0, 0, 0), prelude::ImageSubresourceLayers::base_color(), VkOffset3D(0, 0, 0), VkExtent3D(TEXTURE_SIZE, TEXTURE_SIZE, 1))])
-					.copy_buffer(&bstage, &bdev, &[prelude::BufferCopyRegion(0, 0, rendering_params_prealloc.total_size() as usize)])
+						&[ImageCopyRegion(ImageSubresourceLayers::base_color(), VkOffset3D(0, 0, 0), ImageSubresourceLayers::base_color(), VkOffset3D(0, 0, 0), VkExtent3D(TEXTURE_SIZE, TEXTURE_SIZE, 1))])
+					.copy_buffer(&bstage, &bdev, &[BufferCopyRegion(0, 0, rendering_params_prealloc.total_size() as usize)])
 					.pipeline_barrier(VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, false,
 						&[], &buffer_memory_barriers_ret, &image_memory_barriers_ret)
 				.end()
@@ -584,7 +583,7 @@ impl <'a> DebugInfo<'a>
 			{
 				recorder_state = recorder_state
 					.bind_vertex_buffers_partial(1, &[(&self.dres_buf, self.instance_offs + std::mem::size_of::<StrRenderInstanceData>() * l.render_param_offset() as usize)])
-					.draw_indirect(&self.dres_buf, self.indirect_param_offs + n * std::mem::size_of::<prelude::IndirectCallParameter>());
+					.draw_indirect(&self.dres_buf, self.indirect_param_offs + n * std::mem::size_of::<IndirectCallParameter>());
 			}
 			recorder_state
 		}
@@ -595,7 +594,7 @@ impl <'a> DebugInfo<'a>
 	{
 		let (call_params, rendering_params) = unsafe
 		{
-			(std::slice::from_raw_parts_mut(self.buffer_mapped_ptr.offset(self.indirect_param_offs as isize) as *mut prelude::IndirectCallParameter,
+			(std::slice::from_raw_parts_mut(self.buffer_mapped_ptr.offset(self.indirect_param_offs as isize) as *mut IndirectCallParameter,
 				self.optimized_lines.len()),
 			std::slice::from_raw_parts_mut(self.buffer_mapped_ptr.offset(self.instance_offs as isize) as *mut StrRenderInstanceData,
 				self.rendering_params_count))
@@ -702,27 +701,7 @@ impl <'a> DebugInfo<'a>
 				left += glyph_data.advance_left;
 			}
 			if has_unit { rendering_params[rp_index + 1].0 = left; }
-			*call_param = prelude::IndirectCallParameter(4, (header_offs + total_len) as u32, 0, line.render_param_offset() * offset_mult);
+			*call_param = IndirectCallParameter(4, (header_offs + total_len) as u32, 0, line.render_param_offset() * offset_mult);
 		}
 	}
-
-/*
-	pub fn test(&self)
-	{
-		let alloc = self.allocate_rect(VkExtent2D(8, 16)).unwrap();
-		info!(target: "Prelude::Test", "Allocate 8x16 at {:?}", alloc);
-		let alloc = self.allocate_rect(VkExtent2D(9, 16)).unwrap();
-		info!(target: "Prelude::Test", "Allocate 9x16 at {:?}", alloc);
-		let alloc = self.allocate_rect(VkExtent2D(20, 23)).unwrap();
-		info!(target: "Prelude::Test", "Allocate 20x23 at {:?}", alloc);
-		let alloc = self.allocate_rect(VkExtent2D(128, 8)).unwrap();
-		info!(target: "Prelude::Test", "Allocate 128x8 at {:?}", alloc);
-		let alloc = self.allocate_rect(VkExtent2D(512, 8)).unwrap();
-		info!(target: "Prelude::Test", "Allocate 512x8 at {:?}", alloc);
-		let alloc = self.allocate_rect(VkExtent2D(256, 16)).unwrap();
-		info!(target: "Prelude::Test", "Allocate 256x16 at {:?}", alloc);
-		let alloc = self.allocate_rect(VkExtent2D(256, 16)).unwrap();
-		info!(target: "Prelude::Test", "Allocate 256x16 at {:?}", alloc);
-	}
-	*/
 }

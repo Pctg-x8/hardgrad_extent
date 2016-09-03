@@ -2,7 +2,7 @@
 
 #![allow(dead_code)]
 
-use prelude::internals::*;
+use super::internals::*;
 use std;
 use vkffi::*;
 use render_vk::wrap as vk;

@@ -13,8 +13,8 @@
 #![allow(non_camel_case_types)]
 #![allow(dead_code)]
 
+use interlude::internals::*;
 use {std, libc};
-use prelude;
 use std::io::Read;
 use std::collections::HashMap;
 use std::os::unix::io::AsRawFd;
@@ -394,21 +394,21 @@ pub struct EventDevice
 }
 impl EventDevice
 {
-	pub fn new(node_path: &str) -> Result<Self, prelude::EngineError>
+	pub fn new(node_path: &str) -> Result<Self, EngineError>
 	{
-		std::fs::OpenOptions::new().read(true).open(node_path).map_err(prelude::EngineError::from).map(|fp| EventDevice
+		std::fs::OpenOptions::new().read(true).open(node_path).map_err(EngineError::from).map(|fp| EventDevice
 		{
 			params: EventDeviceParams::get_from_fd(node_path, &fp), reader: std::io::BufReader::new(fp),
 			data_u8: vec![0u8; std::mem::size_of::<input_event>()]
 		})
 	}
-	pub fn grab_device(&self) -> Result<(), prelude::EngineError>
+	pub fn grab_device(&self) -> Result<(), EngineError>
 	{
 		let grab_flag: libc::c_int = 1;
 		let iores = unsafe { libc::ioctl(self.as_raw_fd(), EVIOCGRAB!(), &grab_flag) };
-		if iores == -1 { Err(prelude::EngineError::GenericError("Failed to grabbing event device")) } else { Ok(()) }
+		if iores == -1 { Err(EngineError::GenericError("Failed to grabbing event device")) } else { Ok(()) }
 	}
-	pub fn wait_event(&mut self) -> Result<DeviceEvent, prelude::EngineError>
+	pub fn wait_event(&mut self) -> Result<DeviceEvent, EngineError>
 	{
 		self.reader.read_exact(&mut self.data_u8)
 			.map(|()| unsafe { std::mem::transmute::<_, &input_event>(self.data_u8.as_ptr()) })
@@ -438,7 +438,7 @@ impl EventDevice
 						.unwrap_or(DeviceEvent::Generic(ev.clone()))
 				},
 				_ => DeviceEvent::Generic(ev.clone())
-			}).map_err(prelude::EngineError::from)
+			}).map_err(EngineError::from)
 	}
 	pub fn send_to(&mut self, sender: std::sync::mpsc::Sender<DeviceEvent>)
 	{
@@ -447,6 +447,8 @@ impl EventDevice
 			if sender.send(e).is_err() { break; }
 		}
 	}
+
+	pub fn name(&self) -> &str { &self.params.name }
 }
 impl std::os::unix::io::AsRawFd for EventDevice
 {

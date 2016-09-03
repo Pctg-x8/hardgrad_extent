@@ -1,4 +1,4 @@
-// Prelude: Common Traits
+// Interlude: Common Traits
 
 pub trait InternalExports<InternalType>
 {

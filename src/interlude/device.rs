@@ -1,6 +1,6 @@
 // Prelude: Device Structure
 
-use prelude::*;
+use super::internals::*;
 use std;
 use std::rc::Rc;
 use vkffi::*;

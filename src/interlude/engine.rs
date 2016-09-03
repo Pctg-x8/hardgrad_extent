@@ -2,7 +2,7 @@
 
 #![allow(dead_code)]
 
-use prelude::internals::*;
+use super::internals::*;
 use {std, log};
 use ansi_term::*;
 use std::rc::Rc;

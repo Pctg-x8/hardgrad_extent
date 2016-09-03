@@ -9,7 +9,11 @@ mod synchronize;
 mod shading;
 mod window;
 mod descriptor;
+mod input;
 mod internal_traits;
+
+// platform dependents
+mod linux;
 
 mod debug_info;
 
@@ -30,6 +34,8 @@ pub use self::shading::{
 };
 pub use self::descriptor::{ShaderStage, Descriptor, BufferInfo, ImageInfo, DescriptorSetWriteInfo};
 pub use self::debug_info::DebugLine;
+pub use self::input::*;
+
 pub mod traits
 {
 	pub use super::command::{PrimaryCommandBuffers, SecondaryCommandBuffers};
