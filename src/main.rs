@@ -478,12 +478,12 @@ fn app_main() -> Result<(), interlude::EngineError>
 		];
 		let color_output_barrier = interlude::ImageMemoryBarrier::template(main_frame.get_back_images()[i], interlude::ImageSubresourceRange::base_color())
 			.hold_ownership(VK_ACCESS_MEMORY_READ_BIT, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VkImageLayout::PresentSrcKHR, VkImageLayout::ColorAttachmentOptimal);
-		let ibar_gbuffer_end = interlude::ImageMemoryBarrier::template(gbuffer_obj, interlude::ImageSubresourceRange::base_color())
+		/*let ibar_gbuffer_end = interlude::ImageMemoryBarrier::template(gbuffer_obj, interlude::ImageSubresourceRange::base_color())
 			.hold_ownership(VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT, VkImageLayout::ColorAttachmentOptimal, VkImageLayout::ShaderReadOnlyOptimal);
 		let ibar_edgebuffer_end = interlude::ImageMemoryBarrier::template(edgebuffer_obj, interlude::ImageSubresourceRange::base_color())
 			.hold_ownership(VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT, VkImageLayout::ColorAttachmentOptimal, VkImageLayout::ShaderReadOnlyOptimal);
 		let ibar_blendweight_end = interlude::ImageMemoryBarrier::template(blendweight_obj, interlude::ImageSubresourceRange::base_color())
-			.hold_ownership(VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT, VkImageLayout::ColorAttachmentOptimal, VkImageLayout::ShaderReadOnlyOptimal);
+			.hold_ownership(VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT, VkImageLayout::ColorAttachmentOptimal, VkImageLayout::ShaderReadOnlyOptimal);*/
 
 		recorder
 			.pipeline_barrier(VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, false, &[], &[], &[color_output_barrier])
@@ -507,20 +507,20 @@ fn app_main() -> Result<(), interlude::EngineError>
 			.push_constants(&wire_render_layout, &[interlude::ShaderStage::Vertex],
 				0 .. std::mem::size_of::<f32>() as u32 * 4, &[1.5f32, 1.25f32, 0.375f32, 1.0f32])
 			.draw_indexed(24, 2, 4)
-			.pipeline_barrier(VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, false, &[], &[], &[ibar_gbuffer_end])
+			// .pipeline_barrier(VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, false, &[], &[], &[ibar_gbuffer_end])
 			.next_subpass(false)
 			// Pass 1 : Edge Detection(SMAA 1x) //
 			.bind_vertex_buffers(&[(&application_data, application_buffer_prealloc.offset(0))])
 			.bind_pipeline(pp_smaa_edge_detection)
 			.bind_descriptor_sets_partial(&smaa_layouts[0], 1, &all_descriptor_sets[1..2])
 			.draw(4, 1)
-			.pipeline_barrier(VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, false, &[], &[], &[ibar_edgebuffer_end])
+			// .pipeline_barrier(VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, false, &[], &[], &[ibar_edgebuffer_end])
 			.next_subpass(false)
 			// Pass 2 : Blend Weight Calculation(SMAA 1x) //
 			.bind_pipeline(pp_smaa_blend_weight_calc)
 			.bind_descriptor_sets_partial(&smaa_layouts[1], 1, &all_descriptor_sets[2..3])
 			.draw(4, 1)
-			.pipeline_barrier(VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, false, &[], &[], &[ibar_blendweight_end])
+			// .pipeline_barrier(VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, false, &[], &[], &[ibar_blendweight_end])
 			.next_subpass(true)
 			// Pass 3 : SMAA Combine and Debug Print //
 			.execute_commands(&combine_commands[i * 2 .. i * 2 + 2])
