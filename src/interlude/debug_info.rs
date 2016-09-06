@@ -566,10 +566,11 @@ impl <'a> DebugInfo<'a>
 		})
 	}
 
-	pub fn inject_render_commands<'_>(&self, recorder: GraphicsCommandRecorder<'_>) -> GraphicsCommandRecorder<'_>
+	pub fn inject_render_commands<ComRec: DrawingCommandRecorder>(&self, recorder: ComRec) -> ComRec
 	{
-		let recorder = recorder.bind_pipeline(&self.render_tech)
-			.bind_descriptor_sets(&self.playout, &self.descriptor_sets[0 .. 1])
+		let recorder = recorder
+			.bind_pipeline(&self.render_tech)
+			.bind_descriptor_sets(&self.playout, &self.descriptor_sets[0..1])
 			.bind_vertex_buffers(&[(&self.dres_buf, self.vertex_offs), (&self.dres_buf, self.instance_offs)]);
 
 		if self.use_optimized_render

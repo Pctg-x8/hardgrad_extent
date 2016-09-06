@@ -618,6 +618,11 @@ impl VkComponentMapping
 #[repr(C)] pub struct VkImageSubresourceLayers(pub VkImageAspectFlags, pub u32, pub u32, pub u32);		// aspect_mask, mip_level, base_array_layer, layer_count
 #[repr(C)] pub struct VkBufferCopy(pub VkDeviceSize, pub VkDeviceSize, pub VkDeviceSize);		// src_offset, dst_offset, size
 #[repr(C)] pub struct VkImageCopy(pub VkImageSubresourceLayers, pub VkOffset3D, pub VkImageSubresourceLayers, pub VkOffset3D, pub VkExtent3D);		// src_subresource, src_offset, dst_subresource, dst_offset, extent
+#[repr(C)] pub struct VkImageBlit
+{
+	pub srcSubresource: VkImageSubresourceLayers, pub srcOffsets: [VkOffset3D; 2],
+	pub dstSubresource: VkImageSubresourceLayers, pub dstOffsets: [VkOffset3D; 2]
+}
 #[repr(C)] pub struct VkSamplerCreateInfo
 {
 	pub sType: VkStructureType, pub pNext: *const c_void, pub flags: VkSamplerCreateFlags,

@@ -13,4 +13,5 @@ layout(std140, set = 0, binding = 0) uniform UniformMemory
 	CharacterLocation enemy_instance_data[MAX_ENEMY_COUNT];
 	BackgroundInstance background_instance_data[MAX_BK_COUNT];
 	vec4 player_center_tf;
+	vec4 rt_metrics;
 };

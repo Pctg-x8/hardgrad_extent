@@ -525,6 +525,7 @@ impl StagingImage
 	{
 		self.linear_dim2_images_offset[index]
 	}
+	pub fn size(&self) -> VkDeviceSize { self.size }
 }
 
 pub trait StagingResource

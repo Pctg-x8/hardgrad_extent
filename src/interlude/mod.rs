@@ -22,11 +22,11 @@ mod debug_info;
 pub use self::error::*;
 pub use self::engine::DeviceFeatures;
 pub use self::framebuffer::{AttachmentDesc, AttachmentRef, PassDesc, PassDependency, AttachmentClearValue};
-pub use self::command::{MemoryBarrier, BufferMemoryBarrier, ImageMemoryBarrier, IndirectCallParameter, BufferCopyRegion, ImageCopyRegion};
+pub use self::command::{MemoryBarrier, BufferMemoryBarrier, ImageMemoryBarrier, IndirectCallParameter, BufferCopyRegion, ImageCopyRegion, ImageBlitRegion};
 pub use self::resource::{
 	ImageSubresourceRange, ImageSubresourceLayers, BufferDataType, ImageUsagePresets,
 	ImageDescriptor1, ImageDescriptor2, ImageDescriptor3, ImagePreallocator,
-	SamplerState, ComponentSwizzle, ComponentMapping
+	SamplerState, ComponentSwizzle, ComponentMapping, Filter
 };
 pub use self::shading::{
 	VertexBinding, VertexAttribute, PushConstantDesc,
@@ -40,14 +40,14 @@ pub use self::data::*;
 
 pub mod traits
 {
-	pub use super::command::{PrimaryCommandBuffers, SecondaryCommandBuffers};
+	pub use super::command::{PrimaryCommandBuffers, SecondaryCommandBuffers, DrawingCommandRecorder};
 	pub use super::resource::{ImageDescriptor, ImageView};
 }
 // exported objects
 pub use self::engine::Engine;
 pub use self::synchronize::{QueueFence, Fence};
 pub use self::framebuffer::{RenderPass, Framebuffer};
-pub use self::command::{GraphicsCommandBuffers, BundledCommandBuffers, TransferCommandBuffers, TransientTransferCommandBuffers};
+pub use self::command::{GraphicsCommandBuffers, BundledCommandBuffers, TransferCommandBuffers, TransientTransferCommandBuffers, TransientGraphicsCommandBuffers};
 pub use self::resource::{Buffer, Image1D, Image2D, Image3D, LinearImage2D, DeviceBuffer, StagingBuffer, DeviceImage, StagingImage};
 pub use self::shading::{PipelineLayout, GraphicsPipeline};
 pub use self::descriptor::{DescriptorSetLayout, DescriptorSets};

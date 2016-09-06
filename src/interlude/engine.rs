@@ -67,6 +67,11 @@ impl DeviceFeatures
 		self.0.drawIndirectFirstInstance = true as VkBool32;
 		self
 	}
+	pub fn enable_block_texture_compression(mut self) -> Self
+	{
+		self.0.textureCompressionBC = true as VkBool32;
+		self
+	}
 }
 
 pub trait EngineExports
@@ -238,6 +243,11 @@ impl Engine
 		self.pools.for_transient().allocate_buffers(&self.device, VkCommandBufferLevel::Primary, count).map_err(EngineError::from)
 			.map(|v| TransientTransferCommandBuffers::new(self.pools.for_transient(), self.device.get_transfer_queue(), v))
 	}
+	pub fn allocate_transient_graphics_command_buffers(&self, count: u32) -> Result<TransientGraphicsCommandBuffers, EngineError>
+	{
+		self.pools.for_transient_graphics().allocate_buffers(&self.device, VkCommandBufferLevel::Primary, count).map_err(EngineError::from)
+			.map(|v| TransientGraphicsCommandBuffers::new(self.pools.for_transient_graphics(), self.device.get_graphics_queue(), v))
+	}
 	pub fn create_vertex_shader_from_asset(&self, asset_path: &str, entry_point: &str,
 		vertex_bindings: &[VertexBinding], vertex_attributes: &[VertexAttribute]) -> Result<ShaderProgram, EngineError>
 	{
@@ -392,6 +402,15 @@ impl Engine
 		let write_infos_native = write_infos_native_interp.iter().map(|x| Into::<VkWriteDescriptorSet>::into(x)).collect::<Vec<_>>();
 		unsafe { vkUpdateDescriptorSets(self.device.get_internal().get(), write_infos_native.len() as u32, write_infos_native.as_ptr(),
 			0, std::ptr::null()) };
+	}
+
+	pub fn submit_transient_commands(&self, tt: Option<TransientTransferCommandBuffers>, gt: Option<TransientGraphicsCommandBuffers>) -> Result<(), EngineError>
+	{
+		if let &Some(ref t) = &tt { try!(self.device.get_transfer_queue().submit_commands(t.get_internal(), &[], &[], &[], None)); }
+		if let &Some(ref g) = &gt { try!(self.device.get_graphics_queue().submit_commands(g.get_internal(), &[], &[], &[], None)); }
+		if tt.is_some() { try!(self.device.get_transfer_queue().wait_for_idle()); }
+		if gt.is_some() { try!(self.device.get_graphics_queue().wait_for_idle()); }
+		Ok(())
 	}
 
 	pub fn submit_graphics_commands(&self, commands: &GraphicsCommandBuffersView, wait_for_execute: &[(&QueueFence, VkPipelineStageFlags)],

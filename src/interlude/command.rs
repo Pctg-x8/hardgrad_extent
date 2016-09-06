@@ -11,7 +11,8 @@ use traits::*; use render_vk::traits::*;
 
 pub struct CommandPool
 {
-	graphics: Rc<vk::CommandPool>, transfer: Rc<vk::CommandPool>, transient: vk::CommandPool
+	graphics: Rc<vk::CommandPool>, transfer: Rc<vk::CommandPool>,
+	transient: vk::CommandPool, g_transient: vk::CommandPool
 }
 impl CommandPool
 {
@@ -19,10 +20,11 @@ impl CommandPool
 	{
 		vk::CommandPool::new(device, device.get_graphics_queue(), false).and_then(|g|
 		vk::CommandPool::new(device, device.get_transfer_queue(), false).and_then(move |t|
-		vk::CommandPool::new(device, device.get_transfer_queue(), true).map(move |tt| CommandPool
+		vk::CommandPool::new(device, device.get_transfer_queue(), true).and_then(move |tt|
+		vk::CommandPool::new(device, device.get_graphics_queue(), true).map(move |gt| CommandPool
 		{
-			graphics: Rc::new(g), transfer: Rc::new(t), transient: tt
-		}))).map_err(EngineError::from)
+			graphics: Rc::new(g), transfer: Rc::new(t), transient: tt, g_transient: gt
+		})))).map_err(EngineError::from)
 	}
 }
 pub trait CommandPoolInternals
@@ -30,12 +32,14 @@ pub trait CommandPoolInternals
 	fn for_graphics(&self) -> &Rc<vk::CommandPool>;
 	fn for_transfer(&self) -> &Rc<vk::CommandPool>;
 	fn for_transient(&self) -> &vk::CommandPool;
+	fn for_transient_graphics(&self) -> &vk::CommandPool;
 }
 impl CommandPoolInternals for CommandPool
 {
 	fn for_graphics(&self) -> &Rc<vk::CommandPool> { &self.graphics }
 	fn for_transfer(&self) -> &Rc<vk::CommandPool> { &self.transfer }
 	fn for_transient(&self) -> &vk::CommandPool { &self.transient }
+	fn for_transient_graphics(&self) -> &vk::CommandPool { &self.g_transient }
 }
 
 pub struct MemoryBarrier { pub src_access_mask: VkAccessFlags, pub dst_access_mask: VkAccessFlags }
@@ -99,6 +103,22 @@ impl <'a> ImageMemoryBarrierTemplate<'a>
 		src_layout: VkImageLayout, dst_layout: VkImageLayout) -> ImageMemoryBarrier<'a>
 	{
 		ImageMemoryBarrier::hold_ownership(self.image, self.subresource_range.clone(), src_access_mask, dst_access_mask, src_layout, dst_layout)
+	}
+	pub fn into_transfer_src(&self, src_access_mask: VkAccessFlags, src_layout: VkImageLayout) -> ImageMemoryBarrier<'a>
+	{
+		self.hold_ownership(src_access_mask, VK_ACCESS_TRANSFER_READ_BIT, src_layout, VkImageLayout::TransferSrcOptimal)
+	}
+	pub fn into_transfer_dst(&self, src_access_mask: VkAccessFlags, src_layout: VkImageLayout) -> ImageMemoryBarrier<'a>
+	{
+		self.hold_ownership(src_access_mask, VK_ACCESS_TRANSFER_WRITE_BIT, src_layout, VkImageLayout::TransferDestOptimal)
+	}
+	pub fn from_transfer_src(&self, dst_access_mask: VkAccessFlags, dst_layout: VkImageLayout) -> ImageMemoryBarrier<'a>
+	{
+		self.hold_ownership(VK_ACCESS_TRANSFER_READ_BIT, dst_access_mask, VkImageLayout::TransferSrcOptimal, dst_layout)
+	}
+	pub fn from_transfer_dst(&self, dst_access_mask: VkAccessFlags, dst_layout: VkImageLayout) -> ImageMemoryBarrier<'a>
+	{
+		self.hold_ownership(VK_ACCESS_TRANSFER_WRITE_BIT, dst_access_mask, VkImageLayout::TransferDestOptimal, dst_layout)
 	}
 }
 #[derive(Clone, Copy)]
@@ -226,6 +246,30 @@ impl <'a> TransientTransferCommandBuffersInternals<'a> for TransientTransferComm
 		TransientTransferCommandBuffers { parent: parent, queue: queue, internal: cbs }
 	}
 }
+pub struct TransientGraphicsCommandBuffers<'a> { parent: &'a vk::CommandPool, queue: &'a vk::Queue, internal: Vec<VkCommandBuffer> }
+impl <'a> std::ops::Drop for TransientGraphicsCommandBuffers<'a>
+{
+	fn drop(&mut self)
+	{
+		unsafe { vkFreeCommandBuffers(self.parent.parent().get(), self.parent.get(), self.internal.len() as u32, self.internal.as_ptr()) };
+	}
+}
+pub trait TransientGraphicsCommandBuffersInternals<'a> { fn new(parent: &'a vk::CommandPool, queue: &'a vk::Queue, cbs: Vec<VkCommandBuffer>) -> Self; }
+impl <'a> TransientGraphicsCommandBuffersInternals<'a> for TransientGraphicsCommandBuffers<'a>
+{
+	fn new(parent: &'a vk::CommandPool, queue: &'a vk::Queue, cbs: Vec<VkCommandBuffer>) -> Self
+	{
+		TransientGraphicsCommandBuffers { parent: parent, queue: queue, internal: cbs }
+	}
+}
+impl <'a> InternalExports<Vec<VkCommandBuffer>> for TransientGraphicsCommandBuffers<'a>
+{
+	fn get_internal(&self) -> &Vec<VkCommandBuffer> { &self.internal }
+}
+impl <'a> InternalExports<Vec<VkCommandBuffer>> for TransientTransferCommandBuffers<'a>
+{
+	fn get_internal(&self) -> &Vec<VkCommandBuffer> { &self.internal }
+}
 
 pub trait PrimaryCommandBuffers<'a, Recorder: 'a>
 {
@@ -234,7 +278,7 @@ pub trait PrimaryCommandBuffers<'a, Recorder: 'a>
 }
 pub trait SecondaryCommandBuffers<'a, Recorder: 'a>
 {
-	fn begin(&'a self, index: usize, cont_rp: &RenderPass, subindex: u32) -> Result<Recorder, EngineError>;
+	fn begin(&'a self, index: usize, cont_rp: &RenderPass, subindex: u32, cont_fb: &Framebuffer) -> Result<Recorder, EngineError>;
 }
 impl <'a> PrimaryCommandBuffers<'a, GraphicsCommandRecorder<'a>> for GraphicsCommandBuffers
 {
@@ -263,12 +307,12 @@ impl <'a> PrimaryCommandBuffers<'a, GraphicsCommandRecorder<'a>> for GraphicsCom
 }
 impl <'a> SecondaryCommandBuffers<'a, BundleCommandRecorder<'a>> for BundledCommandBuffers
 {
-	fn begin(&'a self, index: usize, cont_rp: &RenderPass, subindex: u32) -> Result<BundleCommandRecorder, EngineError>
+	fn begin(&'a self, index: usize, cont_rp: &RenderPass, subindex: u32, cont_fb: &Framebuffer) -> Result<BundleCommandRecorder, EngineError>
 	{
 		let inheritance_info = VkCommandBufferInheritanceInfo
 		{
 			sType: VkStructureType::CommandBufferInheritanceInfo, pNext: std::ptr::null(),
-			renderPass: cont_rp.get_internal().get(), subpass: subindex, framebuffer: std::ptr::null_mut(),
+			renderPass: cont_rp.get_internal().get(), subpass: subindex, framebuffer: cont_fb.get_internal().get(),
 			occlusionQueryEnable: false as VkBool32, queryFlags: 0, pipelineStatistics: 0
 		};
 		unsafe
@@ -331,6 +375,31 @@ impl <'a> PrimaryCommandBuffers<'a, TransferCommandRecorder<'a>> for TransientTr
 		}).collect::<Result<Vec<_>, _>>().map_err(EngineError::from).map(|x| x.into_iter())
 	}
 }
+impl <'a> PrimaryCommandBuffers<'a, GraphicsCommandRecorder<'a>> for TransientGraphicsCommandBuffers<'a>
+{
+	fn begin(&'a self, index: usize) -> Result<GraphicsCommandRecorder, EngineError>
+	{
+		unsafe
+		{
+			vkBeginCommandBuffer(self.internal[index], &VkCommandBufferBeginInfo
+			{
+				sType: VkStructureType::CommandBufferBeginInfo, pNext: std::ptr::null(),
+				flags: VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT, pInheritanceInfo: std::ptr::null()
+			}).map(|| GraphicsCommandRecorder { buffer_ref: Some(&self.internal[index]) }).map_err(EngineError::from)
+		}
+	}
+	fn begin_all(&'a self) -> Result<std::vec::IntoIter<(usize, GraphicsCommandRecorder)>, EngineError>
+	{
+		self.internal.iter().enumerate().map(|(i, x)| unsafe
+		{
+			vkBeginCommandBuffer(*x, &VkCommandBufferBeginInfo
+			{
+				sType: VkStructureType::CommandBufferBeginInfo, pNext: std::ptr::null(),
+				flags: VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT, pInheritanceInfo: std::ptr::null()
+			}).map(move || (i, GraphicsCommandRecorder { buffer_ref: Some(&x) }))
+		}).collect::<Result<Vec<_>, _>>().map_err(EngineError::from).map(|x| x.into_iter())
+	}
+}
 impl <'a> TransientTransferCommandBuffers<'a>
 {
 	pub fn execute(self) -> Result<(), EngineError>
@@ -352,6 +421,147 @@ pub struct TransferCommandRecorder<'a> { buffer_ref: Option<&'a VkCommandBuffer>
 impl <'a> std::ops::Drop for TransferCommandRecorder<'a>
 {
 	fn drop(&mut self) { if let Some(&br) = self.buffer_ref { unsafe { vkEndCommandBuffer(br) }; } }
+}
+pub trait DrawingCommandRecorder
+{
+	fn bind_pipeline(self, pipeline: &GraphicsPipeline) -> Self;
+	fn bind_descriptor_sets(self, layout: &PipelineLayout, sets: &DescriptorSetArrayView) -> Self;
+	fn bind_descriptor_sets_partial(self, layout: &PipelineLayout, start_set: u32, sets: &DescriptorSetArrayView) -> Self;
+	fn push_constants(self, layout: &PipelineLayout, shader_stage: &[ShaderStage], range: std::ops::Range<u32>, data: &[f32]) -> Self;
+	fn bind_vertex_buffers(self, buffer_offsets: &[(&BufferResource, usize)]) -> Self;
+	fn bind_vertex_buffers_partial(self, start_binding: u32, buffer_offsets: &[(&BufferResource, usize)]) -> Self;
+	fn bind_index_buffer(self, buffer: &BufferResource, offset: usize) -> Self;
+	
+	fn draw(self, vertex_count: u32, instance_count: u32) -> Self;
+	fn draw_indexed(self, index_count: u32, instance_count: u32, index_offset: u32) -> Self;
+	fn draw_indirect(self, param_buffer: &BufferResource, param_offs: usize) -> Self;
+	fn draw_indirect_mult(self, param_buffer: &BufferResource, param_offs: usize, param_count: u32) -> Self;
+}
+impl <'a> DrawingCommandRecorder for GraphicsCommandRecorder<'a>
+{
+	fn bind_pipeline(self, pipeline: &GraphicsPipeline) -> Self
+	{
+		unsafe { vkCmdBindPipeline(*self.buffer_ref.unwrap(), VkPipelineBindPoint::Graphics, pipeline.get_internal().get()) };
+		self
+	}
+	fn bind_descriptor_sets(self, layout: &PipelineLayout, sets: &DescriptorSetArrayView) -> Self
+	{
+		self.bind_descriptor_sets_partial(layout, 0, sets)
+	}
+	fn bind_descriptor_sets_partial(self, layout: &PipelineLayout, start_set: u32, sets: &DescriptorSetArrayView) -> Self
+	{
+		unsafe { vkCmdBindDescriptorSets(*self.buffer_ref.unwrap(), VkPipelineBindPoint::Graphics, layout.get_internal().get(),
+			start_set, sets.len() as u32, sets.as_ptr(), 0, std::ptr::null()) };
+		self
+	}
+	fn push_constants(self, layout: &PipelineLayout, shader_stage: &[ShaderStage], range: std::ops::Range<u32>, data: &[f32]) -> Self
+	{
+		let stages = shader_stage.into_iter().fold(0, |acc, x| acc | Into::<VkShaderStageFlags>::into(*x));
+		unsafe { vkCmdPushConstants(*self.buffer_ref.unwrap(), layout.get_internal().get(), stages,
+			range.start, range.len() as u32, data.as_ptr() as *const std::os::raw::c_void) };
+		self
+	}
+	fn bind_vertex_buffers(self, buffer_offsets: &[(&BufferResource, usize)]) -> Self
+	{
+		self.bind_vertex_buffers_partial(0, buffer_offsets)
+	}
+	fn bind_vertex_buffers_partial(self, start_binding: u32, buffer_offsets: &[(&BufferResource, usize)]) -> Self
+	{
+		let (buffer_native, offsets_native): (Vec<_>, Vec<_>) = buffer_offsets.into_iter()
+			.map(|&(b, v)| (b.get_resource(), v as VkDeviceSize)).unzip();
+		unsafe { vkCmdBindVertexBuffers(*self.buffer_ref.unwrap(), start_binding, buffer_native.len() as u32, buffer_native.as_ptr(), offsets_native.as_ptr()) };
+		self
+	}
+	fn bind_index_buffer(self, buffer: &BufferResource, offset: usize) -> Self
+	{
+		unsafe { vkCmdBindIndexBuffer(*self.buffer_ref.unwrap(), buffer.get_resource(), offset as VkDeviceSize, VkIndexType::U16) };
+		self
+	}
+	
+	fn draw(self, vertex_count: u32, instance_count: u32) -> Self
+	{
+		unsafe { vkCmdDraw(*self.buffer_ref.unwrap(), vertex_count, instance_count, 0, 0) };
+		self
+	}
+	fn draw_indexed(self, index_count: u32, instance_count: u32, index_offset: u32) -> Self
+	{
+		unsafe { vkCmdDrawIndexed(*self.buffer_ref.unwrap(), index_count, instance_count, 0, index_offset, 0) };
+		self
+	}
+	fn draw_indirect(self, param_buffer: &BufferResource, param_offs: usize) -> Self
+	{
+		unsafe { vkCmdDrawIndirect(*self.buffer_ref.unwrap(), param_buffer.get_resource(), param_offs as VkDeviceSize, 1, 0) };
+		self
+	}
+	fn draw_indirect_mult(self, param_buffer: &BufferResource, param_offs: usize, param_count: u32) -> Self
+	{
+		unsafe { vkCmdDrawIndirect(*self.buffer_ref.unwrap(), param_buffer.get_resource(), param_offs as VkDeviceSize,
+			param_count, std::mem::size_of::<VkDrawIndirectCommand>() as u32) };
+		self
+	}
+}
+impl <'a> DrawingCommandRecorder for BundleCommandRecorder<'a>
+{
+	fn bind_pipeline(self, pipeline: &GraphicsPipeline) -> Self
+	{
+		unsafe { vkCmdBindPipeline(*self.buffer_ref.unwrap(), VkPipelineBindPoint::Graphics, pipeline.get_internal().get()) };
+		self
+	}
+	fn bind_descriptor_sets(self, layout: &PipelineLayout, sets: &DescriptorSetArrayView) -> Self
+	{
+		self.bind_descriptor_sets_partial(layout, 0, sets)
+	}
+	fn bind_descriptor_sets_partial(self, layout: &PipelineLayout, start_set: u32, sets: &DescriptorSetArrayView) -> Self
+	{
+		unsafe { vkCmdBindDescriptorSets(*self.buffer_ref.unwrap(), VkPipelineBindPoint::Graphics, layout.get_internal().get(),
+			start_set, sets.len() as u32, sets.as_ptr(), 0, std::ptr::null()) };
+		self
+	}
+	fn push_constants(self, layout: &PipelineLayout, shader_stage: &[ShaderStage], range: std::ops::Range<u32>, data: &[f32]) -> Self
+	{
+		let stages = shader_stage.into_iter().fold(0, |acc, x| acc | Into::<VkShaderStageFlags>::into(*x));
+		unsafe { vkCmdPushConstants(*self.buffer_ref.unwrap(), layout.get_internal().get(), stages,
+			range.start, range.len() as u32, data.as_ptr() as *const std::os::raw::c_void) };
+		self
+	}
+	fn bind_vertex_buffers(self, buffer_offsets: &[(&BufferResource, usize)]) -> Self
+	{
+		self.bind_vertex_buffers_partial(0, buffer_offsets)
+	}
+	fn bind_vertex_buffers_partial(self, start_binding: u32, buffer_offsets: &[(&BufferResource, usize)]) -> Self
+	{
+		let (buffer_native, offsets_native): (Vec<_>, Vec<_>) = buffer_offsets.into_iter()
+			.map(|&(b, v)| (b.get_resource(), v as VkDeviceSize)).unzip();
+		unsafe { vkCmdBindVertexBuffers(*self.buffer_ref.unwrap(), start_binding, buffer_native.len() as u32, buffer_native.as_ptr(), offsets_native.as_ptr()) };
+		self
+	}
+	fn bind_index_buffer(self, buffer: &BufferResource, offset: usize) -> Self
+	{
+		unsafe { vkCmdBindIndexBuffer(*self.buffer_ref.unwrap(), buffer.get_resource(), offset as VkDeviceSize, VkIndexType::U16) };
+		self
+	}
+	
+	fn draw(self, vertex_count: u32, instance_count: u32) -> Self
+	{
+		unsafe { vkCmdDraw(*self.buffer_ref.unwrap(), vertex_count, instance_count, 0, 0) };
+		self
+	}
+	fn draw_indexed(self, index_count: u32, instance_count: u32, index_offset: u32) -> Self
+	{
+		unsafe { vkCmdDrawIndexed(*self.buffer_ref.unwrap(), index_count, instance_count, 0, index_offset, 0) };
+		self
+	}
+	fn draw_indirect(self, param_buffer: &BufferResource, param_offs: usize) -> Self
+	{
+		unsafe { vkCmdDrawIndirect(*self.buffer_ref.unwrap(), param_buffer.get_resource(), param_offs as VkDeviceSize, 1, 0) };
+		self
+	}
+	fn draw_indirect_mult(self, param_buffer: &BufferResource, param_offs: usize, param_count: u32) -> Self
+	{
+		unsafe { vkCmdDrawIndirect(*self.buffer_ref.unwrap(), param_buffer.get_resource(), param_offs as VkDeviceSize,
+			param_count, std::mem::size_of::<VkDrawIndirectCommand>() as u32) };
+		self
+	}
 }
 impl <'a> GraphicsCommandRecorder<'a>
 {
@@ -400,64 +610,6 @@ impl <'a> GraphicsCommandRecorder<'a>
 		self
 	}
 
-	pub fn bind_pipeline(self, pipeline: &GraphicsPipeline) -> Self
-	{
-		unsafe { vkCmdBindPipeline(*self.buffer_ref.unwrap(), VkPipelineBindPoint::Graphics, pipeline.get_internal().get()) };
-		self
-	}
-	pub fn bind_descriptor_sets(self, layout: &PipelineLayout, sets: &DescriptorSetArrayView) -> Self
-	{
-		unsafe { vkCmdBindDescriptorSets(*self.buffer_ref.unwrap(), VkPipelineBindPoint::Graphics, layout.get_internal().get(), 0,
-			sets.len() as u32, sets.as_ptr(), 0, std::ptr::null()) };
-		self
-	}
-	pub fn bind_vertex_buffers(self, buffer_offsets: &[(&BufferResource, usize)]) -> Self
-	{
-		// :Specialized:
-		self.bind_vertex_buffers_partial(0, buffer_offsets)
-	}
-	pub fn bind_vertex_buffers_partial(self, start_binding: u32, buffer_offsets: &[(&BufferResource, usize)]) -> Self
-	{
-		let (buffer_native, offsets_native): (Vec<_>, Vec<_>) = buffer_offsets.into_iter()
-			.map(|&(b, v)| (b.get_resource(), v as VkDeviceSize)).unzip();
-		unsafe { vkCmdBindVertexBuffers(*self.buffer_ref.unwrap(), start_binding, buffer_native.len() as u32, buffer_native.as_ptr(), offsets_native.as_ptr()) };
-		self
-	}
-	pub fn bind_index_buffer(self, buffer: &BufferResource, offset: usize) -> Self
-	{
-		unsafe { vkCmdBindIndexBuffer(*self.buffer_ref.unwrap(), buffer.get_resource(), offset as VkDeviceSize, VkIndexType::U16) };
-		self
-	}
-	pub fn push_constants(self, layout: &PipelineLayout, shader_stage: &[ShaderStage], range: std::ops::Range<u32>, data: &[f32]) -> Self
-	{
-		let stages = shader_stage.into_iter().fold(0, |acc, x| acc | Into::<VkShaderStageFlags>::into(*x));
-		unsafe { vkCmdPushConstants(*self.buffer_ref.unwrap(), layout.get_internal().get(), stages,
-			range.start, range.len() as u32, data.as_ptr() as *const std::os::raw::c_void) };
-		self
-	}
-
-	pub fn draw(self, vertex_count: u32, instance_count: u32) -> Self
-	{
-		unsafe { vkCmdDraw(*self.buffer_ref.unwrap(), vertex_count, instance_count, 0, 0) };
-		self
-	}
-	pub fn draw_indexed(self, index_count: u32, instance_count: u32, index_offset: u32) -> Self
-	{
-		unsafe { vkCmdDrawIndexed(*self.buffer_ref.unwrap(), index_count, instance_count, 0, index_offset, 0) };
-		self
-	}
-	pub fn draw_indirect(self, param_buffer: &BufferResource, param_offs: usize) -> Self
-	{
-		unsafe { vkCmdDrawIndirect(*self.buffer_ref.unwrap(), param_buffer.get_resource(), param_offs as VkDeviceSize, 1, 0) };
-		self
-	}
-	pub fn draw_indirect_mult(self, param_buffer: &BufferResource, param_offs: usize, param_count: u32) -> Self
-	{
-		unsafe { vkCmdDrawIndirect(*self.buffer_ref.unwrap(), param_buffer.get_resource(), param_offs as VkDeviceSize,
-			param_count, std::mem::size_of::<VkDrawIndirectCommand>() as u32) };
-		self
-	}
-
 	pub fn execute_commands(self, buffers: &BundledCommandBuffersView) -> Self
 	{
 		unsafe { vkCmdExecuteCommands(*self.buffer_ref.unwrap(), buffers.len() as u32, buffers.as_ptr()) };
@@ -467,6 +619,15 @@ impl <'a> GraphicsCommandRecorder<'a>
 	{
 		f(self)
 	}
+	
+	pub fn blit_image(self, src: &ImageResource, dst: &ImageResource, src_layout: VkImageLayout, dst_layout: VkImageLayout,
+		regions: &[ImageBlitRegion], filter: Filter) -> Self
+	{
+		let regions_native = regions.into_iter().map(|&x| x.into()).collect::<Vec<_>>();
+		unsafe { vkCmdBlitImage(*self.buffer_ref.unwrap(), src.get_resource(), src_layout, dst.get_resource(), dst_layout,
+			regions_native.len() as u32, regions_native.as_ptr(), filter.into()) };
+		self
+	}
 }
 impl <'a> BundleCommandRecorder<'a>
 {
@@ -475,51 +636,9 @@ impl <'a> BundleCommandRecorder<'a>
 		unsafe { vkEndCommandBuffer(*self.buffer_ref.unwrap()) }.and_then(|| { self.buffer_ref = None; Ok(()) }).map_err(EngineError::from)
 	}
 
-	pub fn bind_pipeline(self, pipeline: &GraphicsPipeline) -> Self
+	pub fn inject_commands<F>(self, f: F) -> Self where F: FnOnce(Self) -> Self
 	{
-		unsafe { vkCmdBindPipeline(*self.buffer_ref.unwrap(), VkPipelineBindPoint::Graphics, pipeline.get_internal().get()) };
-		self
-	}
-	pub fn bind_descriptor_sets(self, layout: &PipelineLayout, sets: &DescriptorSetArrayView) -> Self
-	{
-		unsafe { vkCmdBindDescriptorSets(*self.buffer_ref.unwrap(), VkPipelineBindPoint::Graphics, layout.get_internal().get(), 0,
-			sets.len() as u32, sets.as_ptr(), 0, std::ptr::null()) };
-		self
-	}
-	pub fn bind_vertex_buffers(self, buffer_offsets: &[(&BufferResource, usize)]) -> Self
-	{
-		// :Specialized:
-		self.bind_vertex_buffers_partial(0, buffer_offsets)
-	}
-	pub fn bind_vertex_buffers_partial(self, start_binding: u32, buffer_offsets: &[(&BufferResource, usize)]) -> Self
-	{
-		let (buffer_native, offsets_native): (Vec<_>, Vec<_>) = buffer_offsets.into_iter()
-			.map(|&(b, v)| (b.get_resource(), v as VkDeviceSize)).unzip();
-		unsafe { vkCmdBindVertexBuffers(*self.buffer_ref.unwrap(), start_binding, buffer_native.len() as u32, buffer_native.as_ptr(), offsets_native.as_ptr()) };
-		self
-	}
-	pub fn bind_index_buffer(self, buffer: &BufferResource, offset: usize) -> Self
-	{
-		unsafe { vkCmdBindIndexBuffer(*self.buffer_ref.unwrap(), buffer.get_resource(), offset as VkDeviceSize, VkIndexType::U16) };
-		self
-	}
-	pub fn push_constants(self, layout: &PipelineLayout, shader_stage: &[ShaderStage], range: std::ops::Range<u32>, data: &[f32]) -> Self
-	{
-		let stages = shader_stage.into_iter().fold(0, |acc, x| acc | Into::<VkShaderStageFlags>::into(*x));
-		unsafe { vkCmdPushConstants(*self.buffer_ref.unwrap(), layout.get_internal().get(), stages,
-			range.start, range.len() as u32, data.as_ptr() as *const std::os::raw::c_void) };
-		self
-	}
-
-	pub fn draw(self, vertex_count: u32, instance_count: u32) -> Self
-	{
-		unsafe { vkCmdDraw(*self.buffer_ref.unwrap(), vertex_count, instance_count, 0, 0) };
-		self
-	}
-	pub fn draw_indexed(self, index_count: u32, instance_count: u32, index_offset: u32) -> Self
-	{
-		unsafe { vkCmdDrawIndexed(*self.buffer_ref.unwrap(), index_count, instance_count, 0, index_offset, 0) };
-		self
+		f(self)
 	}
 }
 impl <'a> TransferCommandRecorder<'a>
@@ -583,5 +702,26 @@ impl std::convert::Into<VkImageCopy> for ImageCopyRegion
 	{
 		let ImageCopyRegion(sl, so, dl, _do, ex) = self;
 		VkImageCopy(sl.into(), so, dl.into(), _do, ex)
+	}
+}
+#[derive(Clone, Copy)]
+pub struct ImageBlitRegion(pub ImageSubresourceLayers, pub [VkOffset3D; 2], pub ImageSubresourceLayers, pub [VkOffset3D; 2]);
+impl std::convert::Into<VkImageBlit> for ImageBlitRegion
+{
+	fn into(self) -> VkImageBlit
+	{
+		let ImageBlitRegion(sl, so, dl, _do) = self;
+		VkImageBlit
+		{
+			srcSubresource: sl.into(), dstSubresource: dl.into(),
+			srcOffsets: so, dstOffsets: _do
+		}
+	}
+}
+impl ImageBlitRegion
+{
+	pub fn same_region(src_subres: ImageSubresourceLayers, dst_subres: ImageSubresourceLayers, offs: VkOffset3D, size: VkOffset3D) -> Self
+	{
+		ImageBlitRegion(src_subres, [offs, size], dst_subres, [offs, size])
 	}
 }

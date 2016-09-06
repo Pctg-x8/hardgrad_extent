@@ -18,6 +18,6 @@ out gl_PerVertex { vec4 gl_Position; };
 
 void main()
 {
-	gl_Position = (base_vert * vec4(pos_scaling.zw, 1.0f, 1.0f) + vec4(pos_scaling.xy, 0.0f, 0.0f)) * matrix_pp;
-	uv = base_vert * uv_scaling.zwxy + uv_scaling.xyzw;
+	gl_Position = fma(base_vert, vec4(pos_scaling.zw, 1.0f, 1.0f), vec4(pos_scaling.xy, 0.0f, 0.0f)) * matrix_pp;
+	uv = fma(base_vert, uv_scaling.zwxy, uv_scaling.xyzw);
 }

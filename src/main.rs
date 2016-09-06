@@ -30,6 +30,8 @@ use rand::distributions::*;
 
 mod smaa_extra_textures;
 use smaa_extra_textures::*;
+mod block_compression;
+use block_compression::*;
 
 use vkffi::*;
 
@@ -133,9 +135,10 @@ fn main() { if let Err(e) = app_main() { interlude::crash(e); } }
 fn app_main() -> Result<(), interlude::EngineError>
 {
 	utils::memory_management_test();
+	block_compression::compress_test();
 
 	let engine = try!{
-		interlude::Engine::new("HardGrad->Extent", VK_MAKE_VERSION!(0, 0, 1))
+		interlude::Engine::new_with_features("HardGrad->Extent", VK_MAKE_VERSION!(0, 0, 1), interlude::DeviceFeatures::new().enable_block_texture_compression())
 			.map(|e| e.with_assets_in(std::env::current_dir().unwrap()))
 	};
 	let main_frame = try!(engine.create_render_window(VkExtent2D(640, 480), "HardGrad -> Extent"));
@@ -145,8 +148,8 @@ fn app_main() -> Result<(), interlude::EngineError>
 	let gbuffer_desc = interlude::ImageDescriptor2::new(VkFormat::R8G8B8A8_UNORM, main_frame.get_extent(), interlude::ImageUsagePresets::AsColorTexture).device_resource();
 	let edgebuffer_desc = interlude::ImageDescriptor2::new(VkFormat::R8G8_UNORM, main_frame.get_extent(), interlude::ImageUsagePresets::AsColorTexture).device_resource();
 	let blend_weight_desc = interlude::ImageDescriptor2::new(VkFormat::R8G8B8A8_UNORM, main_frame.get_extent(), interlude::ImageUsagePresets::AsColorTexture).device_resource();
-	let smaa_areatex_desc = interlude::ImageDescriptor2::new(VkFormat::R8G8_UNORM, VkExtent2D(AREATEX_WIDTH, AREATEX_HEIGHT), interlude::ImageUsagePresets::AsColorTexture);
-	let smaa_searchtex_desc = interlude::ImageDescriptor2::new(VkFormat::R8_UNORM, VkExtent2D(SEARCHTEX_WIDTH, SEARCHTEX_HEIGHT), interlude::ImageUsagePresets::AsColorTexture);
+	let smaa_areatex_desc = interlude::ImageDescriptor2::new(VkFormat::R8G8_UNORM, VkExtent2D(AREATEX_WIDTH, AREATEX_HEIGHT), VK_IMAGE_USAGE_SAMPLED_BIT);
+	let smaa_searchtex_desc = interlude::ImageDescriptor2::new(VkFormat::R8_UNORM, VkExtent2D(SEARCHTEX_WIDTH, SEARCHTEX_HEIGHT), VK_IMAGE_USAGE_SAMPLED_BIT);
 	let imagebuffer_placement = interlude::ImagePreallocator::new().image_2d(vec![&gbuffer_desc, &edgebuffer_desc, &blend_weight_desc, &smaa_areatex_desc, &smaa_searchtex_desc]);
 	let (backbuffers, stage_images) = try!(engine.create_double_image(&imagebuffer_placement));
 	let (backbuffers, stage_images) = (backbuffers, stage_images.unwrap());
@@ -166,6 +169,9 @@ fn app_main() -> Result<(), interlude::EngineError>
 		mapped.map_mut::<[u8; AREATEX_SIZE as usize]>(stage_images.image2d_offset(0) as usize).copy_from_slice(&AREATEX_BYTES);
 		mapped.map_mut::<[u8; SEARCHTEX_SIZE as usize]>(stage_images.image2d_offset(1) as usize).copy_from_slice(&SEARCHTEX_BYTES);
 	}));
+	let gbuffer_obj = &**backbuffers.dim2(0);
+	let edgebuffer_obj = &**backbuffers.dim2(1);
+	let blendweight_obj = &**backbuffers.dim2(2);
 
 	let rp_attachment_descs =
 	[
@@ -217,28 +223,28 @@ fn app_main() -> Result<(), interlude::EngineError>
 		{
 			src: 0, dst: 1,
 			src_stage_mask: VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, dst_stage_mask: VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
-			src_access_mask: VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, dst_access_mask: VK_ACCESS_COLOR_ATTACHMENT_READ_BIT,
+			src_access_mask: VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, dst_access_mask: VK_ACCESS_SHADER_READ_BIT,
 			depend_by_region: false
 		},
 		interlude::PassDependency
 		{
 			src: 1, dst: 2,
 			src_stage_mask: VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, dst_stage_mask: VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
-			src_access_mask: VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, dst_access_mask: VK_ACCESS_COLOR_ATTACHMENT_READ_BIT,
+			src_access_mask: VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, dst_access_mask: VK_ACCESS_SHADER_READ_BIT,
 			depend_by_region: false
 		},
 		interlude::PassDependency
 		{
 			src: 0, dst: 3,
 			src_stage_mask: VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, dst_stage_mask: VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
-			src_access_mask: VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, dst_access_mask: VK_ACCESS_COLOR_ATTACHMENT_READ_BIT,
+			src_access_mask: VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, dst_access_mask: VK_ACCESS_SHADER_READ_BIT,
 			depend_by_region: false
 		},
 		interlude::PassDependency
 		{
 			src: 2, dst: 3,
 			src_stage_mask: VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, dst_stage_mask: VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
-			src_access_mask: VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, dst_access_mask: VK_ACCESS_COLOR_ATTACHMENT_READ_BIT,
+			src_access_mask: VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, dst_access_mask: VK_ACCESS_SHADER_READ_BIT,
 			depend_by_region: false
 		}
 	];
@@ -289,38 +295,31 @@ fn app_main() -> Result<(), interlude::EngineError>
 		];
 		let uniforms = mapped.map_mut::<structures::UniformMemory>(application_buffer_prealloc.offset(4));
 		logical_resources::projection_matrixes::setup_parameters(uniforms, main_frame.get_extent());
+		uniforms.render_target_desc = [(frame_width as f32).recip(), (frame_height as f32).recip(), frame_width as f32, frame_height as f32];
 	}));
 
 	// Descriptor Set //
+	let uniform_memory_info = interlude::BufferInfo(&application_data, application_buffer_prealloc.offset(4) .. application_buffer_prealloc.total_size());
+	let gbuffer_info = interlude::ImageInfo(&gbuffer_sampler, &gbuffer_view, VkImageLayout::ShaderReadOnlyOptimal);
+	let edgebuffer_info = interlude::ImageInfo(&gbuffer_sampler, &edgebuffer_view, VkImageLayout::ShaderReadOnlyOptimal);
+	let blendweight_info = interlude::ImageInfo(&gbuffer_sampler, &blend_weight_view, VkImageLayout::ShaderReadOnlyOptimal);
+	let areatex_info = interlude::ImageInfo(&gbuffer_sampler, &smaa_areatex_view, VkImageLayout::ShaderReadOnlyOptimal);
+	let searchtex_info = interlude::ImageInfo(&gbuffer_sampler, &smaa_searchtex_view, VkImageLayout::ShaderReadOnlyOptimal);
 	let dslayout_u1 = try!(engine.create_descriptor_set_layout(&[
-		interlude::Descriptor::Uniform(1, vec![interlude::ShaderStage::Vertex, interlude::ShaderStage::Geometry])
+		interlude::Descriptor::Uniform(1, vec![interlude::ShaderStage::Vertex, interlude::ShaderStage::Geometry, interlude::ShaderStage::Fragment])
 	]));
-	let dslayout_pp = try!(engine.create_descriptor_set_layout(&[
-		interlude::Descriptor::CombinedSampler(1, vec![interlude::ShaderStage::Fragment])
-	]));
-	let dslayout_pp_bw = try!(engine.create_descriptor_set_layout(&[
-		interlude::Descriptor::CombinedSampler(3, vec![interlude::ShaderStage::Fragment])
-	]));
-	let dslayout_smaa_combine = try!(engine.create_descriptor_set_layout(&[
-		interlude::Descriptor::CombinedSampler(2, vec![interlude::ShaderStage::Fragment])
-	]));
-	let all_descriptor_sets = try!(engine.preallocate_all_descriptor_sets(&[&dslayout_u1, &dslayout_pp, &dslayout_pp_bw, &dslayout_smaa_combine]));
+	let dslayouts_smaa =
+	[
+		try!(engine.create_descriptor_set_layout(&[interlude::Descriptor::CombinedSampler(1, vec![interlude::ShaderStage::Fragment])])),
+		try!(engine.create_descriptor_set_layout(&[interlude::Descriptor::CombinedSampler(3, vec![interlude::ShaderStage::Fragment])])),
+		try!(engine.create_descriptor_set_layout(&[interlude::Descriptor::CombinedSampler(2, vec![interlude::ShaderStage::Fragment])]))
+	];
+	let all_descriptor_sets = try!(engine.preallocate_all_descriptor_sets(&[&dslayout_u1, &dslayouts_smaa[0], &dslayouts_smaa[1], &dslayouts_smaa[2]]));
 	engine.update_descriptors(&[
-		interlude::DescriptorSetWriteInfo::UniformBuffer(all_descriptor_sets[0], 0, vec![
-			interlude::BufferInfo(&application_data, application_buffer_prealloc.offset(4) .. application_buffer_prealloc.total_size() as usize)
-		]),
-		interlude::DescriptorSetWriteInfo::CombinedImageSampler(all_descriptor_sets[1], 0, vec![
-			interlude::ImageInfo(&gbuffer_sampler, &gbuffer_view, VkImageLayout::ShaderReadOnlyOptimal)
-		]),
-		interlude::DescriptorSetWriteInfo::CombinedImageSampler(all_descriptor_sets[2], 0, vec![
-			interlude::ImageInfo(&gbuffer_sampler, &edgebuffer_view, VkImageLayout::ShaderReadOnlyOptimal),
-			interlude::ImageInfo(&gbuffer_sampler, &smaa_areatex_view, VkImageLayout::ShaderReadOnlyOptimal),
-			interlude::ImageInfo(&gbuffer_sampler, &smaa_searchtex_view, VkImageLayout::ShaderReadOnlyOptimal)
-		]),
-		interlude::DescriptorSetWriteInfo::CombinedImageSampler(all_descriptor_sets[3], 0, vec![
-			interlude::ImageInfo(&gbuffer_sampler, &gbuffer_view, VkImageLayout::ShaderReadOnlyOptimal),
-			interlude::ImageInfo(&gbuffer_sampler, &blend_weight_view, VkImageLayout::ShaderReadOnlyOptimal)
-		]),
+		interlude::DescriptorSetWriteInfo::UniformBuffer(all_descriptor_sets[0], 0, vec![uniform_memory_info]),
+		interlude::DescriptorSetWriteInfo::CombinedImageSampler(all_descriptor_sets[1], 0, vec![gbuffer_info.clone()]),
+		interlude::DescriptorSetWriteInfo::CombinedImageSampler(all_descriptor_sets[2], 0, vec![edgebuffer_info, areatex_info, searchtex_info]),
+		interlude::DescriptorSetWriteInfo::CombinedImageSampler(all_descriptor_sets[3], 0, vec![gbuffer_info, blendweight_info])
 	]);
 
 	// Shading Structures //
@@ -343,11 +342,13 @@ fn app_main() -> Result<(), interlude::EngineError>
 	let smaa_combine_frag = try!(engine.create_fragment_shader_from_asset("shaders.smaa.Combine", "main"));
 
 	let swapchain_viewport = VkViewport(0.0f32, 0.0f32, frame_width as f32, frame_height as f32, 0.0f32, 1.0f32);
-	let smaa_rt_parameter = interlude::PushConstantDesc(VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0 .. 16);
 	let wire_render_layout = try!(engine.create_pipeline_layout(&[&dslayout_u1], &[interlude::PushConstantDesc(VK_SHADER_STAGE_VERTEX_BIT, 0 .. 16)]));
-	let pp_smaa_ed_layout = try!(engine.create_pipeline_layout(&[&dslayout_pp], &[smaa_rt_parameter.clone()]));
-	let pp_smaa_bw_layout = try!(engine.create_pipeline_layout(&[&dslayout_pp_bw], &[smaa_rt_parameter.clone()]));
-	let pp_smaa_combine_layout = try!(engine.create_pipeline_layout(&[&dslayout_smaa_combine], &[smaa_rt_parameter]));
+	let smaa_layouts = 
+	[
+		try!(engine.create_pipeline_layout(&[&dslayout_u1, &dslayouts_smaa[0]], &[])),
+		try!(engine.create_pipeline_layout(&[&dslayout_u1, &dslayouts_smaa[1]], &[])),
+		try!(engine.create_pipeline_layout(&[&dslayout_u1, &dslayouts_smaa[2]], &[]))
+	];
 	let background_render_state = interlude::GraphicsPipelineBuilder::new(&wire_render_layout, &rp_framebuffer_form, 0)
 		.vertex_shader(&raw_output_vert).geometry_shader(&backline_duplicator).fragment_shader(&through_color_frag)
 		.primitive_topology(interlude::PrimitiveTopology::LineList(true))
@@ -362,17 +363,17 @@ fn app_main() -> Result<(), interlude::EngineError>
 		.viewport_scissors(&[interlude::ViewportWithScissorRect::default_scissor(swapchain_viewport)])
 		.blend_state(&[interlude::AttachmentBlendState::Disabled]);
 	// PostProcessing //
-	let pp_smaa_edge_detection_state = interlude::GraphicsPipelineBuilder::new(&pp_smaa_ed_layout, &rp_framebuffer_form, 1)
+	let pp_smaa_edge_detection_state = interlude::GraphicsPipelineBuilder::new(&smaa_layouts[0], &rp_framebuffer_form, 1)
 		.vertex_shader(&smaa_edge_ppv).fragment_shader(&smaa_edge_detection_frag)
 		.primitive_topology(interlude::PrimitiveTopology::TriangleStrip(false))
 		.viewport_scissors(&[interlude::ViewportWithScissorRect::default_scissor(swapchain_viewport)])
 		.blend_state(&[interlude::AttachmentBlendState::Disabled]);
-	let pp_smaa_blend_weight_state = interlude::GraphicsPipelineBuilder::new(&pp_smaa_bw_layout, &rp_framebuffer_form, 2)
+	let pp_smaa_blend_weight_state = interlude::GraphicsPipelineBuilder::new(&smaa_layouts[1], &rp_framebuffer_form, 2)
 		.vertex_shader(&smaa_bw_ppv).fragment_shader(&smaa_blend_weight_frag)
 		.primitive_topology(interlude::PrimitiveTopology::TriangleStrip(false))
 		.viewport_scissors(&[interlude::ViewportWithScissorRect::default_scissor(swapchain_viewport)])
 		.blend_state(&[interlude::AttachmentBlendState::Disabled]);
-	let pp_smaa_combine_state = interlude::GraphicsPipelineBuilder::new(&pp_smaa_combine_layout, &rp_framebuffer_form, 3)
+	let pp_smaa_combine_state = interlude::GraphicsPipelineBuilder::new(&smaa_layouts[2], &rp_framebuffer_form, 3)
 		.vertex_shader(&smaa_combine_ppv).fragment_shader(&smaa_combine_frag)
 		.primitive_topology(interlude::PrimitiveTopology::TriangleStrip(false))
 		.viewport_scissors(&[interlude::ViewportWithScissorRect::default_scissor(swapchain_viewport)])
@@ -388,8 +389,9 @@ fn app_main() -> Result<(), interlude::EngineError>
 	let ref pp_smaa_combine = pipeline_states[5];
 
 	// Initial Data Transmission, Layouting for Swapchain Backbuffer Images //
-	try!(engine.allocate_transient_transfer_command_buffers(1).and_then(|setup_commands|
 	{
+		let setup_commands = try!(engine.allocate_transient_transfer_command_buffers(1));
+
 		let buffer_memory_barriers = [
 			interlude::BufferMemoryBarrier::hold_ownership(&appdata_stage, 0 .. application_buffer_prealloc.total_size(),
 				0, VK_ACCESS_TRANSFER_READ_BIT),
@@ -402,7 +404,7 @@ fn app_main() -> Result<(), interlude::EngineError>
 			interlude::BufferMemoryBarrier::hold_ownership(&application_data, 0 .. application_buffer_prealloc.total_size(),
 				VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT | VK_ACCESS_INDEX_READ_BIT | VK_ACCESS_UNIFORM_READ_BIT)
 		];
-		let transferred_image_templates =
+		let blitted_image_templates =
 		[
 			interlude::ImageMemoryBarrier::template(&**backbuffers.dim2(3), interlude::ImageSubresourceRange::base_color()),
 			interlude::ImageMemoryBarrier::template(&**backbuffers.dim2(4), interlude::ImageSubresourceRange::base_color()),
@@ -415,17 +417,15 @@ fn app_main() -> Result<(), interlude::EngineError>
 				interlude::ImageMemoryBarrier::hold_ownership(&**backbuffers.dim2(0), interlude::ImageSubresourceRange::base_color(), VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VkImageLayout::Preinitialized, VkImageLayout::ColorAttachmentOptimal),
 				interlude::ImageMemoryBarrier::hold_ownership(&**backbuffers.dim2(1), interlude::ImageSubresourceRange::base_color(), VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VkImageLayout::Preinitialized, VkImageLayout::ColorAttachmentOptimal),
 				interlude::ImageMemoryBarrier::hold_ownership(&**backbuffers.dim2(2), interlude::ImageSubresourceRange::base_color(), VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VkImageLayout::Preinitialized, VkImageLayout::ColorAttachmentOptimal),
-				transferred_image_templates[0].hold_ownership(VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VkImageLayout::Preinitialized, VkImageLayout::TransferDestOptimal),
-				transferred_image_templates[1].hold_ownership(VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VkImageLayout::Preinitialized, VkImageLayout::TransferDestOptimal),
-				transferred_image_templates[2].hold_ownership(VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT, VkImageLayout::Preinitialized, VkImageLayout::TransferSrcOptimal),
-				transferred_image_templates[3].hold_ownership(VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT, VkImageLayout::Preinitialized, VkImageLayout::TransferSrcOptimal)
+				blitted_image_templates[0].into_transfer_dst(VK_ACCESS_HOST_WRITE_BIT, VkImageLayout::Preinitialized),
+				blitted_image_templates[1].into_transfer_dst(VK_ACCESS_HOST_WRITE_BIT, VkImageLayout::Preinitialized),
+				blitted_image_templates[2].into_transfer_src(VK_ACCESS_HOST_WRITE_BIT, VkImageLayout::Preinitialized),
+				blitted_image_templates[3].into_transfer_src(VK_ACCESS_HOST_WRITE_BIT, VkImageLayout::Preinitialized)
 			].into_iter().map(|&x| x)).collect::<Vec<_>>();
 		let image_memory_barriers_ret =
 		[
-			transferred_image_templates[0].hold_ownership(VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT, VkImageLayout::TransferDestOptimal, VkImageLayout::ShaderReadOnlyOptimal),
-			transferred_image_templates[1].hold_ownership(VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT, VkImageLayout::TransferDestOptimal, VkImageLayout::ShaderReadOnlyOptimal),
-			transferred_image_templates[2].hold_ownership(VK_ACCESS_TRANSFER_READ_BIT, VK_ACCESS_HOST_WRITE_BIT, VkImageLayout::TransferSrcOptimal, VkImageLayout::General),
-			transferred_image_templates[3].hold_ownership(VK_ACCESS_TRANSFER_READ_BIT, VK_ACCESS_HOST_WRITE_BIT, VkImageLayout::TransferSrcOptimal, VkImageLayout::General)
+			blitted_image_templates[0].from_transfer_dst(VK_ACCESS_SHADER_READ_BIT, VkImageLayout::ShaderReadOnlyOptimal),
+			blitted_image_templates[1].from_transfer_dst(VK_ACCESS_SHADER_READ_BIT, VkImageLayout::ShaderReadOnlyOptimal)
 		];
 
 		try!(setup_commands.begin(0).and_then(|recorder|
@@ -439,8 +439,9 @@ fn app_main() -> Result<(), interlude::EngineError>
 			.pipeline_barrier(VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, false, &[], &buffer_memory_barriers_ret, &image_memory_barriers_ret)
 			.end()
 		));
-		setup_commands.execute()
-	}));
+
+		try!(setup_commands.execute());
+	}
 
 	// Debug Information //
 	let frame_time_ms = RefCell::new(0.0f64);
@@ -448,27 +449,46 @@ fn app_main() -> Result<(), interlude::EngineError>
 	let debug_info = try!(interlude::DebugInfo::new(&engine, &[
 		interlude::DebugLine::Float("Frame Time".to_owned(), &frame_time_ms, Some("ms".to_string())),
 		interlude::DebugLine::UnsignedInt("Enemy Count".to_owned(), &enemy_count, None)
-	], &rp_framebuffer_form, 0, swapchain_viewport));
+	], &rp_framebuffer_form, 3, swapchain_viewport));
 
 	// Rendering Commands //
+	let combine_commands = try!(engine.allocate_bundled_command_buffers(2 * framebuffers.len() as u32));
+	for (n, f) in framebuffers.iter().enumerate()
+	{
+		try!(combine_commands.begin(0 + 2 * n, &rp_framebuffer_form, 3, f).and_then(|recorder|
+			recorder
+				.bind_pipeline(pp_smaa_combine)
+				.bind_descriptor_sets(&smaa_layouts[2], &[all_descriptor_sets[0], all_descriptor_sets[3]])
+				.bind_vertex_buffers(&[(&application_data, application_buffer_prealloc.offset(0))])
+				.draw(4, 1)
+				.end()
+		));
+		try!(combine_commands.begin(1 + 2 * n, &rp_framebuffer_form, 3, f).and_then(|recorder|
+			recorder.inject_commands(|r| debug_info.inject_render_commands(r)).end()
+		));
+	}
 	let framebuffer_commands = try!(engine.allocate_graphics_command_buffers(main_frame.get_back_images().len() as u32));
 	try!(framebuffer_commands.begin_all().and_then(|iter| iter.map(|(i, recorder)|
 	{
-		let color_output_barrier = interlude::ImageMemoryBarrier::hold_ownership(
-			main_frame.get_back_images()[i], interlude::ImageSubresourceRange::base_color(),
-			VK_ACCESS_MEMORY_READ_BIT, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
-			VkImageLayout::PresentSrcKHR, VkImageLayout::ColorAttachmentOptimal);
 		let clear_values = [
 			interlude::AttachmentClearValue::Color(0.0f32, 0.0f32, 0.015625f32, 1.0f32),
 			interlude::AttachmentClearValue::Color(0.0f32, 0.0f32, 0.0f32, 0.0f32),
 			interlude::AttachmentClearValue::Color(0.0f32, 0.0f32, 0.0f32, 0.0f32),
 			interlude::AttachmentClearValue::Color(0.0f32, 0.0f32, 0.0f32, 0.0f32)
 		];
+		let color_output_barrier = interlude::ImageMemoryBarrier::template(main_frame.get_back_images()[i], interlude::ImageSubresourceRange::base_color())
+			.hold_ownership(VK_ACCESS_MEMORY_READ_BIT, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VkImageLayout::PresentSrcKHR, VkImageLayout::ColorAttachmentOptimal);
+		let ibar_gbuffer_end = interlude::ImageMemoryBarrier::template(gbuffer_obj, interlude::ImageSubresourceRange::base_color())
+			.hold_ownership(VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT, VkImageLayout::ColorAttachmentOptimal, VkImageLayout::ShaderReadOnlyOptimal);
+		let ibar_edgebuffer_end = interlude::ImageMemoryBarrier::template(edgebuffer_obj, interlude::ImageSubresourceRange::base_color())
+			.hold_ownership(VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT, VkImageLayout::ColorAttachmentOptimal, VkImageLayout::ShaderReadOnlyOptimal);
+		let ibar_blendweight_end = interlude::ImageMemoryBarrier::template(blendweight_obj, interlude::ImageSubresourceRange::base_color())
+			.hold_ownership(VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT, VkImageLayout::ColorAttachmentOptimal, VkImageLayout::ShaderReadOnlyOptimal);
 
 		recorder
-			.pipeline_barrier(VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, false, &[], &[],
-				&[color_output_barrier])
+			.pipeline_barrier(VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, false, &[], &[], &[color_output_barrier])
 			.begin_render_pass(&framebuffers[i], &clear_values, false)
+			// Pass 0 : Render to Buffer //
 			.bind_descriptor_sets(&wire_render_layout, &all_descriptor_sets[0..1])
 			.bind_vertex_buffers(&[(&application_data, application_buffer_prealloc.offset(1))])
 			.bind_pipeline(background_render)
@@ -487,26 +507,23 @@ fn app_main() -> Result<(), interlude::EngineError>
 			.push_constants(&wire_render_layout, &[interlude::ShaderStage::Vertex],
 				0 .. std::mem::size_of::<f32>() as u32 * 4, &[1.5f32, 1.25f32, 0.375f32, 1.0f32])
 			.draw_indexed(24, 2, 4)
+			.pipeline_barrier(VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, false, &[], &[], &[ibar_gbuffer_end])
 			.next_subpass(false)
+			// Pass 1 : Edge Detection(SMAA 1x) //
 			.bind_vertex_buffers(&[(&application_data, application_buffer_prealloc.offset(0))])
 			.bind_pipeline(pp_smaa_edge_detection)
-			.bind_descriptor_sets(&pp_smaa_ed_layout, &all_descriptor_sets[1 .. 2])
-			.push_constants(&pp_smaa_ed_layout, &[interlude::ShaderStage::Vertex, interlude::ShaderStage::Fragment],
-				0 .. std::mem::size_of::<f32>() as u32 * 4, &[(frame_width as f32).recip(), (frame_height as f32).recip(), frame_width as f32, frame_height as f32])
+			.bind_descriptor_sets_partial(&smaa_layouts[0], 1, &all_descriptor_sets[1..2])
 			.draw(4, 1)
+			.pipeline_barrier(VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, false, &[], &[], &[ibar_edgebuffer_end])
 			.next_subpass(false)
+			// Pass 2 : Blend Weight Calculation(SMAA 1x) //
 			.bind_pipeline(pp_smaa_blend_weight_calc)
-			.bind_descriptor_sets(&pp_smaa_bw_layout, &all_descriptor_sets[2 .. 3])
-			.push_constants(&pp_smaa_bw_layout, &[interlude::ShaderStage::Vertex, interlude::ShaderStage::Fragment],
-				0 .. std::mem::size_of::<f32>() as u32 * 4, &[(frame_width as f32).recip(), (frame_height as f32).recip(), frame_width as f32, frame_height as f32])
+			.bind_descriptor_sets_partial(&smaa_layouts[1], 1, &all_descriptor_sets[2..3])
 			.draw(4, 1)
-			.next_subpass(false)
-			.bind_pipeline(pp_smaa_combine)
-			.bind_descriptor_sets(&pp_smaa_combine_layout, &all_descriptor_sets[3 .. 4])
-			.push_constants(&pp_smaa_combine_layout, &[interlude::ShaderStage::Vertex, interlude::ShaderStage::Fragment],
-				0 .. std::mem::size_of::<f32>() as u32 * 4, &[(frame_width as f32).recip(), (frame_height as f32).recip(), frame_width as f32, frame_height as f32])
-			.draw(4, 1)
-			.inject_commands(|r| debug_info.inject_render_commands(r))
+			.pipeline_barrier(VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, false, &[], &[], &[ibar_blendweight_end])
+			.next_subpass(true)
+			// Pass 3 : SMAA Combine and Debug Print //
+			.execute_commands(&combine_commands[i * 2 .. i * 2 + 2])
 			.end_render_pass()
 		.end()
 	}).collect::<Result<Vec<_>, _>>()));

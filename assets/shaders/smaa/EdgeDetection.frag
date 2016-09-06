@@ -4,10 +4,10 @@
 
 layout(location = 0) in vec4 uv;
 layout(location = 1) in vec4 offsets[3];
-layout(set = 0, binding = 0) uniform sampler2D intex;
 layout(location = 0) out vec2 target;
 
 #include "common_setup.glsl"
+layout(set = 1, binding = 0) uniform sampler2D input_tex;
 
 void main()
 {
@@ -16,9 +16,9 @@ void main()
 
 	// Calculate lumas
 	vec3 weights = vec3(0.2126, 0.7152, 0.0722);
-	float l = dot(texture(intex, uv.xy).rgb, weights);
-	float l_left = dot(texture(intex, offsets[0].xy).rgb, weights);
-	float l_top = dot(texture(intex, offsets[0].zw).rgb, weights);
+	float l = dot(texture(input_tex, uv.xy).rgb, weights);
+	float l_left = dot(texture(input_tex, offsets[0].xy).rgb, weights);
+	float l_top = dot(texture(input_tex, offsets[0].zw).rgb, weights);
 
 	// We do the usual threshold
 	vec4 delta;
@@ -28,16 +28,16 @@ void main()
 	if(dot(edges, vec2(1.0f, 1.0f)) == 0.0f) discard;
 
 	// Calculate right and bottom deltas
-	float l_right = dot(texture(intex, offsets[1].xy).rgb, weights);
-	float l_bottom = dot(texture(intex, offsets[1].zw).rgb, weights);
+	float l_right = dot(texture(input_tex, offsets[1].xy).rgb, weights);
+	float l_bottom = dot(texture(input_tex, offsets[1].zw).rgb, weights);
 	delta.zw = abs(l - vec2(l_right, l_bottom));
 
 	// Calculate the maximum delta in the direct neighborhood
 	vec2 max_delta = max(delta.xy, delta.zw);
 
 	// Calculate left-left and top-top deltas
-	float l_left_left = dot(texture(intex, offsets[2].xy).rgb, weights);
-	float l_top_top = dot(texture(intex, offsets[2].zw).rgb, weights);
+	float l_left_left = dot(texture(input_tex, offsets[2].xy).rgb, weights);
+	float l_top_top = dot(texture(input_tex, offsets[2].zw).rgb, weights);
 	delta.zw = abs(vec2(l_left, l_top) - vec2(l_left_left, l_top_top));
 	
 	// Calculate the final maximum delta
