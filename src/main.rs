@@ -135,7 +135,6 @@ fn main() { if let Err(e) = app_main() { interlude::crash(e); } }
 fn app_main() -> Result<(), interlude::EngineError>
 {
 	utils::memory_management_test();
-	block_compression::compress_test();
 
 	let engine = try!{
 		interlude::Engine::new_with_features("HardGrad->Extent", VK_MAKE_VERSION!(0, 0, 1), interlude::DeviceFeatures::new().enable_block_texture_compression())
@@ -148,8 +147,8 @@ fn app_main() -> Result<(), interlude::EngineError>
 	let gbuffer_desc = interlude::ImageDescriptor2::new(VkFormat::R8G8B8A8_UNORM, main_frame.get_extent(), interlude::ImageUsagePresets::AsColorTexture).device_resource();
 	let edgebuffer_desc = interlude::ImageDescriptor2::new(VkFormat::R8G8_UNORM, main_frame.get_extent(), interlude::ImageUsagePresets::AsColorTexture).device_resource();
 	let blend_weight_desc = interlude::ImageDescriptor2::new(VkFormat::R8G8B8A8_UNORM, main_frame.get_extent(), interlude::ImageUsagePresets::AsColorTexture).device_resource();
-	let smaa_areatex_desc = interlude::ImageDescriptor2::new(VkFormat::R8G8_UNORM, VkExtent2D(AREATEX_WIDTH, AREATEX_HEIGHT), VK_IMAGE_USAGE_SAMPLED_BIT);
-	let smaa_searchtex_desc = interlude::ImageDescriptor2::new(VkFormat::R8_UNORM, VkExtent2D(SEARCHTEX_WIDTH, SEARCHTEX_HEIGHT), VK_IMAGE_USAGE_SAMPLED_BIT);
+	let smaa_areatex_desc = interlude::ImageDescriptor2::new(VkFormat::BC5_UNORM_BLOCK, VkExtent2D(AREATEX_WIDTH, AREATEX_HEIGHT), VK_IMAGE_USAGE_SAMPLED_BIT);
+	let smaa_searchtex_desc = interlude::ImageDescriptor2::new(VkFormat::BC4_UNORM_BLOCK, VkExtent2D(SEARCHTEX_WIDTH, SEARCHTEX_HEIGHT), VK_IMAGE_USAGE_SAMPLED_BIT);
 	let imagebuffer_placement = interlude::ImagePreallocator::new().image_2d(vec![&gbuffer_desc, &edgebuffer_desc, &blend_weight_desc, &smaa_areatex_desc, &smaa_searchtex_desc]);
 	let (backbuffers, stage_images) = try!(engine.create_double_image(&imagebuffer_placement));
 	let (backbuffers, stage_images) = (backbuffers, stage_images.unwrap());
@@ -159,19 +158,20 @@ fn app_main() -> Result<(), interlude::EngineError>
 		interlude::ComponentMapping::straight(), interlude::ImageSubresourceRange::base_color()));
 	let blend_weight_view = try!(engine.create_image_view_2d(backbuffers.dim2(2), VkFormat::R8G8B8A8_UNORM,
 		interlude::ComponentMapping::straight(), interlude::ImageSubresourceRange::base_color()));
-	let smaa_areatex_view = try!(engine.create_image_view_2d(backbuffers.dim2(3), VkFormat::R8G8_UNORM,
+	let smaa_areatex_view = try!(engine.create_image_view_2d(backbuffers.dim2(3), VkFormat::BC5_UNORM_BLOCK,
 		interlude::ComponentMapping::double_swizzle_rep(interlude::ComponentSwizzle::R, interlude::ComponentSwizzle::G), interlude::ImageSubresourceRange::base_color()));
-	let smaa_searchtex_view = try!(engine.create_image_view_2d(backbuffers.dim2(4), VkFormat::R8_UNORM,
+	let smaa_searchtex_view = try!(engine.create_image_view_2d(backbuffers.dim2(4), VkFormat::BC4_UNORM_BLOCK,
 		interlude::ComponentMapping::single_swizzle(interlude::ComponentSwizzle::R), interlude::ImageSubresourceRange::base_color()));
 	let gbuffer_sampler = try!(engine.create_sampler(&interlude::SamplerState::new()));
 	try!(stage_images.map().map(|mapped|
 	{
-		mapped.map_mut::<[u8; AREATEX_SIZE as usize]>(stage_images.image2d_offset(0) as usize).copy_from_slice(&AREATEX_BYTES);
-		mapped.map_mut::<[u8; SEARCHTEX_SIZE as usize]>(stage_images.image2d_offset(1) as usize).copy_from_slice(&SEARCHTEX_BYTES);
+		let areatex_compressed = BC5::compress(&AREATEX_BYTES, (AREATEX_WIDTH as usize, AREATEX_HEIGHT as usize));
+		mapped.map_mut::<[u8; AREATEX_SIZE as usize / 2]>(stage_images.image2d_offset(0) as usize).copy_from_slice(&areatex_compressed);
+		// mapped.map_mut::<[u8; AREATEX_SIZE as usize]>(stage_images.image2d_offset(0) as usize).copy_from_slice(&AREATEX_BYTES);
+		let searchtex_compressed = BC4::compress(&SEARCHTEX_BYTES, (SEARCHTEX_WIDTH as usize, SEARCHTEX_HEIGHT as usize));
+		mapped.map_mut::<[u8; SEARCHTEX_SIZE as usize / 2]>(stage_images.image2d_offset(1) as usize).copy_from_slice(&searchtex_compressed);
+		// mapped.map_mut::<[u8; SEARCHTEX_SIZE as usize]>(stage_images.image2d_offset(1) as usize).copy_from_slice(&SEARCHTEX_BYTES);
 	}));
-	let gbuffer_obj = &**backbuffers.dim2(0);
-	let edgebuffer_obj = &**backbuffers.dim2(1);
-	let blendweight_obj = &**backbuffers.dim2(2);
 
 	let rp_attachment_descs =
 	[
