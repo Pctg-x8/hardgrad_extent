@@ -48,7 +48,7 @@ pub enum LogicalInputTypes
 struct Enemy<'a>
 {
 	datastore_ref: &'a RefCell<logical_resources::EnemyDatastore<'a>>,
-	block_index: u32, left: f32, living_secs: f32
+	block_index: u32, left: f32, living_secs: f32, rezonator_left: u32
 }
 impl <'a> Enemy<'a>
 {
@@ -59,10 +59,10 @@ impl <'a> Enemy<'a>
 		{
 			datastore_ref.update_instance_data(index,
 				UnitQuaternion::new(Vector3::new(0.0f32, 0.0f32, 0.0f32)).quaternion(), UnitQuaternion::new(Vector3::new(0.0f32, 0.0f32, 0.0f32)).quaternion(),
-				&Vector4::new(init_left, 0.0f32, 0.0f32, 0.0f32));
+				&Vector4::new(init_left, 0.0f32, 0.0f32, 0.0f32), 3, 0.0f32);
 			Enemy
 			{
-				datastore_ref: datastore, block_index: index, left: init_left, living_secs: 0.0f32
+				datastore_ref: datastore, block_index: index, left: init_left, living_secs: 0.0f32, rezonator_left: 3
 			}
 		})
 	}
@@ -79,10 +79,10 @@ impl <'a> Enemy<'a>
 		self.datastore_ref.borrow_mut().update_instance_data(self.block_index,
 			UnitQuaternion::new(Vector3::new(-1.0f32, 0.0f32, 0.75f32).normalize() * (260.0f32 * self.living_secs).to_radians()).quaternion(),
 			UnitQuaternion::new(Vector3::new(1.0f32, -1.0f32, 0.5f32).normalize() * (-260.0f32 * self.living_secs + 13.0f32).to_radians()).quaternion(),
-			&Vector4::new(self.left, current_y, 0.0f32, 0.0f32));
+			&Vector4::new(self.left, current_y, 0.0f32, 0.0f32), self.rezonator_left, delta_time);
 		self.living_secs += delta_time;
 
-		current_y >= 50.0f32
+		current_y >= 52.0f32
 	}
 	pub fn die(self)
 	{
@@ -128,6 +128,23 @@ impl <'a> Player<'a>
 
 		self.instance_memory[0] = quaternions.next().unwrap();
 		self.instance_memory[1] = quaternions.next().unwrap();
+	}
+}
+
+pub struct WireRenderCommon<'a>
+{
+	renderstate_ref: &'a interlude::GraphicsPipeline, layout_ref: &'a interlude::PipelineLayout
+}
+impl <'a> WireRenderCommon<'a>
+{
+	pub fn new(renderstate: &'a interlude::GraphicsPipeline, layout: &'a interlude::PipelineLayout) -> Self
+	{
+		WireRenderCommon { renderstate_ref: renderstate, layout_ref: layout }
+	}
+	pub fn begin<Recorder: DrawingCommandRecorder>(&self, comrec: Recorder, wirecolor_r: f32, wirecolor_g: f32, wirecolor_b: f32, wirecolor_a: f32) -> Recorder
+	{
+		comrec.bind_pipeline(self.renderstate_ref).push_constants(self.layout_ref, &[interlude::ShaderStage::Vertex],
+			0 .. std::mem::size_of::<structures::CVector4>() as u32, &[wirecolor_r, wirecolor_g, wirecolor_b, wirecolor_a])
 	}
 }
 
@@ -288,6 +305,11 @@ fn app_main() -> Result<(), interlude::EngineError>
 			Position( 1.0f32,  1.0f32,  1.0f32, 1.0f32),
 			Position(-1.0f32,  1.0f32,  1.0f32, 1.0f32)
 		];
+		vertices.enemy_rezonator_vts = [
+			Position(0.0f32, 1.0f32, 0.0f32, 1.0f32),
+			Position(-1.0f32, -1.0f32, 0.0f32, 1.0f32),
+			Position(1.0f32, -1.0f32, 0.0f32, 1.0f32)
+		];
 		indices.player_cube_ids = [
 			0, 1, 1, 2, 2, 3, 3, 0,
 			4, 5, 5, 6, 6, 7, 7, 4,
@@ -327,16 +349,21 @@ fn app_main() -> Result<(), interlude::EngineError>
 		interlude::VertexBinding::PerVertex(std::mem::size_of::<vertex_formats::Position>() as u32),
 		interlude::VertexBinding::PerInstance(std::mem::size_of::<u32>() as u32)
 	], &[interlude::VertexAttribute(0, VkFormat::R32G32B32A32_SFLOAT, 0), interlude::VertexAttribute(1, VkFormat::R32_UINT, 0)]));
+	let enemy_rezonator_dupv = try!(engine.create_vertex_shader_from_asset("shaders.EnemyRezonatorV", "main", &[
+		interlude::VertexBinding::PerVertex(std::mem::size_of::<vertex_formats::Position>() as u32),
+		interlude::VertexBinding::PerInstance(std::mem::size_of::<structures::CVector4>() as u32)
+	], &[interlude::VertexAttribute(0, VkFormat::R32G32B32A32_SFLOAT, 0), interlude::VertexAttribute(1, VkFormat::R32G32B32A32_SFLOAT, 0)]));
 	let player_rotor_vert = try!(engine.create_vertex_shader_from_asset("shaders.PlayerRotor", "main", &[
 		interlude::VertexBinding::PerVertex(std::mem::size_of::<vertex_formats::Position>() as u32),
 		interlude::VertexBinding::PerInstance(std::mem::size_of::<structures::CVector4>() as u32)
 	], &[interlude::VertexAttribute(0, VkFormat::R32G32B32A32_SFLOAT, 0), interlude::VertexAttribute(1, VkFormat::R32G32B32A32_SFLOAT, 0)]));
+	let backline_duplicator = try!(engine.create_geometry_shader_from_asset("shaders.BackLineDuplicator", "main"));
+	let enemy_duplicator = try!(engine.create_geometry_shader_from_asset("shaders.EnemyDuplicator", "main"));
+	let enemy_rezonator_duplicator = try!(engine.create_geometry_shader_from_asset("shaders.EnemyRezonatorDup", "main"));
+	let through_color_frag = try!(engine.create_fragment_shader_from_asset("shaders.ThroughColor", "main"));
 	let smaa_edge_ppv = try!(engine.create_postprocess_vertex_shader_from_asset("shaders.smaa.EdgeDetectionV", "main"));
 	let smaa_bw_ppv = try!(engine.create_postprocess_vertex_shader_from_asset("shaders.smaa.BlendWeightCalcV", "main"));
 	let smaa_combine_ppv = try!(engine.create_postprocess_vertex_shader_from_asset("shaders.smaa.CombineV", "main"));
-	let backline_duplicator = try!(engine.create_geometry_shader_from_asset("shaders.BackLineDuplicator", "main"));
-	let enemy_duplicator = try!(engine.create_geometry_shader_from_asset("shaders.EnemyDuplicator", "main"));
-	let through_color_frag = try!(engine.create_fragment_shader_from_asset("shaders.ThroughColor", "main"));
 	let smaa_edge_detection_frag = try!(engine.create_fragment_shader_from_asset("shaders.smaa.EdgeDetection", "main"));
 	let smaa_blend_weight_frag = try!(engine.create_fragment_shader_from_asset("shaders.smaa.BlendWeightCalc", "main"));
 	let smaa_combine_frag = try!(engine.create_fragment_shader_from_asset("shaders.smaa.Combine", "main"));
@@ -357,6 +384,9 @@ fn app_main() -> Result<(), interlude::EngineError>
 	let enemy_render_state = interlude::GraphicsPipelineBuilder::inherit(&background_render_state)
 	 	.geometry_shader(&enemy_duplicator)
 		.blend_state(&[interlude::AttachmentBlendState::Disabled]);
+	let enemy_rezonators_render_state = interlude::GraphicsPipelineBuilder::inherit(&enemy_render_state)
+		.vertex_shader(&enemy_rezonator_dupv).geometry_shader(&enemy_rezonator_duplicator)
+		.primitive_topology(interlude::PrimitiveTopology::TriangleList(false));
 	let player_render_state = interlude::GraphicsPipelineBuilder::new(&wire_render_layout, &rp_framebuffer_form, 0)
 		.vertex_shader(&player_rotor_vert).fragment_shader(&through_color_frag)
 		.primitive_topology(interlude::PrimitiveTopology::LineList(false))
@@ -378,15 +408,17 @@ fn app_main() -> Result<(), interlude::EngineError>
 		.primitive_topology(interlude::PrimitiveTopology::TriangleStrip(false))
 		.viewport_scissors(&[interlude::ViewportWithScissorRect::default_scissor(swapchain_viewport)])
 		.blend_state(&[interlude::AttachmentBlendState::Disabled]);
-	let pipeline_states = try!(engine.create_graphics_pipelines(
-		&[&background_render_state, &enemy_render_state, &player_render_state, &pp_smaa_edge_detection_state, &pp_smaa_blend_weight_state, &pp_smaa_combine_state]
-	));
-	let ref background_render = pipeline_states[0];
-	let ref enemy_render = pipeline_states[1];
-	let ref player_render = pipeline_states[2];
-	let ref pp_smaa_edge_detection = pipeline_states[3];
-	let ref pp_smaa_blend_weight_calc = pipeline_states[4];
-	let ref pp_smaa_combine = pipeline_states[5];
+	let pipeline_states = try!(engine.create_graphics_pipelines(&[
+		&background_render_state, &enemy_render_state, &enemy_rezonators_render_state, &player_render_state,
+		&pp_smaa_edge_detection_state, &pp_smaa_blend_weight_state, &pp_smaa_combine_state
+	]));
+	let background_render = WireRenderCommon::new(&pipeline_states[0], &wire_render_layout);
+	let enemy_render = WireRenderCommon::new(&pipeline_states[1], &wire_render_layout);
+	let enemy_rezonators_render = WireRenderCommon::new(&pipeline_states[2], &wire_render_layout);
+	let player_render = WireRenderCommon::new(&pipeline_states[3], &wire_render_layout);
+	let ref pp_smaa_edge_detection = pipeline_states[4];
+	let ref pp_smaa_blend_weight_calc = pipeline_states[5];
+	let ref pp_smaa_combine = pipeline_states[6];
 
 	// Initial Data Transmission, Layouting for Swapchain Backbuffer Images //
 	{
@@ -491,22 +523,20 @@ fn app_main() -> Result<(), interlude::EngineError>
 			// Pass 0 : Render to Buffer //
 			.bind_descriptor_sets(&wire_render_layout, &all_descriptor_sets[0..1])
 			.bind_vertex_buffers(&[(&application_data, application_buffer_prealloc.offset(1))])
-			.bind_pipeline(background_render)
-			.bind_vertex_buffers_partial(1, &[(&application_data, application_buffer_prealloc.offset(3) + structures::background_instance_offs())])
-			.push_constants(&wire_render_layout, &[interlude::ShaderStage::Vertex],
-				0 .. std::mem::size_of::<f32>() as u32 * 4, &[0.125f32, 0.5f32, 0.1875f32, 0.625f32])
+			.inject_commands(|r| background_render.begin(r, 0.125, 0.5, 0.1875, 0.625))
+			.bind_vertex_buffers_partial(1, &[(&application_data, application_buffer_prealloc.offset(3) + structures::InstanceMemory::background_offs())])
 			.draw(4, MAX_BK_COUNT as u32)
-			.bind_pipeline(enemy_render)
+			.inject_commands(|r| enemy_render.begin(r, 0.25, 0.9875, 1.5, 1.0))
 			.bind_vertex_buffers_partial(1, &[(&application_data, application_buffer_prealloc.offset(3))])
-			.push_constants(&wire_render_layout, &[interlude::ShaderStage::Vertex],
-				0 .. std::mem::size_of::<f32>() as u32 * 4, &[0.25f32, 0.9875f32, 1.5f32, 1.0f32])
 			.draw(4, MAX_ENEMY_COUNT as u32)
-			.bind_pipeline(player_render)
-			.bind_vertex_buffers_partial(1, &[(&application_data, application_buffer_prealloc.offset(3) + structures::player_instance_offs())])
+			.inject_commands(|r| player_render.begin(r, 1.5, 1.25, 0.375, 1.0))
+			.bind_vertex_buffers_partial(1, &[(&application_data, application_buffer_prealloc.offset(3) + structures::InstanceMemory::player_rot_offs())])
 			.bind_index_buffer(&application_data, application_buffer_prealloc.offset(2))
-			.push_constants(&wire_render_layout, &[interlude::ShaderStage::Vertex],
-				0 .. std::mem::size_of::<f32>() as u32 * 4, &[1.5f32, 1.25f32, 0.375f32, 1.0f32])
 			.draw_indexed(24, 2, 4)
+			.inject_commands(|r| enemy_rezonators_render.begin(r, 1.25, 0.5, 0.625, 1.0))
+			.bind_vertex_buffers(&[(&application_data, application_buffer_prealloc.offset(1) + structures::VertexMemoryForWireRender::enemy_rezonator_offs()),
+				(&application_data, application_buffer_prealloc.offset(3) + structures::InstanceMemory::enemy_rez_offs())])
+			.draw(3, MAX_ENEMY_COUNT as u32)
 			// .pipeline_barrier(VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, false, &[], &[], &[ibar_gbuffer_end])
 			.next_subpass(false)
 			// Pass 1 : Edge Detection(SMAA 1x) //
@@ -558,9 +588,9 @@ fn app_main() -> Result<(), interlude::EngineError>
 	let mapped_uniform_data = mapped_range.map_mut::<structures::UniformMemory>(application_buffer_prealloc.offset(4));
 	let mapped_instance_data = mapped_range.map_mut::<structures::InstanceMemory>(application_buffer_prealloc.offset(3));
 	let (_, uref_enemy, uref_bk, uref_player_center) = mapped_uniform_data.partial_borrow();
-	let (iref_enemy, iref_bk, iref_player) = mapped_instance_data.partial_borrow();
+	let (iref_enemy, iref_bk, iref_player, iref_enemy_rez) = mapped_instance_data.partial_borrow();
 	let mut background_datastore = logical_resources::BackgroundDatastore::new(uref_bk, iref_bk);
-	let enemy_datastore = RefCell::new(logical_resources::EnemyDatastore::new(uref_enemy, iref_enemy));
+	let enemy_datastore = RefCell::new(logical_resources::EnemyDatastore::new(uref_enemy, iref_enemy, iref_enemy_rez));
 
 	// double-buffered enemy entity list //
 	let mut enemy_entities: LinkedList<Enemy> = LinkedList::new();

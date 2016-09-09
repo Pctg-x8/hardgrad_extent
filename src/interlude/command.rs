@@ -433,6 +433,7 @@ pub trait DrawingCommandRecorder
 	fn bind_index_buffer(self, buffer: &BufferResource, offset: usize) -> Self;
 	
 	fn draw(self, vertex_count: u32, instance_count: u32) -> Self;
+	fn draw_with_voffs(self, vertex_count: u32, vertex_offset: u32, instance_count: u32) -> Self;
 	fn draw_indexed(self, index_count: u32, instance_count: u32, index_offset: u32) -> Self;
 	fn draw_indirect(self, param_buffer: &BufferResource, param_offs: usize) -> Self;
 	fn draw_indirect_mult(self, param_buffer: &BufferResource, param_offs: usize, param_count: u32) -> Self;
@@ -481,6 +482,11 @@ impl <'a> DrawingCommandRecorder for GraphicsCommandRecorder<'a>
 	fn draw(self, vertex_count: u32, instance_count: u32) -> Self
 	{
 		unsafe { vkCmdDraw(*self.buffer_ref.unwrap(), vertex_count, instance_count, 0, 0) };
+		self
+	}
+	fn draw_with_voffs(self, vertex_count: u32, vertex_offset: u32, instance_count: u32) -> Self
+	{
+		unsafe { vkCmdDraw(*self.buffer_ref.unwrap(), vertex_count, instance_count, vertex_offset, 0) };
 		self
 	}
 	fn draw_indexed(self, index_count: u32, instance_count: u32, index_offset: u32) -> Self
@@ -544,6 +550,11 @@ impl <'a> DrawingCommandRecorder for BundleCommandRecorder<'a>
 	fn draw(self, vertex_count: u32, instance_count: u32) -> Self
 	{
 		unsafe { vkCmdDraw(*self.buffer_ref.unwrap(), vertex_count, instance_count, 0, 0) };
+		self
+	}
+	fn draw_with_voffs(self, vertex_count: u32, vertex_offset: u32, instance_count: u32) -> Self
+	{
+		unsafe { vkCmdDraw(*self.buffer_ref.unwrap(), vertex_count, instance_count, vertex_offset, 0) };
 		self
 	}
 	fn draw_indexed(self, index_count: u32, instance_count: u32, index_offset: u32) -> Self
