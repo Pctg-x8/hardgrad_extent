@@ -30,10 +30,6 @@ impl VertexMemoryForWireRender
 }
 impl InstanceMemory
 {
-	pub fn partial_borrow(&mut self) -> (&mut [u32; MAX_ENEMY_COUNT], &mut [u32; MAX_BK_COUNT], &mut [CVector4; 2], &mut [CVector4; MAX_ENEMY_COUNT])
-	{
-		(&mut self.enemy_instance_mult, &mut self.background_instance_mult, &mut self.player_rotq, &mut self.enemy_rez_instance_data)
-	}
 	pub fn background_offs() -> usize { unsafe { std::mem::transmute(&std::mem::transmute::<_, &InstanceMemory>(0usize).background_instance_mult) } }
 	pub fn player_rot_offs() -> usize { unsafe { std::mem::transmute(&std::mem::transmute::<_, &InstanceMemory>(0usize).player_rotq) } }
 	pub fn enemy_rez_offs() -> usize { unsafe { std::mem::transmute(&std::mem::transmute::<_, &InstanceMemory>(0usize).enemy_rez_instance_data) } }
@@ -57,11 +53,4 @@ impl InstanceMemory
 	pub background_instance_data: [BackgroundInstance; MAX_BK_COUNT],
 	pub player_center_tf: CVector4,
 	pub render_target_desc: CVector4
-}
-impl UniformMemory
-{
-	pub fn partial_borrow(&mut self) -> (&mut Matrixes, &mut [CharacterLocation; MAX_ENEMY_COUNT], &mut [BackgroundInstance; MAX_BK_COUNT], &mut CVector4)
-	{
-		(&mut self.projection_matrixes, &mut self.enemy_instance_data, &mut self.background_instance_data, &mut self.player_center_tf)
-	}
 }

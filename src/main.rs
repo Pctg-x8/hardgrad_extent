@@ -11,6 +11,7 @@ extern crate freetype_sys;
 extern crate glob;
 extern crate epoll;
 extern crate socket;
+extern crate rayon;
 #[macro_use] mod vkffi;
 mod render_vk;
 mod interlude;
@@ -23,6 +24,7 @@ mod traits;
 mod vertex_formats;
 use vertex_formats::*;
 mod structures;
+use structures::*;
 mod logical_resources;
 mod utils;
 use nalgebra::*;
@@ -33,9 +35,10 @@ use smaa_extra_textures::*;
 mod block_compression;
 use block_compression::*;
 
+use rayon::prelude::*;
+
 use vkffi::*;
 
-use std::collections::LinkedList;
 use std::cell::RefCell;
 
 // For InputSystem
@@ -45,48 +48,69 @@ pub enum LogicalInputTypes
 	Horizontal, Vertical, Shoot, Slowdown, Overdrive
 }
 
-struct Enemy<'a>
+fn store_quaternion(to: &mut CVector4, q: &Quaternion<f32>)
 {
-	datastore_ref: &'a RefCell<logical_resources::EnemyDatastore<'a>>,
-	block_index: u32, left: f32, living_secs: f32, rezonator_left: u32
+	*to = [q.i, q.j, q.k, q.w];
 }
+
+enum Enemy<'a>
+{
+	Free, Entity
+	{
+		block_index: u32, uniform_ref: &'a mut CharacterLocation, rezonator_iref: &'a mut CVector4,
+		left: f32, living_secs: f32, rezonator_left: u32
+	}, Garbage(u32)
+}
+unsafe impl <'a> std::marker::Send for Enemy<'a> {}
 impl <'a> Enemy<'a>
 {
-	pub fn new(datastore: &'a RefCell<logical_resources::EnemyDatastore<'a>>, init_left: f32) -> Option<Self>
+	pub fn init(init_left: f32, block_index: u32, uref: &'a mut structures::CharacterLocation, iref_rez: &'a mut structures::CVector4) -> Self
 	{
-		let mut datastore_ref = datastore.borrow_mut();
-		datastore_ref.allocate_block().map(move |index|
-		{
-			datastore_ref.update_instance_data(index,
-				UnitQuaternion::new(Vector3::new(0.0f32, 0.0f32, 0.0f32)).quaternion(), UnitQuaternion::new(Vector3::new(0.0f32, 0.0f32, 0.0f32)).quaternion(),
-				&Vector4::new(init_left, 0.0f32, 0.0f32, 0.0f32), 3, 0.0f32);
-			Enemy
-			{
-				datastore_ref: datastore, block_index: index, left: init_left, living_secs: 0.0f32, rezonator_left: 3
-			}
-		})
-	}
-	pub fn update(&mut self, delta_time: f32) -> bool
-	{
-		let current_y = if self.living_secs < 0.875f32
-		{
-			15.0f32 * (1.0f32 - (1.0f32 - self.living_secs / 0.875f32).powi(2)) - 3.0f32
-		}
-		else
-		{
-			15.0f32 + (self.living_secs - 0.875f32) * 2.5f32 - 3.0f32
-		};
-		self.datastore_ref.borrow_mut().update_instance_data(self.block_index,
-			UnitQuaternion::new(Vector3::new(-1.0f32, 0.0f32, 0.75f32).normalize() * (260.0f32 * self.living_secs).to_radians()).quaternion(),
-			UnitQuaternion::new(Vector3::new(1.0f32, -1.0f32, 0.5f32).normalize() * (-260.0f32 * self.living_secs + 13.0f32).to_radians()).quaternion(),
-			&Vector4::new(self.left, current_y, 0.0f32, 0.0f32), self.rezonator_left, delta_time);
-		self.living_secs += delta_time;
+		uref.center_tf = [init_left, 0.0, 0.0, 0.0];
+		store_quaternion(&mut uref.rotq[0], UnitQuaternion::new(Vector3::new(0.0, 0.0, 0.0)).quaternion());
+		store_quaternion(&mut uref.rotq[1], UnitQuaternion::new(Vector3::new(0.0, 0.0, 0.0)).quaternion());
+		*iref_rez = [3.0, 0.0, 0.0, 0.0];
 
-		current_y >= 52.0f32
+		Enemy::Entity
+		{
+			block_index: block_index, uniform_ref: uref, rezonator_iref: iref_rez,
+			left: init_left, living_secs: 0.0f32, rezonator_left: 3
+		}
 	}
-	pub fn die(self)
+	pub fn update(&mut self, delta_time: f32)
 	{
-		self.datastore_ref.borrow_mut().free_block(self.block_index);
+		// update values
+		let died_bi = match self
+		{
+			&mut Enemy::Entity { block_index, ref mut uniform_ref, ref mut rezonator_iref, left: _, ref mut living_secs, rezonator_left } =>
+			{
+				let current_y = if *living_secs < 0.875f32
+				{
+					15.0f32 * (1.0f32 - (1.0f32 - *living_secs / 0.875f32).powi(2)) - 3.0f32
+				}
+				else
+				{
+					15.0f32 + (*living_secs - 0.875f32) * 2.5f32 - 3.0f32
+				};
+				uniform_ref.center_tf[1] = current_y;
+				store_quaternion(&mut uniform_ref.rotq[0], UnitQuaternion::new(Vector3::new(-1.0, 0.0, 0.75).normalize() * (260.0 * *living_secs).to_radians()).quaternion());
+				store_quaternion(&mut uniform_ref.rotq[1], UnitQuaternion::new(Vector3::new(1.0, -1.0, 0.5).normalize() * (-260.0 * *living_secs + 13.0).to_radians()).quaternion());
+				rezonator_iref[0] = rezonator_left as f32;
+				rezonator_iref[1] -= 130.0f32.to_radians() * delta_time;
+				rezonator_iref[2] += 220.0f32.to_radians() * delta_time;
+				*living_secs += delta_time;
+
+				if current_y >= 52.0 { rezonator_iref[0] = 0.0; Some(block_index) } else { None }
+			},
+			_ => None
+		};
+
+		// state change
+		if let Some(bindex) = died_bi { *self = Enemy::Garbage(bindex); }
+	}
+	pub fn is_garbage(&self) -> bool
+	{
+		match self { &Enemy::Garbage(_) => true, _ => false }
 	}
 }
 
@@ -477,9 +501,11 @@ fn app_main() -> Result<(), interlude::EngineError>
 
 	// Debug Information //
 	let frame_time_ms = RefCell::new(0.0f64);
+	let cputime_ms = RefCell::new(0.0f64);
 	let enemy_count = RefCell::new(0u32);
 	let debug_info = try!(interlude::DebugInfo::new(&engine, &[
-		interlude::DebugLine::Float("Frame Time".to_owned(), &frame_time_ms, Some("ms".to_string())),
+		interlude::DebugLine::Float("Frame Time".to_owned(), &frame_time_ms, Some("ms".to_owned())),
+		interlude::DebugLine::Float("CPU Time".to_owned(), &cputime_ms, Some("ms".to_owned())),
 		interlude::DebugLine::UnsignedInt("Enemy Count".to_owned(), &enemy_count, None)
 	], &rp_framebuffer_form, 3, swapchain_viewport));
 
@@ -585,15 +611,22 @@ fn app_main() -> Result<(), interlude::EngineError>
 	let mut frame_index = try!(main_frame.execute_rendering(&engine, &framebuffer_commands, None, Some(&debug_info), &execute_next_signal));
 
 	let mapped_range = try!(appdata_stage.map());
-	let mapped_uniform_data = mapped_range.map_mut::<structures::UniformMemory>(application_buffer_prealloc.offset(4));
-	let mapped_instance_data = mapped_range.map_mut::<structures::InstanceMemory>(application_buffer_prealloc.offset(3));
-	let (_, uref_enemy, uref_bk, uref_player_center) = mapped_uniform_data.partial_borrow();
-	let (iref_enemy, iref_bk, iref_player, iref_enemy_rez) = mapped_instance_data.partial_borrow();
+	let (uref_enemy, uref_bk, uref_player_center) =
+	{
+		let mapped = mapped_range.map_mut::<structures::UniformMemory>(application_buffer_prealloc.offset(4));
+		(&mut mapped.enemy_instance_data, &mut mapped.background_instance_data, &mut mapped.player_center_tf)
+	};
+	let (iref_enemy, iref_bk, iref_player, iref_enemy_rez) =
+	{
+		let mapped = mapped_range.map_mut::<structures::InstanceMemory>(application_buffer_prealloc.offset(3));
+		(&mut mapped.enemy_instance_mult, &mut mapped.background_instance_mult, &mut mapped.player_rotq, &mut mapped.enemy_rez_instance_data)
+	};
 	let mut background_datastore = logical_resources::BackgroundDatastore::new(uref_bk, iref_bk);
-	let enemy_datastore = RefCell::new(logical_resources::EnemyDatastore::new(uref_enemy, iref_enemy, iref_enemy_rez));
+	let mut enemy_datastore = logical_resources::EnemyDatastore::new(iref_enemy);
 
 	// double-buffered enemy entity list //
-	let mut enemy_entities: LinkedList<Enemy> = LinkedList::new();
+	let mut enemy_entities: [Enemy; MAX_ENEMY_COUNT] = unsafe { std::mem::uninitialized() };
+	for n in 0 .. MAX_ENEMY_COUNT { enemy_entities[n] = Enemy::Free; }
 	let mut player = Player::new(uref_player_center, iref_player);
 
 	let mut secs_from_last_fixed = 0.0f32;
@@ -630,6 +663,7 @@ fn app_main() -> Result<(), interlude::EngineError>
 			};
 
 			// normal update
+			let cputime_start = time::PreciseTime::now();
 			input.update();
 			let timescale = (1.0f32 + input[LogicalInputTypes::Slowdown] * 2.0f32) / (1.0f32 + input[LogicalInputTypes::Overdrive]);
 			let delta_time_sec = (delta_time.num_milliseconds() as f32 / 1000.0f32) / timescale;
@@ -638,59 +672,34 @@ fn app_main() -> Result<(), interlude::EngineError>
 
 			if enemy_next_appear
 			{
-				if Enemy::new(&enemy_datastore, enemy_left_range.ind_sample(&mut randomizer)).map(|e| enemy_entities.push_back(e)) == None
+				let block_index = enemy_datastore.allocate_block();
+				if let Some(bindex) = block_index
 				{
-					warn!("Enemy Datastore is full!!");
+					let bindex = bindex as usize;
+					enemy_entities[bindex] = unsafe
+					{
+						let uref_enemy_ptr = uref_enemy.as_mut_ptr();
+						let iref_enemy_rez_ptr = iref_enemy_rez.as_mut_ptr();
+						Enemy::init(enemy_left_range.ind_sample(&mut randomizer), bindex as u32,
+							&mut *uref_enemy_ptr.offset(bindex as isize), &mut *iref_enemy_rez_ptr.offset(bindex as isize))
+					};
+					*enemy_count.borrow_mut() += 1;
 				}
-				else { *enemy_count.borrow_mut() += 1; }
+				else { warn!("Enemy Datastore is full!!"); }
 				enemy_next_appear = false;
 			}
-			fn process_2<'a, F>(mut livings: LinkedList<Enemy<'a>>, mut purged_after: LinkedList<Enemy<'a>>,
-				enemy_decrease_cb: F, delta_time_sec: f32) -> LinkedList<Enemy<'a>> where F: Fn()
+			enemy_entities.par_iter_mut().for_each(|e| e.update(delta_time_sec));
+			for e in enemy_entities.iter_mut().filter(|e| e.is_garbage())
 			{
-				if let Some(died_e) = purged_after.pop_front() { died_e.die(); }
-				let mut purge_index: Option<usize> = None;
-				for (idx, e) in purged_after.iter_mut().enumerate()
-				{
-					if e.update(delta_time_sec)
-					{
-						enemy_decrease_cb();
-						purge_index = Some(idx);
-						break;
-					}
-				}
-				if let Some(purge_index) = purge_index
-				{
-					let mut purged_before = purged_after;
-					let purged_after = purged_before.split_off(purge_index);
-					livings.append(&mut purged_before);
-					process_2(livings, purged_after, enemy_decrease_cb, delta_time_sec)
-				}
-				else
-				{
-					livings.append(&mut purged_after);
-					livings
-				}
-			}
-			let mut purge_index: Option<usize> = None;
-			for (idx, e) in enemy_entities.iter_mut().enumerate()
-			{
-				if e.update(delta_time_sec)
-				{
-					*enemy_count.borrow_mut() -= 1;
-					purge_index = Some(idx);
-					break;
-				}
-			}
-			if let Some(purge_index) = purge_index
-			{
-				let purged_after = enemy_entities.split_off(purge_index);
-				enemy_entities = process_2(enemy_entities, purged_after, || { *enemy_count.borrow_mut() -= 1; }, delta_time_sec);
+				match e { &mut Enemy::Garbage(bindex) => enemy_datastore.free_block(bindex), _ => unreachable!() };
+				*e = Enemy::Free;
+				*enemy_count.borrow_mut() -= 1;
 			}
 			player.update(delta_time_sec, &input);
 
 			background_next_appear = false;
 			prev_time = time::PreciseTime::now();
+			*cputime_ms.borrow_mut() = cputime_start.to(time::PreciseTime::now()).num_microseconds().unwrap_or(0) as f64 / 1000.0f64;
 		}
 
 		if secs_from_last_fixed >= 1.0f32 / 60.0f32
