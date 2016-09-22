@@ -106,7 +106,7 @@ fn optimize_alpha_u<'a, PointRef: BlockAdapter<'a>>(points: &'a PointRef, steps:
 	const MIN_VALUE: f32 = 0.0;
 
 	// Find Min and Max points, as starting point
-	let (mut fx, mut fy) = if steps == 8
+	let (mut minv, mut maxv) = if steps == 8
 	{
 		points.iter().fold((MAX_VALUE, MIN_VALUE), |(mx, mn), x| (mx.min(x), mn.max(x)))
 	}
@@ -117,17 +117,18 @@ fn optimize_alpha_u<'a, PointRef: BlockAdapter<'a>>(points: &'a PointRef, steps:
 			if x > mn && x < MAX_VALUE { x } else { mn }
 		))
 	};
-	fy = if steps == 6 && fx == fy { MAX_VALUE } else { fy };
+	maxv = if steps == 6 && minv == maxv { MAX_VALUE } else { maxv };
 
 	// Use Newton's Method to find local minima of sum-of-squares error
 	let f_steps = steps - 1;
 	for _ in 0 .. 8
 	{
-		if fy - fx < 1.0f32 / 256.0f32 { break; }
-		let f_scale = f_steps as f32 / (fy - fx);
+		let diff = maxv - minv;
+		if diff < (1.0f32 / 256.0f32) { break; }
+		let f_scale = f_steps as f32 / diff;
 
 		// Calculate new steps
-		let mut p_steps: Vec<f32> = (0 .. steps).map(|n| c[n] * fx + d[n] * fy).collect();
+		let mut p_steps: Vec<f32> = (0 .. steps).map(|n| c[n] * minv + d[n] * maxv).collect();
 		if steps == 6
 		{
 			p_steps.push(MIN_VALUE); p_steps.push(MAX_VALUE);
@@ -137,14 +138,14 @@ fn optimize_alpha_u<'a, PointRef: BlockAdapter<'a>>(points: &'a PointRef, steps:
 		let (mut dx, mut dy, mut d2x, mut d2y) = (0.0f32, 0.0f32, 0.0f32, 0.0f32);
 		for p in (0 .. BLOCK_LEN).flat_map(|x| (0 .. BLOCK_LEN).map(move |y| (x, y))).map(|(x, y)| points.at(x, y))
 		{
-			let f_dot = (p - fx) * f_scale;
+			let f_dot = (p - minv) * f_scale;
 			let i_step = if f_dot <= 0.0
 			{
-				if steps == 6 && p <= fx * 0.5 { 6 } else { 0 }
+				if steps == 6 && p <= minv * 0.5 { 6 } else { 0 }
 			}
 			else if f_dot >= f_steps as f32
 			{
-				if steps == 6 && p >= (fy + 1.0) * 0.5 { 7 } else { steps - 1 }
+				if steps == 6 && p >= (maxv + 1.0) * 0.5 { 7 } else { steps - 1 }
 			}
 			else { (f_dot + 0.5) as usize };
 
@@ -161,13 +162,13 @@ fn optimize_alpha_u<'a, PointRef: BlockAdapter<'a>>(points: &'a PointRef, steps:
 		}
 
 		// Move endpoints
-		if d2x > 0.0 { fx -= dx / d2x; }
-		if d2y > 0.0 { fy -= dy / d2y; }
-		if fx > fy { std::mem::swap(&mut fx, &mut fy); }
+		if d2x > 0.0 { minv -= dx / d2x; }
+		if d2y > 0.0 { maxv -= dy / d2y; }
+		if minv > maxv { std::mem::swap(&mut minv, &mut maxv); }
 		if dx * dx < 1.0 / 64.0 && dy * dy < 1.0 / 64.0 { break; }
 	}
 
-	(fx.max(MIN_VALUE).min(MAX_VALUE), fy.max(MIN_VALUE).min(MAX_VALUE))
+	(minv.max(MIN_VALUE).min(MAX_VALUE), maxv.max(MIN_VALUE).min(MAX_VALUE))
 }
 
 // returns (endpoint0, endpoint1)
