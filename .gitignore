@@ -3,3 +3,5 @@ target
 .vscode
 resources/
 *.ttf
+*.psd
+
