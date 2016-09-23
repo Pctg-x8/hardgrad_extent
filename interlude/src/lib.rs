@@ -1,4 +1,19 @@
+// Interlude crate: In-home Multimedia Framework powered by Vulkan
 
+// External Crates
+extern crate libc;
+#[macro_use] extern crate log;
+extern crate xcb;
+extern crate nalgebra;
+extern crate freetype_sys;
+extern crate unicode_normalization;
+extern crate ansi_term;
+extern crate epoll;
+
+// LowLevel APIs
+#[macro_use] mod vk;
+
+// Interlude
 mod error;
 mod engine;
 mod device;
@@ -16,9 +31,10 @@ mod internal_traits;
 // platform dependents
 mod linux;
 
+// Extra Objects
 mod debug_info;
 
-// Exported APIs //
+// --- Exported APIs --- //
 pub use self::error::*;
 pub use self::engine::DeviceFeatures;
 pub use self::framebuffer::{AttachmentDesc, AttachmentRef, PassDesc, PassDependency, AttachmentClearValue};
@@ -37,6 +53,7 @@ pub use self::descriptor::{ShaderStage, Descriptor, BufferInfo, ImageInfo, Descr
 pub use self::debug_info::DebugLine;
 pub use self::input::*;
 pub use self::data::*;
+pub use self::vk::ffi;
 
 pub mod traits
 {

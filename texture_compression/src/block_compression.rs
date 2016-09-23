@@ -17,6 +17,7 @@
 //-------------------------------------------------------------------------------------
 
 use std;
+use super::CompressionAlgorithm;
 
 const BLOCK_LEN: usize = 4;
 // const BLOCK_SIZE: usize = BLOCK_LEN * BLOCK_LEN;
@@ -277,12 +278,8 @@ fn encode_block_double(src: &[u8], pitch: usize, bx: usize, by: usize) -> Compre
 	cbs
 }
 
-pub struct BC4;
-pub struct BC5;
-pub trait CompressionAlgorithm
-{
-	fn compress(source: &[u8], size: (usize, usize)) -> Vec<u8>;
-}
+pub enum BC4 {}
+pub enum BC5 {}
 impl CompressionAlgorithm for BC4
 {
 	fn compress(source: &[u8], size: (usize, usize)) -> Vec<u8>
@@ -309,5 +306,15 @@ impl CompressionAlgorithm for BC5
 			encode_block_double(&source, size.0, bx, by)
 		}).collect::<Vec<_>>();
 		unsafe { std::slice::from_raw_parts(compressed_blocks.as_ptr() as *const u8, compressed_blocks.len() * 16) }.into()
+	}
+}
+
+#[cfg(test)]
+mod testings
+{
+	#[test] fn v8_to_u64_encoding()
+	{
+		assert_eq!(super::v8_to_u64_encode(&[0, 1, 2, 3, 4, 5]), 0b101100011010001000);
+		assert_eq!(super::v8_to_u64_encode(&[7, 5, 1, 3, 2, 3, 4, 6]), 0b110100011010011001101111);
 	}
 }

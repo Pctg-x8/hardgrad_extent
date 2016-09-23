@@ -1,7 +1,7 @@
 // Prelude: Synchronize Primitives(Fence and QueueFence(Semaphore))
 
 use super::internals::*;
-use render_vk::wrap as vk;
+use vk;
 
 pub trait QueueFenceInternals
 {

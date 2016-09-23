@@ -1,9 +1,8 @@
 // Prelude: RenderPass and Framebuffer
 
 use super::internals::*;
-use std;
-use vkffi::*;
-use render_vk::wrap as vk;
+use {std, vk};
+use vk::ffi::*;
 use std::rc::Rc;
 
 pub struct AttachmentDesc

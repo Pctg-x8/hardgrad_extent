@@ -1,10 +1,9 @@
 // Prelude: Device Structure
 
 use super::internals::*;
-use std;
+use {std, vk};
+use vk::ffi::*;
 use std::rc::Rc;
-use vkffi::*;
-use render_vk::wrap as vk;
 
 pub trait DeviceExports
 {

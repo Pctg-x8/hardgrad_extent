@@ -1,11 +1,10 @@
 // Prelude: Primitive Shading(Shaders and Pipelines)
 
-use super::internals::*;
-use std;
-use vkffi::*;
-use render_vk::wrap as vk;
-use traits::*;
+use {std, vk};
+use vk::ffi::*;
+use vk::traits::*;
 use std::ffi::CString;
+use super::internals::*;
 
 pub struct VertexInputState(Vec<VertexBinding>, Vec<VertexAttribute>);
 #[derive(Clone)]

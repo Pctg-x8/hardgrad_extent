@@ -1,6 +1,6 @@
 // Traits
 
-use vkffi::*;
+use interlude::ffi::*;
 
 /// Indicates the object can produce window
 pub trait WindowProvider<WindowHandle>

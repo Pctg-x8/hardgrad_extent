@@ -3,10 +3,7 @@
 
 // Vulkan C to Rust FFI functions
 
-use vkffi::enums::*;
-use vkffi::structs::*;
-use vkffi::objects::*;
-use vkffi::types::*;
+use super::*;
 use std::os::raw::*;
 use libc::size_t;
 use xcb;

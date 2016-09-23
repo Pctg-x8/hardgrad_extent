@@ -1,14 +1,13 @@
-// Prelude: Engine and EngineLogger
+// Interlude: Engine and EngineLogger
 
 #![allow(dead_code)]
 
 use super::internals::*;
-use {std, log};
+use {std, log, vk};
+use vk::ffi::*;
+use vk::traits::*;
 use ansi_term::*;
 use std::rc::Rc;
-use vkffi::*;
-use render_vk::wrap as vk;
-use traits::*;
 use libc::size_t;
 use std::os::raw::*;
 use std::ffi::CStr;

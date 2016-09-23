@@ -1,7 +1,7 @@
 // Prelude: Error Enums and Crash Handling
 
 use std;
-use vkffi::*;
+use vk::ffi::*;
 use std::os::raw::*;
 use freetype_sys::*;
 
@@ -42,7 +42,7 @@ impl std::fmt::Debug for EngineError
 }
 pub fn crash(err: EngineError) -> !
 {
-	error!(target: "Prelude", "{:?}", err);
+	error!(target: "Interlude", "{:?}", err);
 	panic!("Application has exited due to {}", match err
 	{
 		EngineError::DeviceError(_) => "Device Error",

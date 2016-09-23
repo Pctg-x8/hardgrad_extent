@@ -13,7 +13,7 @@
 #![allow(non_camel_case_types)]
 #![allow(dead_code)]
 
-use interlude::internals::*;
+use super::super::internals::*;
 use {std, libc};
 use std::io::Read;
 use std::collections::HashMap;

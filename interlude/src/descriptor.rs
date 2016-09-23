@@ -3,9 +3,8 @@
 #![allow(dead_code)]
 
 use super::internals::*;
-use std;
-use vkffi::*;
-use render_vk::wrap as vk;
+use {std, vk};
+use vk::ffi::*;
 
 #[derive(Clone, Copy)]
 pub enum ShaderStage { Vertex, TessControl, TessEvaluate, Geometry, Fragment }

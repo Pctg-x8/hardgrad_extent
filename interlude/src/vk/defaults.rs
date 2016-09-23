@@ -1,4 +1,4 @@
-use vkffi::*;
+use super::ffi::*;
 use std;
 
 impl std::default::Default for VkApplicationInfo

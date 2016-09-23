@@ -5,17 +5,14 @@ authors = ["S.Percentage <Syn.Tri.Naga@gmail.com>"]
 publish = false
 
 [dependencies]
-libc = "0.2.12"
-xcb = "0.7.3"
 nalgebra = "0.8.2"
+log = "0.3.6"
 rand = "0.3.14"
 time = "0.1.35"
-unicode-normalization = "0.1.2"
 thread-scoped = "1.0.1"
-log = "0.3.6"
-ansi_term = "0.8.0"
-freetype-sys = "0.4.0"
 glob = "*"
-epoll = "0.6.0"
-socket = "0.0.7"
 rayon = "0.4.0"
+
+interlude = { path = "./interlude" }
+texture_compression = { path = "./texture_compression" }
+psdloader = { path = "./psdloader" }

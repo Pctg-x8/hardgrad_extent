@@ -1,22 +1,20 @@
-extern crate libc;
-extern crate xcb;
+
 extern crate nalgebra;
 extern crate rand;
 extern crate time;
-extern crate unicode_normalization;
 extern crate thread_scoped;
-#[macro_use] extern crate log;
-extern crate ansi_term;
-extern crate freetype_sys;
 extern crate glob;
-extern crate epoll;
-extern crate socket;
 extern crate rayon;
-#[macro_use] mod vkffi;
-mod render_vk;
-mod interlude;
+#[macro_use] extern crate log;
+
+extern crate interlude;
+extern crate texture_compression;
+extern crate psdloader;
+
+use interlude::ffi::*;
 use interlude::traits::*;
 use interlude::{InputKeys, InputAxis, InputType};
+use texture_compression::*;
 
 mod constants;
 use constants::*;
@@ -32,12 +30,8 @@ use rand::distributions::*;
 
 mod smaa_extra_textures;
 use smaa_extra_textures::*;
-mod block_compression;
-use block_compression::*;
 
 use rayon::prelude::*;
-
-use vkffi::*;
 
 use std::cell::RefCell;
 
@@ -178,7 +172,7 @@ fn app_main() -> Result<(), interlude::EngineError>
 	utils::memory_management_test();
 
 	let engine = try!{
-		interlude::Engine::new_with_features("HardGrad->Extent", VK_MAKE_VERSION!(0, 0, 1), interlude::DeviceFeatures::new().enable_block_texture_compression())
+		interlude::Engine::new_with_features("HardGrad->Extent", 0x01, interlude::DeviceFeatures::new().enable_block_texture_compression())
 			.map(|e| e.with_assets_in(std::env::current_dir().unwrap()))
 	};
 	let main_frame = try!(engine.create_render_window(VkExtent2D(640, 480), "HardGrad -> Extent"));

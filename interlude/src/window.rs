@@ -3,11 +3,10 @@
 #![allow(dead_code)]
 
 use super::internals::*;
-use std;
+use {std, vk};
 use std::rc::Rc;
-use vkffi::*;
-use render_vk::wrap as vk;
-use traits::*;
+use vk::ffi::*;
+use vk::traits::*;
 use xcb::ffi::*;
 use std::os::raw::*;
 

@@ -3,11 +3,10 @@
 #![allow(dead_code)]
 
 use super::internals::*;
-use std;
+use {std, vk};
+use vk::ffi::*;
+use vk::traits::*;
 use std::rc::Rc;
-use vkffi::*;
-use render_vk::wrap as vk;
-use traits::*; use render_vk::traits::*;
 
 pub struct CommandPool
 {

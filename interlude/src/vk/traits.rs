@@ -1,5 +1,5 @@
 use std;
-use vkffi::*;
+use super::ffi::*;
 
 pub trait ResultValueToObject where Self: std::marker::Sized
 {
@@ -17,4 +17,13 @@ pub trait OnDeviceMemory
 	type RangeType: std::marker::Sized;
 	type StructureType: std::marker::Sized;
 	fn memory_barrier(&self, range: Self::RangeType, src_access_mask: VkAccessFlags, dst_access_mask: VkAccessFlags) -> Self::StructureType;
+}
+pub trait NativeOwner<NativeObjectT: Copy>
+{
+	fn get(&self) -> NativeObjectT;
+}
+pub trait HasParent
+{
+	type ParentRefType: ?Sized;
+	fn parent(&self) -> &Self::ParentRefType;
 }

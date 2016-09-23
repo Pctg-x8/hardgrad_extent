@@ -2,7 +2,7 @@
 #![allow(dead_code)]
 
 // Vulkan C to Rust FFI Enumerations
-use vkffi::types::VkFlags;
+use super::types::VkFlags;
 
 #[repr(C)]
 pub enum VkSystemAllocationScope

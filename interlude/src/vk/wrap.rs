@@ -1,12 +1,11 @@
 // Objective Vulkan Wrapping
 
-use vkffi::*;
+use super::ffi::*;
+use super::traits::*;
 use std;
-use traits::*;
 use std::ffi::*;
 use std::os::raw::*;
 use libc::size_t;
-use render_vk::traits::*;
 use std::rc::Rc;
 use xcb;
 

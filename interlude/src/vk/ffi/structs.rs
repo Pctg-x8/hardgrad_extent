@@ -6,11 +6,7 @@
 
 use std::os::raw::*;
 use libc::size_t;
-use vkffi::enums::*;
-use vkffi::types::*;
-use vkffi::functions::*;
-use vkffi::objects::*;
-use vkffi::macros::*;
+use super::*;
 use xcb;
 
 // Basic Types(Copyable) //

@@ -1,13 +1,11 @@
-// Prelude: Resources(Buffer and Image)
+// Interlude: Resources(Buffer and Image)
 
 #![allow(dead_code)]
 
 use super::internals::*;
-use std;
-use vkffi::*;
-use render_vk::wrap as vk;
-use traits::*;
-use render_vk::traits::*;
+use {std, vk};
+use vk::ffi::*;
+use vk::traits::*;
 use std::os::raw::c_void;
 use std::rc::Rc;
 
@@ -291,7 +289,7 @@ impl BufferPreallocator
 pub mod ImageUsagePresets
 {
 	#![allow(non_upper_case_globals)]
-	use vkffi::*;
+	use vk::ffi::*;
 	
 	pub const AsColorTexture: VkImageUsageFlags = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
 }

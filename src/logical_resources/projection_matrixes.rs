@@ -1,6 +1,6 @@
 use nalgebra::*;
 
-use vkffi::*;
+use interlude::ffi::*;
 use structures;
 
 pub fn setup_parameters(memory_ref: &mut structures::UniformMemory, screen_size: VkExtent2D)

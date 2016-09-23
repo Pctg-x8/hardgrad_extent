@@ -4,9 +4,9 @@
 #![allow(dead_code)]
 
 use super::internals::*;
-use vkffi::*;
-use std::collections::{LinkedList, HashMap};
 use std;
+use vk::ffi::*;
+use std::collections::{LinkedList, HashMap};
 use std::cell::RefCell;
 use freetype_sys::*;
 use std::ffi::CString;
