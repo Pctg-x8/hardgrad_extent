@@ -1,9 +1,12 @@
+#![allow(dead_code)]
+
 use std;
 use std::io::prelude::*;
 use super::{
 	PSDChannelImageData, UnsizedNativeFileContent, NativeFileContent,
 	BinaryLoaderUtils, PSDLoadingError, PascalString
 };
+use std::collections::HashMap;
 
 // Flags //
 #[repr(C, packed)] pub struct PSDLayerMaskFlags(u8);
@@ -103,7 +106,7 @@ impl PSDLayerRect
 pub struct PSDMaskParameterPair { pub density: Option<u8>, pub feather: Option<f64> }
 #[repr(C, packed)] pub struct PSDLayerBlendingRange { src: u32, dest: u32 }
 #[repr(C, packed)] struct PSDChannelInfo { id: i16, length: u32 }
-#[allow(dead_code)] pub struct PSDChannel { id: i16, data: PSDChannelImageData }
+#[allow(dead_code)] pub struct PSDChannel { pub id: i16, pub data: PSDChannelImageData }
 
 // Large Records //
 pub enum PSDLayerMask
@@ -201,17 +204,25 @@ pub struct PSDAdditionalLayerInfo
 {
 	pub key_chars: [u8; 4], pub data: Vec<u8>
 }
+impl PSDAdditionalLayerInfo
+{
+	fn check_signature(sin: u32) -> Result<(), PSDLoadingError>
+	{
+		static SIM: [u8; 4] = ['8' as u8, 'B' as u8, 'I' as u8, 'M' as u8];
+		static S64: [u8; 4] =  ['8' as u8, 'B' as u8, '6' as u8, '4' as u8];
+
+		if sin == u32::from_be(unsafe { std::mem::transmute(SIM) }) || sin == u32::from_be(unsafe { std::mem::transmute(S64) })
+		{
+			Ok(())
+		}
+		else { Err(PSDLoadingError::SignatureMismatching("PSDAdditionalLayerInfo")) }
+	}
+}
 impl UnsizedNativeFileContent for PSDAdditionalLayerInfo
 {
 	fn read_from_file(mut fp: std::fs::File) -> Result<(Self, usize, std::fs::File), PSDLoadingError>
 	{
-		let sig_im: u32 = u32::from_be(unsafe { std::mem::transmute(['8' as u8, 'B' as u8, 'I' as u8, 'M' as u8]) });
-		let sig_64: u32 = u32::from_be(unsafe { std::mem::transmute(['8' as u8, 'B' as u8, '6' as u8, '4' as u8]) });
-		try!(fp.read_u32().map_err(PSDLoadingError::from).and_then(|sig|
-		{
-			println!("ALI Signature: {:08x}", sig);
-			if sig == sig_im || sig == sig_64 { Ok(()) } else { Err(PSDLoadingError::SignatureMismatching("PSDAdditionalLayerInfo")) }
-		}));
+		try!(fp.read_u32().map_err(PSDLoadingError::from).and_then(Self::check_signature));
 		let mut key = [0u8; 4];
 		try!(fp.read_exact(&mut key));
 		let data_length = try!(fp.read_u32()) as usize;
@@ -246,12 +257,11 @@ impl UnsizedNativeFileContent for PSDLayerRecord
 			channel_informations.push(try!(fp.read_struct::<PSDChannelInfo>()));
 		}
 		try!(fp.read_u32().map_err(PSDLoadingError::from).and_then(|sig|
-		{
 			if sig != u32::from_be(unsafe { std::mem::transmute(['8' as u8, 'B' as u8, 'I' as u8, 'M' as u8]) })
 			{
 				Err(PSDLoadingError::SignatureMismatching("PSDLayerRec"))
 			} else { Ok(()) }
-		}));
+		));
 		let blend_mode_key = PSDBlendModeKey::from(try!(fp.read_u32()));
 		let opacity = try!(fp.read_u8());
 		let clipping = PSDLayerClipping::from(try!(fp.read_u8()));
@@ -289,7 +299,7 @@ impl UnsizedNativeFileContent for PSDLayerRecord
 pub struct PSDLayer
 {
 	pub content_rect: PSDLayerRect,
-	pub channels: Vec<PSDChannel>,
+	pub channels: HashMap<i16, PSDChannelImageData>,
 	pub blend_mode_key: PSDBlendModeKey,
 	pub opacity: u8, pub clipping: PSDLayerClipping, pub flags: PSDLayerFlags,
 	pub layer_masks: PSDLayerMask, pub blending_ranges: Option<PSDLayerBlendingRanges>,
@@ -316,19 +326,22 @@ impl UnsizedNativeFileContent<Vec<PSDLayer>> for PSDLayerInfo
 		let mut layers = Vec::with_capacity(layer_count);
 		for l in layer_records.into_iter()
 		{
-			let mut channel_datas = Vec::with_capacity(l.channel_info.len());
+			let mut channels = HashMap::with_capacity(l.channel_info.len());
 			for ch in l.channel_info.into_iter()
 			{
 				try!(if left_bytes <= 0 { Err(PSDLoadingError::StructureSizeMismatching) } else { Ok(()) });
 				let (rec, fr) = try!(PSDChannelImageData::read_from_file(frest, u32::from_be(ch.length) as usize));
-				channel_datas.push(PSDChannel { id: ch.id, data: rec });
+				channels.insert(ch.id, rec);
 				left_bytes -= u32::from_be(ch.length) as usize;
 				frest = fr;
 			}
 			layers.push(PSDLayer
 			{
-				content_rect: l.content_rect,
-				channels: channel_datas,
+				content_rect: PSDLayerRect
+				{
+					left: u32::from_be(l.content_rect.left), right: u32::from_be(l.content_rect.right),
+					bottom: u32::from_be(l.content_rect.bottom), top: u32::from_be(l.content_rect.top)
+				}, channels: channels,
 				blend_mode_key: l.blend_mode_key,
 				opacity: l.opacity, clipping: l.clipping, flags: l.flags,
 				layer_masks: l.layer_masks, blending_ranges: l.blending_ranges, name: l.name,
@@ -391,3 +404,23 @@ impl NativeFileContent for PSDLayerAndMaskInfo
 		Ok((PSDLayerAndMaskInfo { layers: layers, global_mask: gm, globalmask_adinfo: gminfo }, frest))
 	}
 }
+
+macro_rules! WeakEnums
+{
+	(pub enum $name: ident: $base_type: ty { $($vname: ident = $v: expr),* }) =>
+	{
+		#[allow(non_snake_case)] pub mod PSDChannelIndices
+		{
+			#![allow(non_upper_case_globals)]
+
+			$(
+				pub const $vname: $base_type = $v;
+			)*
+		}
+	}
+}
+
+WeakEnums!(pub enum PSDChannelIndices: i16
+{
+	Alpha = -1, Red = 0, Green = 1, Blue = 2, UserLayerMask = -2
+});

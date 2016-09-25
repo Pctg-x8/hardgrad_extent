@@ -1,7 +1,5 @@
 
-use nalgebra::*;
 use utils::*;
-use structures;
 use constants::*;
 
 pub struct EnemyDatastore<'a>

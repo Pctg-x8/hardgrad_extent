@@ -124,7 +124,7 @@ impl NativeFileContent for PSDHeader
 #[allow(dead_code)]
 pub struct PhotoshopDocument
 {
-	channels: usize, width: usize, height: usize, depth: usize, color_mode: PSDColorMode,
+	pub channels: usize, pub width: usize, pub height: usize, pub depth: usize, color_mode: PSDColorMode,
 	color_data: PSDColorModeData, image_resources: Vec<PSDImageResource>, layer_masks: PSDLayerAndMaskInfo,
 	combined_image_data: PSDImageData
 }
@@ -142,11 +142,20 @@ impl PhotoshopDocument
 
 			Ok(PhotoshopDocument
 			{
-				channels: header.channels as usize, width: header.width as usize, height: header.height as usize, depth: header.depth as usize,
+				channels: u16::from_be(header.channels) as usize,
+				width: u32::from_be(header.width) as usize, height: u32::from_be(header.height) as usize, depth: u16::from_be(header.depth) as usize,
 				color_mode: PSDColorMode::from(u16::from_be(header.color_mode)),
 				color_data: color_mode_data, image_resources: image_resources, layer_masks: layers, combined_image_data: combined
 			})
 		})
+	}
+	pub fn combined_raw_image_data(&self) -> DecompressedPSDImageData
+	{
+		self.combined_image_data.decompress(self.width, self.height, self.channels)
+	}
+	pub fn layer_raw_channel_image_data(&self, layer_index: usize, channel_index: i16) -> DecompressedChannelImageData
+	{
+		self.layer_masks.layers[layer_index].channels[&channel_index].decompress(&self.layer_masks.layers[layer_index].content_rect)
 	}
 }
 
@@ -159,11 +168,16 @@ mod tests
 	fn loadable_full_color()
 	{
 		let psd = PhotoshopDocument::open("../assets/graphs/playerbullet.psd").unwrap();
+		assert_eq!(psd.channels, 4);
 		assert_eq!(psd.color_mode, PSDColorMode::RGB);
 		assert!(psd.color_data.same_type(&PSDColorModeData::None));
 		assert_eq!(psd.image_resources[0].id, PSDImageResourceID::CaptionDigest);
 		assert!(!psd.layer_masks.layers.is_empty());
 		assert_eq!(psd.layer_masks.layers[0].additional_infos[0].key_chars, ['l' as u8, 'u' as u8, 'n' as u8, 'i' as u8]);
 		assert_eq!(psd.layer_masks.globalmask_adinfo[0].key_chars, ['P' as u8, 'a' as u8, 't' as u8, 't' as u8]);
+		let decompressed = psd.combined_raw_image_data();
+		let decompressed_alpha = psd.layer_raw_channel_image_data(0, PSDChannelIndices::Alpha);
+		assert_eq!(decompressed.pixel(0, 0)[3], 0x00);
+		assert_eq!(decompressed_alpha.fetch(0, 0), 0x00);
 	}
 }

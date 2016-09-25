@@ -15,6 +15,7 @@ use interlude::ffi::*;
 use interlude::traits::*;
 use interlude::{InputKeys, InputAxis, InputType};
 use texture_compression::*;
+use psdloader::*;
 
 mod constants;
 use constants::*;
@@ -166,6 +167,19 @@ impl <'a> WireRenderCommon<'a>
 	}
 }
 
+fn pack_color(src: DecompressedPSDImageData) -> Vec<u8>
+{
+	let mut color_pixels = Vec::new();
+	for (x, y) in (0 .. src.height).flat_map(|y| (0 .. src.width).map(move |x| (x, y)))
+	{
+		for c in 0 .. src.channels
+		{
+			color_pixels.push(src.fetch(x, y, c));
+		}
+	}
+	color_pixels
+}
+
 fn main() { if let Err(e) = app_main() { interlude::crash(e); } }
 fn app_main() -> Result<(), interlude::EngineError>
 {
@@ -179,12 +193,14 @@ fn app_main() -> Result<(), interlude::EngineError>
 	let VkExtent2D(frame_width, frame_height) = main_frame.get_extent();
 	let execute_next_signal = try!(engine.create_fence());
 
+	let playerbullet_image = PhotoshopDocument::open(engine.parse_asset("graphs.playerbullet", "psd")).unwrap();
 	let gbuffer_desc = interlude::ImageDescriptor2::new(VkFormat::R8G8B8A8_UNORM, main_frame.get_extent(), interlude::ImageUsagePresets::AsColorTexture).device_resource();
 	let edgebuffer_desc = interlude::ImageDescriptor2::new(VkFormat::R8G8_UNORM, main_frame.get_extent(), interlude::ImageUsagePresets::AsColorTexture).device_resource();
 	let blend_weight_desc = interlude::ImageDescriptor2::new(VkFormat::R8G8B8A8_UNORM, main_frame.get_extent(), interlude::ImageUsagePresets::AsColorTexture).device_resource();
 	let smaa_areatex_desc = interlude::ImageDescriptor2::new(VkFormat::BC5_UNORM_BLOCK, VkExtent2D(AREATEX_WIDTH, AREATEX_HEIGHT), VK_IMAGE_USAGE_SAMPLED_BIT);
 	let smaa_searchtex_desc = interlude::ImageDescriptor2::new(VkFormat::BC4_UNORM_BLOCK, VkExtent2D(SEARCHTEX_WIDTH, SEARCHTEX_HEIGHT), VK_IMAGE_USAGE_SAMPLED_BIT);
-	let imagebuffer_placement = interlude::ImagePreallocator::new().image_2d(vec![&gbuffer_desc, &edgebuffer_desc, &blend_weight_desc, &smaa_areatex_desc, &smaa_searchtex_desc]);
+	let playerbullet_desc = interlude::ImageDescriptor2::new(VkFormat::R8G8B8A8_UNORM, VkExtent2D(playerbullet_image.width as u32, playerbullet_image.height as u32), interlude::ImageUsagePresets::AsColorTexture);
+	let imagebuffer_placement = interlude::ImagePreallocator::new().image_2d(vec![&gbuffer_desc, &edgebuffer_desc, &blend_weight_desc, &smaa_areatex_desc, &smaa_searchtex_desc, &playerbullet_desc]);
 	let (backbuffers, stage_images) = try!(engine.create_double_image(&imagebuffer_placement));
 	let (backbuffers, stage_images) = (backbuffers, stage_images.unwrap());
 	let gbuffer_view = try!(engine.create_image_view_2d(backbuffers.dim2(0), VkFormat::R8G8B8A8_UNORM,
@@ -197,6 +213,8 @@ fn app_main() -> Result<(), interlude::EngineError>
 		interlude::ComponentMapping::double_swizzle_rep(interlude::ComponentSwizzle::R, interlude::ComponentSwizzle::G), interlude::ImageSubresourceRange::base_color()));
 	let smaa_searchtex_view = try!(engine.create_image_view_2d(backbuffers.dim2(4), VkFormat::BC4_UNORM_BLOCK,
 		interlude::ComponentMapping::single_swizzle(interlude::ComponentSwizzle::R), interlude::ImageSubresourceRange::base_color()));
+	let playerbullet_view = try!(engine.create_image_view_2d(backbuffers.dim2(5), VkFormat::R8G8B8A8_UNORM,
+		interlude::ComponentMapping::straight(), interlude::ImageSubresourceRange::base_color()));
 	let gbuffer_sampler = try!(engine.create_sampler(&interlude::SamplerState::new()));
 	try!(stage_images.map().map(|mapped|
 	{
@@ -206,6 +224,8 @@ fn app_main() -> Result<(), interlude::EngineError>
 		let searchtex_compressed = BC4::compress(&SEARCHTEX_BYTES, (SEARCHTEX_WIDTH as usize, SEARCHTEX_HEIGHT as usize));
 		mapped.map_mut::<[u8; SEARCHTEX_SIZE as usize / 2]>(stage_images.image2d_offset(1) as usize).copy_from_slice(&searchtex_compressed);
 		// mapped.map_mut::<[u8; SEARCHTEX_SIZE as usize]>(stage_images.image2d_offset(1) as usize).copy_from_slice(&SEARCHTEX_BYTES);
+		let playerbullet_pixels = pack_color(playerbullet_image.combined_raw_image_data());
+		mapped.range_mut::<u8>(stage_images.image2d_offset(2) as usize, playerbullet_image.width * playerbullet_image.height * 4).copy_from_slice(&playerbullet_pixels);
 	}));
 
 	let rp_attachment_descs =
@@ -458,8 +478,10 @@ fn app_main() -> Result<(), interlude::EngineError>
 		[
 			interlude::ImageMemoryBarrier::template(&**backbuffers.dim2(3), interlude::ImageSubresourceRange::base_color()),
 			interlude::ImageMemoryBarrier::template(&**backbuffers.dim2(4), interlude::ImageSubresourceRange::base_color()),
+			interlude::ImageMemoryBarrier::template(&**backbuffers.dim2(5), interlude::ImageSubresourceRange::base_color()),
 			interlude::ImageMemoryBarrier::template(stage_images.dim2(0), interlude::ImageSubresourceRange::base_color()),
-			interlude::ImageMemoryBarrier::template(stage_images.dim2(1), interlude::ImageSubresourceRange::base_color())
+			interlude::ImageMemoryBarrier::template(stage_images.dim2(1), interlude::ImageSubresourceRange::base_color()),
+			interlude::ImageMemoryBarrier::template(stage_images.dim2(2), interlude::ImageSubresourceRange::base_color())
 		];
 		let image_memory_barriers = main_frame.get_back_images().iter()
 			.map(|x| interlude::ImageMemoryBarrier::hold_ownership(*x, interlude::ImageSubresourceRange::base_color(),
@@ -469,13 +491,16 @@ fn app_main() -> Result<(), interlude::EngineError>
 				interlude::ImageMemoryBarrier::hold_ownership(&**backbuffers.dim2(2), interlude::ImageSubresourceRange::base_color(), VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VkImageLayout::Preinitialized, VkImageLayout::ColorAttachmentOptimal),
 				blitted_image_templates[0].into_transfer_dst(VK_ACCESS_HOST_WRITE_BIT, VkImageLayout::Preinitialized),
 				blitted_image_templates[1].into_transfer_dst(VK_ACCESS_HOST_WRITE_BIT, VkImageLayout::Preinitialized),
-				blitted_image_templates[2].into_transfer_src(VK_ACCESS_HOST_WRITE_BIT, VkImageLayout::Preinitialized),
-				blitted_image_templates[3].into_transfer_src(VK_ACCESS_HOST_WRITE_BIT, VkImageLayout::Preinitialized)
+				blitted_image_templates[2].into_transfer_dst(VK_ACCESS_HOST_WRITE_BIT, VkImageLayout::Preinitialized),
+				blitted_image_templates[3].into_transfer_src(VK_ACCESS_HOST_WRITE_BIT, VkImageLayout::Preinitialized),
+				blitted_image_templates[4].into_transfer_src(VK_ACCESS_HOST_WRITE_BIT, VkImageLayout::Preinitialized),
+				blitted_image_templates[5].into_transfer_src(VK_ACCESS_HOST_WRITE_BIT, VkImageLayout::Preinitialized)
 			].into_iter().map(|&x| x)).collect::<Vec<_>>();
 		let image_memory_barriers_ret =
 		[
 			blitted_image_templates[0].from_transfer_dst(VK_ACCESS_SHADER_READ_BIT, VkImageLayout::ShaderReadOnlyOptimal),
-			blitted_image_templates[1].from_transfer_dst(VK_ACCESS_SHADER_READ_BIT, VkImageLayout::ShaderReadOnlyOptimal)
+			blitted_image_templates[1].from_transfer_dst(VK_ACCESS_SHADER_READ_BIT, VkImageLayout::ShaderReadOnlyOptimal),
+			blitted_image_templates[2].from_transfer_dst(VK_ACCESS_SHADER_READ_BIT, VkImageLayout::ShaderReadOnlyOptimal)
 		];
 
 		try!(setup_commands.begin(0).and_then(|recorder|
@@ -486,6 +511,8 @@ fn app_main() -> Result<(), interlude::EngineError>
 				&[interlude::ImageCopyRegion(interlude::ImageSubresourceLayers::base_color(), VkOffset3D(0, 0, 0), interlude::ImageSubresourceLayers::base_color(), VkOffset3D(0, 0, 0), VkExtent3D(AREATEX_WIDTH, AREATEX_HEIGHT, 1))])
 			.copy_image(stage_images.dim2(1), &**backbuffers.dim2(4), VkImageLayout::TransferSrcOptimal, VkImageLayout::TransferDestOptimal,
 				&[interlude::ImageCopyRegion(interlude::ImageSubresourceLayers::base_color(), VkOffset3D(0, 0, 0), interlude::ImageSubresourceLayers::base_color(), VkOffset3D(0, 0, 0), VkExtent3D(SEARCHTEX_WIDTH, SEARCHTEX_HEIGHT, 1))])
+			.copy_image(stage_images.dim2(2), &**backbuffers.dim2(5), VkImageLayout::TransferSrcOptimal, VkImageLayout::TransferDestOptimal,
+				&[interlude::ImageCopyRegion(interlude::ImageSubresourceLayers::base_color(), VkOffset3D(0, 0, 0), interlude::ImageSubresourceLayers::base_color(), VkOffset3D(0, 0, 0), VkExtent3D(playerbullet_image.width as u32, playerbullet_image.height as u32, 1))])
 			.pipeline_barrier(VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, false, &[], &buffer_memory_barriers_ret, &image_memory_barriers_ret)
 			.end()
 		));
