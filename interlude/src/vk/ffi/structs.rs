@@ -293,7 +293,7 @@ impl VkComponentMapping
 	pub stencilLoadOp: VkAttachmentLoadOp, pub stencilStoreOp: VkAttachmentStoreOp,
 	pub initialLayout: VkImageLayout, pub finalLayout: VkImageLayout
 }
-#[repr(C)] pub struct VkAttachmentReference(pub u32, pub VkImageLayout);		// attachment, layout
+#[repr(C)] #[derive(Clone, Copy)] pub struct VkAttachmentReference(pub u32, pub VkImageLayout);		// attachment, layout
 #[repr(C)] pub struct VkSubpassDescription
 {
 	pub flags: VkSubpassDescriptionFlags, pub pipelineBindPoint: VkPipelineBindPoint,

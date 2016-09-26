@@ -5,6 +5,7 @@ use {std, vk};
 use vk::ffi::*;
 use std::rc::Rc;
 
+#[derive(Clone, Copy)]
 pub struct AttachmentDesc
 {
 	pub format: VkFormat, pub samples: VkSampleCountFlagBits,
@@ -42,12 +43,25 @@ impl <'a> std::convert::Into<VkAttachmentDescription> for &'a AttachmentDesc
 		}
 	}
 }
+impl AttachmentDesc
+{
+	pub fn swapchain_buffer(format: VkFormat) -> Self
+	{
+		AttachmentDesc
+		{
+			format: format, clear_on_load: Some(true), preserve_stored_value: true,
+			initial_layout: VkImageLayout::ColorAttachmentOptimal, final_layout: VkImageLayout::PresentSrcKHR,
+			.. Default::default()
+		}
+	}
+}
 pub type AttachmentRef = VkAttachmentReference;
 impl AttachmentRef
 {
 	pub fn color(index: u32) -> Self { VkAttachmentReference(index, VkImageLayout::ColorAttachmentOptimal) }
 	pub fn input(index: u32) -> Self { VkAttachmentReference(index, VkImageLayout::ShaderReadOnlyOptimal) }
 }
+#[derive(Clone)]
 pub struct PassDesc
 {
 	pub input_attachment_indices: Vec<AttachmentRef>,
@@ -95,6 +109,7 @@ impl <'a> std::convert::Into<VkSubpassDescription> for &'a PassDesc
 		}
 	}
 }
+#[derive(Clone, Copy)]
 pub struct PassDependency
 {
 	pub src: u32, pub dst: u32,
@@ -127,6 +142,19 @@ impl <'a> std::convert::Into<VkSubpassDependency> for &'a PassDependency
 			srcStageMask: self.src_stage_mask, dstStageMask: self.dst_stage_mask,
 			srcAccessMask: self.src_access_mask, dstAccessMask: self.dst_access_mask,
 			dependencyFlags: if self.depend_by_region { VK_DEPENDENCY_BY_REGION_BIT } else { 0 }
+		}
+	}
+}
+impl PassDependency
+{
+	pub fn fragment_referer(src_pass: u32, dst_pass: u32, dep_by_region: bool) -> Self
+	{
+		PassDependency
+		{
+			src: src_pass, dst: dst_pass,
+			src_stage_mask: VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, dst_stage_mask: VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+			src_access_mask: VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, dst_access_mask: VK_ACCESS_SHADER_READ_BIT,
+			depend_by_region: dep_by_region
 		}
 	}
 }

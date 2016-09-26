@@ -58,14 +58,14 @@ pub use self::vk::ffi;
 pub mod traits
 {
 	pub use super::command::{PrimaryCommandBuffers, SecondaryCommandBuffers, DrawingCommandRecorder};
-	pub use super::resource::{ImageDescriptor, ImageView};
+	pub use super::resource::{ImageDescriptor, ImageView, BufferResource};
 }
 // exported objects
 pub use self::engine::Engine;
 pub use self::synchronize::{QueueFence, Fence};
 pub use self::framebuffer::{RenderPass, Framebuffer};
 pub use self::command::{GraphicsCommandBuffers, BundledCommandBuffers, TransferCommandBuffers, TransientTransferCommandBuffers, TransientGraphicsCommandBuffers};
-pub use self::resource::{Buffer, Image1D, Image2D, Image3D, LinearImage2D, DeviceBuffer, StagingBuffer, DeviceImage, StagingImage};
+pub use self::resource::{Buffer, Image1D, Image2D, Image3D, LinearImage2D, DeviceBuffer, StagingBuffer, DeviceImage, StagingImage, ImageView2D, MemoryMappedRange};
 pub use self::shading::{PipelineLayout, GraphicsPipeline};
 pub use self::descriptor::{DescriptorSetLayout, DescriptorSets};
 pub use self::debug_info::DebugInfo;
@@ -86,4 +86,15 @@ mod internals
 	pub use super::descriptor::*;
 	pub use super::debug_info::*;
 	pub use super::data::*;
+}
+
+// Result<_, EngineError> as Unrecoverable(Crashes immediately)
+#[macro_export]
+macro_rules! Unrecoverable
+{
+	($e: expr) => {match $e
+	{
+		Err(e) => $crate::crash(e),
+		Ok(o) => o
+	}}
 }

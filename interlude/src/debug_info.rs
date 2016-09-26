@@ -200,7 +200,7 @@ impl <'a> DebugInfo<'a>
 	pub fn new(engine: &Engine, lines: &[DebugLine<'a>],
 		rendered_pass: &RenderPass, subindex: u32, framebuffer_size: VkViewport) -> Result<Box<Self>, EngineError>
 	{
-		info!(target: "::DebugInfo", "Starting Visual Debugger...");
+		info!(target: "Interlude::DebugInfo", "Starting Visual Debugger...");
 
 		let max_instance_count = lines.iter().fold(0usize, |acc, x| if x.has_unit() { acc + 2 + 8 } else { acc + 1 + 8 });
 		let rendering_params_prealloc = engine.buffer_preallocate(&[

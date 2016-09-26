@@ -7,7 +7,7 @@ extern crate glob;
 extern crate rayon;
 #[macro_use] extern crate log;
 
-extern crate interlude;
+#[macro_use] extern crate interlude;
 extern crate texture_compression;
 extern crate psdloader;
 
@@ -180,6 +180,47 @@ fn pack_color(src: DecompressedPSDImageData) -> Vec<u8>
 	color_pixels
 }
 
+mod framebuffer;
+use framebuffer::*;
+
+struct SMAAResources<'a>
+{
+	areatex_index: usize, searchtex_index: usize,
+	areatex_desc: interlude::ImageDescriptor2, searchtex_desc: interlude::ImageDescriptor2,
+	areatex_view: interlude::ImageView2D, searchtex_view: interlude::ImageView2D,
+	ph: std::marker::PhantomData<&'a interlude::DeviceBuffer>
+}
+impl<'a> SMAAResources<'a>
+{
+	pub fn generate_descriptions() -> (interlude::ImageDescriptor2, interlude::ImageDescriptor2)
+	{
+		(interlude::ImageDescriptor2::new(VkFormat::BC5_UNORM_BLOCK, VkExtent2D(AREATEX_WIDTH, AREATEX_HEIGHT), VK_IMAGE_USAGE_SAMPLED_BIT),
+		interlude::ImageDescriptor2::new(VkFormat::BC4_UNORM_BLOCK, VkExtent2D(SEARCHTEX_WIDTH, SEARCHTEX_HEIGHT), VK_IMAGE_USAGE_SAMPLED_BIT))
+	}
+	pub fn new(engine: &interlude::Engine, res: &'a interlude::DeviceImage, adesc: interlude::ImageDescriptor2, sdesc: interlude::ImageDescriptor2, aindex: usize, sindex: usize) -> Self
+	{
+		let areatex_view = Unrecoverable!(engine.create_image_view_2d(res.dim2(aindex), VkFormat::BC5_UNORM_BLOCK,
+			interlude::ComponentMapping::double_swizzle_rep(interlude::ComponentSwizzle::R, interlude::ComponentSwizzle::G), interlude::ImageSubresourceRange::base_color()));
+		let searchtex_view = Unrecoverable!(engine.create_image_view_2d(res.dim2(sindex), VkFormat::BC4_UNORM_BLOCK,
+			interlude::ComponentMapping::single_swizzle(interlude::ComponentSwizzle::R), interlude::ImageSubresourceRange::base_color()));
+		
+		SMAAResources
+		{
+			areatex_index: aindex, searchtex_index: sindex,
+			areatex_desc: adesc, searchtex_desc: sdesc,
+			areatex_view: areatex_view, searchtex_view: searchtex_view,
+			ph: std::marker::PhantomData
+		}
+	}
+	pub fn init(&self, sres: &'a interlude::StagingImage, mapped: &'a interlude::MemoryMappedRange)
+	{
+		let areatex_compressed = BC5::compress(&AREATEX_BYTES, (AREATEX_WIDTH as usize, AREATEX_HEIGHT as usize));
+		mapped.map_mut::<[u8; AREATEX_SIZE as usize / 2]>(sres.image2d_offset(0) as usize).copy_from_slice(&areatex_compressed);
+		let searchtex_compressed = BC4::compress(&SEARCHTEX_BYTES, (SEARCHTEX_WIDTH as usize, SEARCHTEX_HEIGHT as usize));
+		mapped.map_mut::<[u8; SEARCHTEX_SIZE as usize / 2]>(sres.image2d_offset(1) as usize).copy_from_slice(&searchtex_compressed);
+	}
+}
+
 fn main() { if let Err(e) = app_main() { interlude::crash(e); } }
 fn app_main() -> Result<(), interlude::EngineError>
 {
@@ -197,8 +238,7 @@ fn app_main() -> Result<(), interlude::EngineError>
 	let gbuffer_desc = interlude::ImageDescriptor2::new(VkFormat::R8G8B8A8_UNORM, main_frame.get_extent(), interlude::ImageUsagePresets::AsColorTexture).device_resource();
 	let edgebuffer_desc = interlude::ImageDescriptor2::new(VkFormat::R8G8_UNORM, main_frame.get_extent(), interlude::ImageUsagePresets::AsColorTexture).device_resource();
 	let blend_weight_desc = interlude::ImageDescriptor2::new(VkFormat::R8G8B8A8_UNORM, main_frame.get_extent(), interlude::ImageUsagePresets::AsColorTexture).device_resource();
-	let smaa_areatex_desc = interlude::ImageDescriptor2::new(VkFormat::BC5_UNORM_BLOCK, VkExtent2D(AREATEX_WIDTH, AREATEX_HEIGHT), VK_IMAGE_USAGE_SAMPLED_BIT);
-	let smaa_searchtex_desc = interlude::ImageDescriptor2::new(VkFormat::BC4_UNORM_BLOCK, VkExtent2D(SEARCHTEX_WIDTH, SEARCHTEX_HEIGHT), VK_IMAGE_USAGE_SAMPLED_BIT);
+	let (smaa_areatex_desc, smaa_searchtex_desc) = SMAAResources::generate_descriptions();
 	let playerbullet_desc = interlude::ImageDescriptor2::new(VkFormat::R8G8B8A8_UNORM, VkExtent2D(playerbullet_image.width as u32, playerbullet_image.height as u32), interlude::ImageUsagePresets::AsColorTexture);
 	let imagebuffer_placement = interlude::ImagePreallocator::new().image_2d(vec![&gbuffer_desc, &edgebuffer_desc, &blend_weight_desc, &smaa_areatex_desc, &smaa_searchtex_desc, &playerbullet_desc]);
 	let (backbuffers, stage_images) = try!(engine.create_double_image(&imagebuffer_placement));
@@ -216,97 +256,19 @@ fn app_main() -> Result<(), interlude::EngineError>
 	let playerbullet_view = try!(engine.create_image_view_2d(backbuffers.dim2(5), VkFormat::R8G8B8A8_UNORM,
 		interlude::ComponentMapping::straight(), interlude::ImageSubresourceRange::base_color()));
 	let gbuffer_sampler = try!(engine.create_sampler(&interlude::SamplerState::new()));
+	let smaa_resources = SMAAResources::new(&engine, &backbuffers, smaa_areatex_desc, smaa_searchtex_desc, 3, 4);
 	try!(stage_images.map().map(|mapped|
 	{
-		let areatex_compressed = BC5::compress(&AREATEX_BYTES, (AREATEX_WIDTH as usize, AREATEX_HEIGHT as usize));
-		mapped.map_mut::<[u8; AREATEX_SIZE as usize / 2]>(stage_images.image2d_offset(0) as usize).copy_from_slice(&areatex_compressed);
-		// mapped.map_mut::<[u8; AREATEX_SIZE as usize]>(stage_images.image2d_offset(0) as usize).copy_from_slice(&AREATEX_BYTES);
-		let searchtex_compressed = BC4::compress(&SEARCHTEX_BYTES, (SEARCHTEX_WIDTH as usize, SEARCHTEX_HEIGHT as usize));
-		mapped.map_mut::<[u8; SEARCHTEX_SIZE as usize / 2]>(stage_images.image2d_offset(1) as usize).copy_from_slice(&searchtex_compressed);
-		// mapped.map_mut::<[u8; SEARCHTEX_SIZE as usize]>(stage_images.image2d_offset(1) as usize).copy_from_slice(&SEARCHTEX_BYTES);
+		smaa_resources.init(&stage_images, &mapped);
 		let playerbullet_pixels = pack_color(playerbullet_image.combined_raw_image_data());
 		mapped.range_mut::<u8>(stage_images.image2d_offset(2) as usize, playerbullet_image.width * playerbullet_image.height * 4).copy_from_slice(&playerbullet_pixels);
 	}));
 
-	let rp_attachment_descs =
-	[
-		interlude::AttachmentDesc
-		{ // gbuffer
-			format: VkFormat::R8G8B8A8_UNORM, clear_on_load: Some(true), preserve_stored_value: false,
-			initial_layout: VkImageLayout::ColorAttachmentOptimal, final_layout: VkImageLayout::ColorAttachmentOptimal,
-			.. Default::default()
-		},
-		interlude::AttachmentDesc
-		{ // SMAA edgebuffer
-			format: VkFormat::R8G8_UNORM, clear_on_load: Some(true), preserve_stored_value: false,
-			initial_layout: VkImageLayout::ColorAttachmentOptimal, final_layout: VkImageLayout::ColorAttachmentOptimal,
-			.. Default::default()
-		},
-		interlude::AttachmentDesc
-		{ // SMAA blend weight buffer
-			format: VkFormat::R8G8B8A8_UNORM, clear_on_load: Some(true), preserve_stored_value: false,
-			initial_layout: VkImageLayout::ColorAttachmentOptimal, final_layout: VkImageLayout::ColorAttachmentOptimal,
-			.. Default::default()
-		},
-		interlude::AttachmentDesc
-		{ // swapchain buffer
-			format: main_frame.get_format(), clear_on_load: Some(true), preserve_stored_value: true,
-			initial_layout: VkImageLayout::ColorAttachmentOptimal, final_layout: VkImageLayout::PresentSrcKHR,
-			.. Default::default()
-		}
-	];
-	let render_passes =
-	[
-		interlude::PassDesc::single_fragment_output(0),
-		interlude::PassDesc
-		{
-			color_attachment_indices: vec![interlude::AttachmentRef::color(1)],
-			preserved_attachment_indices: vec![0],
-			.. Default::default()
-		},
-		interlude::PassDesc
-		{
-			color_attachment_indices: vec![interlude::AttachmentRef::color(2)],
-			preserved_attachment_indices: vec![0, 1],
-			.. Default::default()
-		},
-		interlude::PassDesc { color_attachment_indices: vec![interlude::AttachmentRef::color(3)], .. Default::default() }
-	];
-	let pass_deps =
-	[
-		interlude::PassDependency
-		{
-			src: 0, dst: 1,
-			src_stage_mask: VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, dst_stage_mask: VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
-			src_access_mask: VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, dst_access_mask: VK_ACCESS_SHADER_READ_BIT,
-			depend_by_region: false
-		},
-		interlude::PassDependency
-		{
-			src: 1, dst: 2,
-			src_stage_mask: VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, dst_stage_mask: VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
-			src_access_mask: VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, dst_access_mask: VK_ACCESS_SHADER_READ_BIT,
-			depend_by_region: false
-		},
-		interlude::PassDependency
-		{
-			src: 0, dst: 3,
-			src_stage_mask: VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, dst_stage_mask: VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
-			src_access_mask: VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, dst_access_mask: VK_ACCESS_SHADER_READ_BIT,
-			depend_by_region: false
-		},
-		interlude::PassDependency
-		{
-			src: 2, dst: 3,
-			src_stage_mask: VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, dst_stage_mask: VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
-			src_access_mask: VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, dst_access_mask: VK_ACCESS_SHADER_READ_BIT,
-			depend_by_region: false
-		}
-	];
-	let rp_framebuffer_form = try!(engine.create_render_pass(&rp_attachment_descs, &render_passes, &pass_deps));
-	let framebuffers = try!(main_frame.get_back_images().iter()
-		.map(|&x| engine.create_framebuffer(&rp_framebuffer_form, &[&gbuffer_view, &edgebuffer_view, &blend_weight_view, x], VkExtent3D(frame_width, frame_height, 1)))
-		.collect::<Result<Vec<_>, _>>());
+	let render_passes = RenderPasses::new(&engine, main_frame.get_format());
+	let (framebuffers, framebuffers_noaa) = main_frame.get_back_images().iter().map(|&x| (
+		Unrecoverable!(engine.create_framebuffer(&render_passes.fullset, &[&gbuffer_view, &edgebuffer_view, &blend_weight_view, x], VkExtent3D(frame_width, frame_height, 1))),
+		Unrecoverable!(engine.create_framebuffer(&render_passes.noaa, &[x], VkExtent3D(frame_width, frame_height, 1)))
+	)).unzip();
 
 	// Resources //
 	let application_buffer_prealloc = engine.buffer_preallocate(&[
@@ -530,80 +492,122 @@ fn app_main() -> Result<(), interlude::EngineError>
 		interlude::DebugLine::UnsignedInt("Enemy Count".to_owned(), &enemy_count, None)
 	], &rp_framebuffer_form, 3, swapchain_viewport));
 
+	// Rendering Switches //
+	let use_post_smaa = false;
+
+	info!("Recording Rendering Commands...");
 	// Rendering Commands //
+	let smaa_combine_descriptor_sets = [all_descriptor_sets[0], all_descriptor_sets[3]];
+	let smaa_combine_vertex_buffers = [(&application_data as &interlude::traits::BufferResource, application_buffer_prealloc.offset(0))];
 	let combine_commands = try!(engine.allocate_bundled_command_buffers(2 * framebuffers.len() as u32));
 	for (n, f) in framebuffers.iter().enumerate()
 	{
 		try!(combine_commands.begin(0 + 2 * n, &rp_framebuffer_form, 3, f).and_then(|recorder|
 			recorder
 				.bind_pipeline(pp_smaa_combine)
-				.bind_descriptor_sets(&smaa_layouts[2], &[all_descriptor_sets[0], all_descriptor_sets[3]])
-				.bind_vertex_buffers(&[(&application_data, application_buffer_prealloc.offset(0))])
+				.bind_descriptor_sets(&smaa_layouts[2], &smaa_combine_descriptor_sets)
+				.bind_vertex_buffers(&smaa_combine_vertex_buffers)
 				.draw(4, 1)
-				.end()
+			.end()
 		));
 		try!(combine_commands.begin(1 + 2 * n, &rp_framebuffer_form, 3, f).and_then(|recorder|
 			recorder.inject_commands(|r| debug_info.inject_render_commands(r)).end()
 		));
 	}
 	let framebuffer_commands = try!(engine.allocate_graphics_command_buffers(main_frame.get_back_images().len() as u32));
-	try!(framebuffer_commands.begin_all().and_then(|iter| iter.map(|(i, recorder)|
+	try!(framebuffer_commands.begin_all().map(|iter| iter.map(|(i, recorder)|
 	{
-		let clear_values = [
-			interlude::AttachmentClearValue::Color(0.0f32, 0.0f32, 0.015625f32, 1.0f32),
-			interlude::AttachmentClearValue::Color(0.0f32, 0.0f32, 0.0f32, 0.0f32),
-			interlude::AttachmentClearValue::Color(0.0f32, 0.0f32, 0.0f32, 0.0f32),
-			interlude::AttachmentClearValue::Color(0.0f32, 0.0f32, 0.0f32, 0.0f32)
-		];
-		let color_output_barrier = interlude::ImageMemoryBarrier::template(main_frame.get_back_images()[i], interlude::ImageSubresourceRange::base_color())
-			.hold_ownership(VK_ACCESS_MEMORY_READ_BIT, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VkImageLayout::PresentSrcKHR, VkImageLayout::ColorAttachmentOptimal);
-		/*let ibar_gbuffer_end = interlude::ImageMemoryBarrier::template(gbuffer_obj, interlude::ImageSubresourceRange::base_color())
-			.hold_ownership(VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT, VkImageLayout::ColorAttachmentOptimal, VkImageLayout::ShaderReadOnlyOptimal);
-		let ibar_edgebuffer_end = interlude::ImageMemoryBarrier::template(edgebuffer_obj, interlude::ImageSubresourceRange::base_color())
-			.hold_ownership(VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT, VkImageLayout::ColorAttachmentOptimal, VkImageLayout::ShaderReadOnlyOptimal);
-		let ibar_blendweight_end = interlude::ImageMemoryBarrier::template(blendweight_obj, interlude::ImageSubresourceRange::base_color())
-			.hold_ownership(VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT, VkImageLayout::ColorAttachmentOptimal, VkImageLayout::ShaderReadOnlyOptimal);*/
+		if use_post_smaa
+		{
+			let clear_values = [
+				interlude::AttachmentClearValue::Color(0.0f32, 0.0f32, 0.015625f32, 1.0f32),
+				interlude::AttachmentClearValue::Color(0.0f32, 0.0f32, 0.0f32, 0.0f32),
+				interlude::AttachmentClearValue::Color(0.0f32, 0.0f32, 0.0f32, 0.0f32),
+				interlude::AttachmentClearValue::Color(0.0f32, 0.0f32, 0.0f32, 0.0f32)
+			];
+			let color_output_barrier = interlude::ImageMemoryBarrier::template(main_frame.get_back_images()[i], interlude::ImageSubresourceRange::base_color())
+				.hold_ownership(VK_ACCESS_MEMORY_READ_BIT, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VkImageLayout::PresentSrcKHR, VkImageLayout::ColorAttachmentOptimal);
+			/*let ibar_gbuffer_end = interlude::ImageMemoryBarrier::template(gbuffer_obj, interlude::ImageSubresourceRange::base_color())
+				.hold_ownership(VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT, VkImageLayout::ColorAttachmentOptimal, VkImageLayout::ShaderReadOnlyOptimal);
+			let ibar_edgebuffer_end = interlude::ImageMemoryBarrier::template(edgebuffer_obj, interlude::ImageSubresourceRange::base_color())
+				.hold_ownership(VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT, VkImageLayout::ColorAttachmentOptimal, VkImageLayout::ShaderReadOnlyOptimal);
+			let ibar_blendweight_end = interlude::ImageMemoryBarrier::template(blendweight_obj, interlude::ImageSubresourceRange::base_color())
+				.hold_ownership(VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT, VkImageLayout::ColorAttachmentOptimal, VkImageLayout::ShaderReadOnlyOptimal);*/
 
-		recorder
-			.pipeline_barrier(VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, false, &[], &[], &[color_output_barrier])
-			.begin_render_pass(&framebuffers[i], &clear_values, false)
-			// Pass 0 : Render to Buffer //
-			.bind_descriptor_sets(&wire_render_layout, &all_descriptor_sets[0..1])
-			.bind_vertex_buffers(&[(&application_data, application_buffer_prealloc.offset(1))])
-			.inject_commands(|r| background_render.begin(r, 0.125, 0.5, 0.1875, 0.625))
-			.bind_vertex_buffers_partial(1, &[(&application_data, application_buffer_prealloc.offset(3) + structures::InstanceMemory::background_offs())])
-			.draw(4, MAX_BK_COUNT as u32)
-			.inject_commands(|r| enemy_render.begin(r, 0.25, 0.9875, 1.5, 1.0))
-			.bind_vertex_buffers_partial(1, &[(&application_data, application_buffer_prealloc.offset(3))])
-			.draw(4, MAX_ENEMY_COUNT as u32)
-			.inject_commands(|r| player_render.begin(r, 1.5, 1.25, 0.375, 1.0))
-			.bind_vertex_buffers_partial(1, &[(&application_data, application_buffer_prealloc.offset(3) + structures::InstanceMemory::player_rot_offs())])
-			.bind_index_buffer(&application_data, application_buffer_prealloc.offset(2))
-			.draw_indexed(24, 2, 4)
-			.inject_commands(|r| enemy_rezonators_render.begin(r, 1.25, 0.5, 0.625, 1.0))
-			.bind_vertex_buffers(&[(&application_data, application_buffer_prealloc.offset(1) + structures::VertexMemoryForWireRender::enemy_rezonator_offs()),
-				(&application_data, application_buffer_prealloc.offset(3) + structures::InstanceMemory::enemy_rez_offs())])
-			.draw(3, MAX_ENEMY_COUNT as u32)
-			// .pipeline_barrier(VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, false, &[], &[], &[ibar_gbuffer_end])
-			.next_subpass(false)
-			// Pass 1 : Edge Detection(SMAA 1x) //
-			.bind_vertex_buffers(&[(&application_data, application_buffer_prealloc.offset(0))])
-			.bind_pipeline(pp_smaa_edge_detection)
-			.bind_descriptor_sets_partial(&smaa_layouts[0], 1, &all_descriptor_sets[1..2])
-			.draw(4, 1)
-			// .pipeline_barrier(VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, false, &[], &[], &[ibar_edgebuffer_end])
-			.next_subpass(false)
-			// Pass 2 : Blend Weight Calculation(SMAA 1x) //
-			.bind_pipeline(pp_smaa_blend_weight_calc)
-			.bind_descriptor_sets_partial(&smaa_layouts[1], 1, &all_descriptor_sets[2..3])
-			.draw(4, 1)
-			// .pipeline_barrier(VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, false, &[], &[], &[ibar_blendweight_end])
-			.next_subpass(true)
-			// Pass 3 : SMAA Combine and Debug Print //
-			.execute_commands(&combine_commands[i * 2 .. i * 2 + 2])
-			.end_render_pass()
-		.end()
-	}).collect::<Result<Vec<_>, _>>()));
+			recorder
+				.pipeline_barrier(VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, false, &[], &[], &[color_output_barrier])
+				.begin_render_pass(&framebuffers[i], &clear_values, false)
+				// Pass 0 : Render to Buffer //
+				.bind_descriptor_sets(&wire_render_layout, &all_descriptor_sets[0..1])
+				.bind_vertex_buffers(&[(&application_data, application_buffer_prealloc.offset(1))])
+				.inject_commands(|r| background_render.begin(r, 0.125, 0.5, 0.1875, 0.625))
+				.bind_vertex_buffers_partial(1, &[(&application_data, application_buffer_prealloc.offset(3) + structures::InstanceMemory::background_offs())])
+				.draw(4, MAX_BK_COUNT as u32)
+				.inject_commands(|r| enemy_render.begin(r, 0.25, 0.9875, 1.5, 1.0))
+				.bind_vertex_buffers_partial(1, &[(&application_data, application_buffer_prealloc.offset(3))])
+				.draw(4, MAX_ENEMY_COUNT as u32)
+				.inject_commands(|r| player_render.begin(r, 1.5, 1.25, 0.375, 1.0))
+				.bind_vertex_buffers_partial(1, &[(&application_data, application_buffer_prealloc.offset(3) + structures::InstanceMemory::player_rot_offs())])
+				.bind_index_buffer(&application_data, application_buffer_prealloc.offset(2))
+				.draw_indexed(24, 2, 4)
+				.inject_commands(|r| enemy_rezonators_render.begin(r, 1.25, 0.5, 0.625, 1.0))
+				.bind_vertex_buffers(&[(&application_data, application_buffer_prealloc.offset(1) + structures::VertexMemoryForWireRender::enemy_rezonator_offs()),
+					(&application_data, application_buffer_prealloc.offset(3) + structures::InstanceMemory::enemy_rez_offs())])
+				.draw(3, MAX_ENEMY_COUNT as u32)
+				// .pipeline_barrier(VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, false, &[], &[], &[ibar_gbuffer_end])
+				.next_subpass(false)
+				// Pass 1 : Edge Detection(SMAA 1x) //
+				.bind_vertex_buffers(&[(&application_data, application_buffer_prealloc.offset(0))])
+				.bind_pipeline(pp_smaa_edge_detection)
+				.bind_descriptor_sets_partial(&smaa_layouts[0], 1, &all_descriptor_sets[1..2])
+				.draw(4, 1)
+				// .pipeline_barrier(VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, false, &[], &[], &[ibar_edgebuffer_end])
+				.next_subpass(false)
+				// Pass 2 : Blend Weight Calculation(SMAA 1x) //
+				.bind_pipeline(pp_smaa_blend_weight_calc)
+				.bind_descriptor_sets_partial(&smaa_layouts[1], 1, &all_descriptor_sets[2..3])
+				.draw(4, 1)
+				// .pipeline_barrier(VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, false, &[], &[], &[ibar_blendweight_end])
+				.next_subpass(true)
+				// Pass 3 : SMAA Combine and Debug Print //
+				.execute_commands(&combine_commands[i * 2 .. i * 2 + 1])
+				.end_render_pass()
+			.end().unwrap()
+		}
+		else
+		{
+			let clear_values = [
+				interlude::AttachmentClearValue::Color(0.0f32, 0.0f32, 0.015625f32, 1.0f32)
+			];
+			let color_output_barrier = interlude::ImageMemoryBarrier::template(main_frame.get_back_images()[i], interlude::ImageSubresourceRange::base_color())
+				.hold_ownership(VK_ACCESS_MEMORY_READ_BIT, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VkImageLayout::PresentSrcKHR, VkImageLayout::ColorAttachmentOptimal);
+
+			recorder
+				.pipeline_barrier(VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, false, &[], &[], &[color_output_barrier])
+				.begin_render_pass(&framebuffers[i], &clear_values, false)
+				// Pass 0 : Render to Buffer //
+				.bind_descriptor_sets(&wire_render_layout, &all_descriptor_sets[0..1])
+				.bind_vertex_buffers(&[(&application_data, application_buffer_prealloc.offset(1))])
+				.inject_commands(|r| background_render.begin(r, 0.125, 0.5, 0.1875, 0.625))
+				.bind_vertex_buffers_partial(1, &[(&application_data, application_buffer_prealloc.offset(3) + structures::InstanceMemory::background_offs())])
+				.draw(4, MAX_BK_COUNT as u32)
+				.inject_commands(|r| enemy_render.begin(r, 0.25, 0.9875, 1.5, 1.0))
+				.bind_vertex_buffers_partial(1, &[(&application_data, application_buffer_prealloc.offset(3))])
+				.draw(4, MAX_ENEMY_COUNT as u32)
+				.inject_commands(|r| player_render.begin(r, 1.5, 1.25, 0.375, 1.0))
+				.bind_vertex_buffers_partial(1, &[(&application_data, application_buffer_prealloc.offset(3) + structures::InstanceMemory::player_rot_offs())])
+				.bind_index_buffer(&application_data, application_buffer_prealloc.offset(2))
+				.draw_indexed(24, 2, 4)
+				.inject_commands(|r| enemy_rezonators_render.begin(r, 1.25, 0.5, 0.625, 1.0))
+				.bind_vertex_buffers(&[(&application_data, application_buffer_prealloc.offset(1) + structures::VertexMemoryForWireRender::enemy_rezonator_offs()),
+					(&application_data, application_buffer_prealloc.offset(3) + structures::InstanceMemory::enemy_rez_offs())])
+				.draw(3, MAX_ENEMY_COUNT as u32)
+				// .pipeline_barrier(VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, false, &[], &[], &[ibar_gbuffer_end])
+				.end_render_pass()
+			.end().unwrap()
+		}
+	}).collect::<Vec<_>>()));
+	info!("Recording Transfer Commands...");
 	// Transfer Commands //
 	let update_commands = try!(engine.allocate_transfer_command_buffers(1));
 	try!(update_commands.begin(0).and_then(|recorder|
@@ -628,6 +632,8 @@ fn app_main() -> Result<(), interlude::EngineError>
 			.pipeline_barrier(VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, false, &[], &buffer_barriers_ret, &[])
 		.end()
 	}));
+
+	info!("Preparing for Render Loop...");
 
 	let mut frame_index = try!(main_frame.execute_rendering(&engine, &framebuffer_commands, None, Some(&debug_info), &execute_next_signal));
 
