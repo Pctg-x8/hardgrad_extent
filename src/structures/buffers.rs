@@ -51,6 +51,5 @@ impl InstanceMemory
 	pub projection_matrixes: Matrixes,
 	pub enemy_instance_data: [CharacterLocation; MAX_ENEMY_COUNT],
 	pub background_instance_data: [BackgroundInstance; MAX_BK_COUNT],
-	pub player_center_tf: CVector4,
-	pub render_target_desc: CVector4
+	pub player_center_tf: CVector4
 }

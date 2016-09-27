@@ -229,7 +229,7 @@ pub enum ConstantEntry
 	Float(f32), Uint(u32)
 }
 #[derive(Clone)]
-pub struct PipelineShaderProgram<'a>(&'a ShaderProgram, Vec<(usize, ConstantEntry)>);
+pub struct PipelineShaderProgram<'a>(pub &'a ShaderProgram, pub Vec<(usize, ConstantEntry)>);
 impl<'a> PipelineShaderProgram<'a>
 {
 	pub fn unspecialized(shref: &'a ShaderProgram) -> Self { PipelineShaderProgram(shref, Vec::new()) }
@@ -245,26 +245,30 @@ impl<'a> std::convert::Into<IntoNativeShaderStageCreateInfoStruct> for &'a Pipel
 {
 	fn into(self) -> IntoNativeShaderStageCreateInfoStruct
 	{
-		let map_entries = self.1.iter().scan(0usize, |acc, &(ref id, ref v)|
+		let (map_entries, const_values) = if self.1.is_empty() { (Vec::new(), Vec::new()) } else
 		{
-			let size = match v
+			let map_entries = self.1.iter().scan(0usize, |acc, &(ref id, ref v)|
 			{
-				&ConstantEntry::Float(_) | &ConstantEntry::Uint(_) => 4
-			};
-			let rval = VkSpecializationMapEntry(*id as u32, *acc as u32, size);
-			*acc += size;
-			Some(rval)
-		}).collect::<Vec<_>>();
-		let const_size = map_entries.last().map(|&VkSpecializationMapEntry(_, o, s)| o + s as u32).unwrap();
-		let mut const_values = Vec::with_capacity(const_size as usize);
-		for &(_, ref v) in &self.1
-		{
-			const_values.append(&mut match v
+				let size = match v
+				{
+					&ConstantEntry::Float(_) | &ConstantEntry::Uint(_) => 4
+				};
+				let rval = VkSpecializationMapEntry(*id as u32, *acc as u32, size);
+				*acc += size;
+				Some(rval)
+			}).collect::<Vec<_>>();
+			let const_size = map_entries.last().map(|&VkSpecializationMapEntry(_, o, s)| o + s as u32).unwrap();
+			let mut const_values = Vec::with_capacity(const_size as usize);
+			for &(_, ref v) in &self.1
 			{
-				&ConstantEntry::Float(v) => Vec::from(&unsafe { std::mem::transmute::<_, [u8; 4]>(v) }[..]),
-				&ConstantEntry::Uint(v) => Vec::from(&unsafe { std::mem::transmute::<_, [u8; 4]>(v) }[..])
-			});
-		}
+				const_values.append(&mut match v
+				{
+					&ConstantEntry::Float(v) => Vec::from(&unsafe { std::mem::transmute::<_, [u8; 4]>(v) }[..]),
+					&ConstantEntry::Uint(v) => Vec::from(&unsafe { std::mem::transmute::<_, [u8; 4]>(v) }[..])
+				});
+			}
+			(map_entries, const_values)
+		};
 
 		IntoNativeShaderStageCreateInfoStruct
 		{
@@ -280,7 +284,7 @@ impl<'a> std::convert::Into<IntoNativeShaderStageCreateInfoStruct> for &'a Pipel
 			specialization_structure: if map_entries.is_empty() { None } else { Some(VkSpecializationInfo
 			{
 				mapEntryCount: map_entries.len() as u32, pMapEntries: map_entries.as_ptr(),
-				dataSize: const_size as usize, pData: const_values.as_ptr() as *const std::os::raw::c_void
+				dataSize: const_values.len(), pData: const_values.as_ptr() as *const std::os::raw::c_void
 			})},
 			specialization_entry: map_entries, specialization_values: const_values
 		}

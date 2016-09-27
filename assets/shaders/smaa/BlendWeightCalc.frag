@@ -7,7 +7,7 @@ layout(location = 1) in vec4 offsets[3];
 layout(location = 0) out vec4 target;
 
 #include "common_setup.glsl"
-layout(set = 1, binding = 0) uniform sampler2D intex[3];	// edges, area, search
+layout(set = 0, binding = 0) uniform sampler2D intex[3];	// edges, area, search
 #define edge_tex intex[0]
 #define area_tex intex[1]
 #define search_tex intex[2]

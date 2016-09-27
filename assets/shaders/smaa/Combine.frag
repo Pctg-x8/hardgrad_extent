@@ -7,7 +7,7 @@ layout(location = 1) in vec4 offset;
 layout(location = 0) out vec4 target;
 
 #include "common_setup.glsl"
-layout(set = 1, binding = 0) uniform sampler2D intex[2];
+layout(set = 0, binding = 0) uniform sampler2D intex[2];
 #define input_tex intex[0]
 #define blend_tex intex[1]
 

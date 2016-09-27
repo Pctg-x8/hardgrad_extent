@@ -45,7 +45,7 @@ pub use self::resource::{
 	SamplerState, ComponentSwizzle, ComponentMapping, Filter
 };
 pub use self::shading::{
-	PipelineShaderProgram,
+	PipelineShaderProgram, ConstantEntry,
 	VertexBinding, VertexAttribute, PushConstantDesc,
 	PrimitiveTopology, ViewportWithScissorRect, RasterizerState, AttachmentBlendState,
 	GraphicsPipelineBuilder
