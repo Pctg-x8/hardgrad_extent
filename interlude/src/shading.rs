@@ -46,7 +46,6 @@ pub trait ShaderProgramInternals
 	fn new_geometry(module: vk::ShaderModule, entry_point: &str) -> Self;
 	fn new_fragment(module: vk::ShaderModule, entry_point: &str) -> Self;
 	fn get_entry_point(&self) -> &CString;
-	fn shader_stage_create_info(&self) -> VkPipelineShaderStageCreateInfo;
 	fn into_native_vertex_input_state(&self) -> IntoNativeVertexInputState;
 }
 impl InternalExports<vk::ShaderModule> for ShaderProgram
@@ -90,22 +89,6 @@ impl ShaderProgramInternals for ShaderProgram
 			&ShaderProgram::Fragment { internal: _, entry_point: ref e } => e,
 			&ShaderProgram::TessControl { internal: _, entry_point: ref e } => e,
 			&ShaderProgram::TessEvaluate { internal: _, entry_point: ref e } => e
-		}
-	}
-	fn shader_stage_create_info(&self) -> VkPipelineShaderStageCreateInfo
-	{
-		VkPipelineShaderStageCreateInfo
-		{
-			sType: VkStructureType::Pipeline_ShaderStageCreateInfo, pNext: std::ptr::null(), flags: 0,
-			stage: match self
-			{
-				&ShaderProgram::Vertex { internal: _, entry_point: _, vertex_input: _ } => VK_SHADER_STAGE_VERTEX_BIT,
-				&ShaderProgram::Geometry { internal: _, entry_point: _ } => VK_SHADER_STAGE_GEOMETRY_BIT,
-				&ShaderProgram::Fragment { internal: _, entry_point: _ } => VK_SHADER_STAGE_FRAGMENT_BIT,
-				&ShaderProgram::TessControl { internal: _, entry_point: _ } => VK_SHADER_STAGE_TESSELLATION_CONTROL_BIT,
-				&ShaderProgram::TessEvaluate { internal: _, entry_point: _ } => VK_SHADER_STAGE_TESSELLATION_EVALUATION_BIT
-			},
-			module: self.get_internal().get(), pName: self.get_entry_point().as_ptr(), pSpecializationInfo: std::ptr::null()
 		}
 	}
 	fn into_native_vertex_input_state(&self) -> IntoNativeVertexInputState
@@ -240,11 +223,84 @@ impl std::convert::Into<VkPipelineColorBlendAttachmentState> for AttachmentBlend
 	}
 }
 
+#[derive(Clone)]
+pub enum ConstantEntry
+{
+	Float(f32), Uint(u32)
+}
+#[derive(Clone)]
+pub struct PipelineShaderProgram<'a>(&'a ShaderProgram, Vec<(usize, ConstantEntry)>);
+impl<'a> PipelineShaderProgram<'a>
+{
+	pub fn unspecialized(shref: &'a ShaderProgram) -> Self { PipelineShaderProgram(shref, Vec::new()) }
+}
+pub struct IntoNativeShaderStageCreateInfoStruct
+{
+	stage_bits: VkShaderStageFlags, module: VkShaderModule, entry_point: *const i8,
+	#[allow(dead_code)] specialization_entry: Vec<VkSpecializationMapEntry>,
+	#[allow(dead_code)] specialization_values: Vec<u8>,
+	specialization_structure: Option<VkSpecializationInfo>
+}
+impl<'a> std::convert::Into<IntoNativeShaderStageCreateInfoStruct> for &'a PipelineShaderProgram<'a>
+{
+	fn into(self) -> IntoNativeShaderStageCreateInfoStruct
+	{
+		let map_entries = self.1.iter().scan(0usize, |acc, &(ref id, ref v)|
+		{
+			let size = match v
+			{
+				&ConstantEntry::Float(_) | &ConstantEntry::Uint(_) => 4
+			};
+			let rval = VkSpecializationMapEntry(*id as u32, *acc as u32, size);
+			*acc += size;
+			Some(rval)
+		}).collect::<Vec<_>>();
+		let const_size = map_entries.last().map(|&VkSpecializationMapEntry(_, o, s)| o + s as u32).unwrap();
+		let mut const_values = Vec::with_capacity(const_size as usize);
+		for &(_, ref v) in &self.1
+		{
+			const_values.append(&mut match v
+			{
+				&ConstantEntry::Float(v) => Vec::from(&unsafe { std::mem::transmute::<_, [u8; 4]>(v) }[..]),
+				&ConstantEntry::Uint(v) => Vec::from(&unsafe { std::mem::transmute::<_, [u8; 4]>(v) }[..])
+			});
+		}
+
+		IntoNativeShaderStageCreateInfoStruct
+		{
+			stage_bits: match self.0
+			{
+				&ShaderProgram::Vertex { .. } => VK_SHADER_STAGE_VERTEX_BIT,
+				&ShaderProgram::Geometry { .. } => VK_SHADER_STAGE_GEOMETRY_BIT,
+				&ShaderProgram::Fragment { .. } => VK_SHADER_STAGE_FRAGMENT_BIT,
+				&ShaderProgram::TessControl { .. } => VK_SHADER_STAGE_TESSELLATION_CONTROL_BIT,
+				&ShaderProgram::TessEvaluate { .. } => VK_SHADER_STAGE_TESSELLATION_EVALUATION_BIT
+			},
+			module: self.0.get_internal().get(), entry_point: self.0.get_entry_point().as_ptr(),
+			specialization_structure: if map_entries.is_empty() { None } else { Some(VkSpecializationInfo
+			{
+				mapEntryCount: map_entries.len() as u32, pMapEntries: map_entries.as_ptr(),
+				dataSize: const_size as usize, pData: const_values.as_ptr() as *const std::os::raw::c_void
+			})},
+			specialization_entry: map_entries, specialization_values: const_values
+		}
+	}
+}
+impl<'a> std::convert::Into<VkPipelineShaderStageCreateInfo> for &'a IntoNativeShaderStageCreateInfoStruct
+{
+	fn into(self) -> VkPipelineShaderStageCreateInfo
+	{
+		VkPipelineShaderStageCreateInfo
+		{
+			sType: VkStructureType::Pipeline_ShaderStageCreateInfo, pNext: std::ptr::null(), flags: 0,
+			stage: self.stage_bits, module: self.module, pName: self.entry_point, pSpecializationInfo: self.specialization_structure.as_ref().map(|n| n as *const VkSpecializationInfo).unwrap_or(std::ptr::null())
+		}
+	}
+}
 pub struct GraphicsPipelineBuilder<'a>
 {
 	layout: &'a PipelineLayout, render_pass: &'a RenderPass, subpass_index: u32,
-	vertex_shader: Option<&'a ShaderProgram>, geometry_shader: Option<&'a ShaderProgram>,
-	fragment_shader: Option<&'a ShaderProgram>,
+	vertex_shader: Option<PipelineShaderProgram<'a>>, geometry_shader: Option<PipelineShaderProgram<'a>>, fragment_shader: Option<PipelineShaderProgram<'a>>,
 	primitive_topology: PrimitiveTopology, vp_sc: Vec<ViewportWithScissorRect>,
 	rasterizer_state: RasterizerState, use_alpha_to_coverage: bool, attachment_blend_states: Vec<AttachmentBlendState>
 }
@@ -266,32 +322,46 @@ impl <'a> GraphicsPipelineBuilder<'a>
 		GraphicsPipelineBuilder
 		{
 			layout: base.layout, render_pass: base.render_pass, subpass_index: base.subpass_index,
-			vertex_shader: base.vertex_shader, geometry_shader: base.geometry_shader, fragment_shader: base.fragment_shader,
+			vertex_shader: base.vertex_shader.clone(), geometry_shader: base.geometry_shader.clone(), fragment_shader: base.fragment_shader.clone(),
 			primitive_topology: base.primitive_topology, vp_sc: base.vp_sc.clone(), rasterizer_state: base.rasterizer_state.clone(),
 			use_alpha_to_coverage: base.use_alpha_to_coverage, attachment_blend_states: base.attachment_blend_states.clone()
 		}
 	}
-	pub fn vertex_shader(mut self, vshader: &'a ShaderProgram) -> Self
+	pub fn for_postprocess(engine: &'a Engine, layout: &'a PipelineLayout, render_pass: &'a RenderPass, subpass_index: u32,
+		fragment_shader: PipelineShaderProgram<'a>, processing_viewport: VkViewport) -> Self
+	{
+		GraphicsPipelineBuilder
+		{
+			layout: layout, render_pass: render_pass, subpass_index: subpass_index,
+			vertex_shader: Some(PipelineShaderProgram::unspecialized(&engine.postprocess_vsh)), geometry_shader: None, fragment_shader: Some(fragment_shader),
+			primitive_topology: PrimitiveTopology::TriangleStrip(false),
+			vp_sc: vec![ViewportWithScissorRect::default_scissor(processing_viewport)],
+			rasterizer_state: RasterizerState { wired_render: false, cull_side: None },
+			use_alpha_to_coverage: false, attachment_blend_states: vec![AttachmentBlendState::Disabled]
+		}
+	}
+
+	pub fn vertex_shader(mut self, vshader: PipelineShaderProgram<'a>) -> Self
 	{
 		match vshader
 		{
-			&ShaderProgram::Vertex { internal: _, entry_point: _, vertex_input: _ } => { self.vertex_shader = Some(vshader); self },
+			PipelineShaderProgram(&ShaderProgram::Vertex { .. }, _) => { self.vertex_shader = Some(vshader); self },
 			_ => panic!("Prelude Assertion: GraphicsPIpelineBuilder::geometry_shader is called with not a geometry shader")
 		}
 	}
-	pub fn geometry_shader(mut self, gshader: &'a ShaderProgram) -> Self
+	pub fn geometry_shader(mut self, gshader: PipelineShaderProgram<'a>) -> Self
 	{
 		match gshader
 		{
-			&ShaderProgram::Geometry { internal: _, entry_point: _ } => { self.geometry_shader = Some(gshader); self },
+			PipelineShaderProgram(&ShaderProgram::Geometry { .. }, _) => { self.geometry_shader = Some(gshader); self },
 			_ => panic!("Prelude Assertion: GraphicsPIpelineBuilder::geometry_shader is called with not a geometry shader")
 		}
 	}
-	pub fn fragment_shader(mut self, fshader: &'a ShaderProgram) -> Self
+	pub fn fragment_shader(mut self, fshader: PipelineShaderProgram<'a>) -> Self
 	{
 		match fshader
 		{
-			&ShaderProgram::Fragment { internal: _, entry_point: _ } => { self.fragment_shader = Some(fshader); self },
+			PipelineShaderProgram(&ShaderProgram::Fragment { .. }, _) => { self.fragment_shader = Some(fshader); self },
 			_ => panic!("Prelude Assertion: GraphicsPIpelineBuilder::fragment_shader is called with not a fragment shader")
 		}
 	}
@@ -332,6 +402,7 @@ pub struct IntoNativeGraphicsPipelineCreateInfoStruct<'a>
 	#[allow(dead_code)] viewports: Vec<VkViewport>, #[allow(dead_code)] scissors: Vec<VkRect2D>,
 	#[allow(dead_code)] attachment_blend_states: Vec<VkPipelineColorBlendAttachmentState>,
 	#[allow(dead_code)] into_vertex_input_state: IntoNativeVertexInputState,
+	#[allow(dead_code)] into_shader_stage: Vec<IntoNativeShaderStageCreateInfoStruct>,
 	shader_stage: Vec<VkPipelineShaderStageCreateInfo>,
 	vertex_input_state: VkPipelineVertexInputStateCreateInfo,
 	input_assembly_state: VkPipelineInputAssemblyStateCreateInfo,
@@ -344,17 +415,19 @@ impl <'a> std::convert::Into<IntoNativeGraphicsPipelineCreateInfoStruct<'a>> for
 {
 	fn into(self) -> IntoNativeGraphicsPipelineCreateInfoStruct<'a>
 	{
-		let vshader = self.vertex_shader.expect("VertexShader is required");
-		let mut shader_stage_vec = vec![vshader.shader_stage_create_info()];
-		if let Some(gs) = self.geometry_shader { shader_stage_vec.push(gs.shader_stage_create_info()); }
-		if let Some(fs) = self.fragment_shader { shader_stage_vec.push(fs.shader_stage_create_info()); }
-		let into_input_state = vshader.into_native_vertex_input_state();
+		let vshader = self.vertex_shader.as_ref().expect("VertexShader is required");
+		let mut shader_stage_vec = vec![Into::into(vshader)];
+		if let Some(ref gs) = self.geometry_shader { shader_stage_vec.push(Into::into(gs)); }
+		if let Some(ref fs) = self.fragment_shader { shader_stage_vec.push(Into::into(fs)); }
+		let shader_stage = shader_stage_vec.iter().map(Into::into).collect();
+		let into_input_state = vshader.0.into_native_vertex_input_state();
 		let vports = self.vp_sc.iter().map(|&ViewportWithScissorRect(vp, _)| vp).collect::<Vec<_>>();
 		let scissors = self.vp_sc.iter().map(|&ViewportWithScissorRect(_, sc)| sc).collect::<Vec<_>>();
 		let attachment_blend_states = self.attachment_blend_states.iter().map(|&x| x.into()).collect::<Vec<_>>();
 		IntoNativeGraphicsPipelineCreateInfoStruct
 		{
-			shader_stage: shader_stage_vec,
+			into_shader_stage: shader_stage_vec,
+			shader_stage: shader_stage,
 			vertex_input_state: (&into_input_state).into(),
 			input_assembly_state: VkPipelineInputAssemblyStateCreateInfo
 			{

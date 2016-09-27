@@ -241,7 +241,7 @@ impl <'a> DebugInfo<'a>
 		let playout = try!(engine.create_pipeline_layout(&[&ds_layout], &[]));
 		let pipeline = {
 			let pipeline_builder = GraphicsPipelineBuilder::new(&playout, rendered_pass, subindex)
-				.vertex_shader(&vshader).fragment_shader(&fshader)
+				.vertex_shader(PipelineShaderProgram::unspecialized(&vshader)).fragment_shader(PipelineShaderProgram::unspecialized(&fshader))
 				.primitive_topology(PrimitiveTopology::TriangleStrip(false))
 				.viewport_scissors(&[ViewportWithScissorRect::default_scissor(framebuffer_size)])
 				.blend_state(&[AttachmentBlendState::PremultipliedAlphaBlend]);

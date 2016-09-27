@@ -24,5 +24,9 @@ const vec2 SMAA_SEARCHTEX_SIZE = vec2(66.0f, 33.0f);
 const vec2 SMAA_SEARCHTEX_PACKED_SIZE = vec2(64.0f, 16.0f);
 const float SMAA_CORNER_ROUNDING_NORM = float(SMAA_CORNER_ROUNDING) / 100.0f;
 
-// Common Uniform Data(Set: 0)
-#include "../UniformMemory.glsl"
+// Specialized Constants //
+layout(constant_id = 0) const float viewport_width = 640.0f;
+layout(constant_id = 1) const float viewport_height = 480.0f;
+layout(constant_id = 2) const float viewport_width_rcp = 1.0f / 640.0f;
+layout(constant_id = 3) const float viewport_height_rcp = 1.0f / 480.0f;
+#define rt_metrics vec4(viewport_width_rcp, viewport_height_rcp, viewport_width, viewport_height)

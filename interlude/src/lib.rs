@@ -45,6 +45,7 @@ pub use self::resource::{
 	SamplerState, ComponentSwizzle, ComponentMapping, Filter
 };
 pub use self::shading::{
+	PipelineShaderProgram,
 	VertexBinding, VertexAttribute, PushConstantDesc,
 	PrimitiveTopology, ViewportWithScissorRect, RasterizerState, AttachmentBlendState,
 	GraphicsPipelineBuilder
@@ -66,7 +67,7 @@ pub use self::synchronize::{QueueFence, Fence};
 pub use self::framebuffer::{RenderPass, Framebuffer};
 pub use self::command::{GraphicsCommandBuffers, BundledCommandBuffers, TransferCommandBuffers, TransientTransferCommandBuffers, TransientGraphicsCommandBuffers};
 pub use self::resource::{Buffer, Image1D, Image2D, Image3D, LinearImage2D, DeviceBuffer, StagingBuffer, DeviceImage, StagingImage, ImageView2D, MemoryMappedRange};
-pub use self::shading::{PipelineLayout, GraphicsPipeline};
+pub use self::shading::{ShaderProgram, PipelineLayout, GraphicsPipeline};
 pub use self::descriptor::{DescriptorSetLayout, DescriptorSets};
 pub use self::debug_info::DebugInfo;
 

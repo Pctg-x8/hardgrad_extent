@@ -12,6 +12,7 @@ use libc::size_t;
 use std::os::raw::*;
 use std::ffi::CStr;
 use std::io::prelude::*;
+use std::path::{Path, PathBuf};
 
 struct EngineLogger;
 impl log::Log for EngineLogger
@@ -89,7 +90,9 @@ pub struct Engine
 	asset_dir: std::path::PathBuf,
 	physical_device_limits: VkPhysicalDeviceLimits,
 	memory_type_index_for_device_local: u32, memory_type_index_for_host_visible: u32,
-	optimized_debug_render: bool
+	optimized_debug_render: bool,
+	// CommonResources //
+	pub postprocess_vsh: ShaderProgram
 }
 impl std::ops::Drop for Engine
 {
@@ -106,11 +109,7 @@ impl EngineExports for Engine
 }
 impl Engine
 {
-	pub fn new(app_name: &str, app_version: u32) -> Result<Box<Self>, EngineError>
-	{
-		Self::new_with_features(app_name, app_version, DeviceFeatures::new())
-	}
-	pub fn new_with_features(app_name: &str, app_version: u32, extra_features: DeviceFeatures) -> Result<Box<Engine>, EngineError>
+	pub fn new<StrT: AsRef<Path>>(app_name: &str, app_version: u32, asset_base: Option<StrT>, extra_features: DeviceFeatures) -> Result<Box<Self>, EngineError>
 	{
 		// Setup Engine Logger //
 		log::set_logger(|max_log_level| { max_log_level.set(log::LogLevelFilter::Info); Box::new(EngineLogger) }).unwrap();
@@ -160,22 +159,33 @@ impl Engine
 		info!(target: "Prelude", "MemoryType[Device Local] Index = {}: {:?}", mt_index_for_device_local, mtflags_decomposite(memory_types.memoryTypes[mt_index_for_device_local as usize].0));
 		info!(target: "Prelude", "MemoryType[Host Visible] Index = {}: {:?}", mt_index_for_host_visible, mtflags_decomposite(memory_types.memoryTypes[mt_index_for_host_visible as usize].0));
 
+		let asset_base = asset_base.map(|b| b.as_ref().to_path_buf()).unwrap_or(std::env::current_exe().unwrap().parent().unwrap().to_path_buf()).join("assets");
+		let ppvsh = try!(Self::init_common_resources(&device, &asset_base));
 		Ok(Box::new(Engine
 		{
 			window_system: window_server, instance: instance, debug_callback: dbg_callback, device: device, pools: pools,
-			pipeline_cache: pipeline_cache,
-			asset_dir: std::env::current_exe().unwrap().parent().unwrap().to_path_buf().join("assets"),
+			pipeline_cache: pipeline_cache, asset_dir: asset_base,
 			physical_device_limits: adapter.get_properties().limits,
 			memory_type_index_for_device_local: mt_index_for_device_local,
 			memory_type_index_for_host_visible: mt_index_for_host_visible,
-			optimized_debug_render: odr
+			optimized_debug_render: odr,
+			postprocess_vsh: ppvsh
 		}))
 	}
-	pub fn with_assets_in(mut self, asset_dir_base: std::path::PathBuf) -> Self
+	fn init_common_resources(device: &Rc<vk::Device>, asset_base: &PathBuf) -> Result<ShaderProgram, EngineError>
 	{
-		self.asset_dir = asset_dir_base.join("assets");
-		self
+		let ppvs_path = Self::_parse_asset(asset_base, "engine.shaders.PostProcessVertex", "spv");
+		info!(target: "Interlude::CommonResource", "Loading Vertex Shader for PostProcessing...");
+		let ppvsh = std::fs::File::open(ppvs_path).map_err(EngineError::from).and_then(|mut fp|
+		{
+			let mut bin = Vec::new();
+			fp.read_to_end(&mut bin).map(move |_| bin).map_err(EngineError::from)
+		}).and_then(|b| vk::ShaderModule::new(device, &b).map_err(EngineError::from))
+		.map(|m| ShaderProgram::new_vertex(m, "main", &[VertexBinding::PerVertex(std::mem::size_of::<PosUV>() as u32)], &[VertexAttribute(0, VkFormat::R32G32B32A32_SFLOAT, 0)]));
+
+		ppvsh
 	}
+
 	pub fn process_messages(&self) -> bool
 	{
 		self.window_system.process_events() == ApplicationState::Continued
@@ -351,11 +361,6 @@ impl Engine
 	}
 	pub fn wait_device(&self) -> Result<(), EngineError> { self.device.get_internal().wait_for_idle().map_err(EngineError::from) }
 
-	pub fn create_postprocess_vertex_shader(&self) -> Result<ShaderProgram, EngineError>
-	{
-		self.create_vertex_shader_from_asset("engine.shaders.PostProcessVertex", "main",
-			&[VertexBinding::PerVertex(std::mem::size_of::<PosUV>() as u32)], &[VertexAttribute(0, VkFormat::R32G32B32A32_SFLOAT, 0)])
-	}
 	pub fn create_postprocess_vertex_shader_from_asset(&self, asset_path: &str, entry_point: &str) -> Result<ShaderProgram, EngineError>
 	{
 		self.create_vertex_shader_from_asset(asset_path, entry_point,
@@ -364,8 +369,11 @@ impl Engine
 
 	pub fn parse_asset(&self, asset_path: &str, extension: &str) -> std::ffi::OsString
 	{
-		// ident ("." ident)* -> ident ("/" ident)*
-		self.asset_dir.join(asset_path.replace(".", "/")).with_extension(extension).into()
+		Self::_parse_asset(&self.asset_dir, asset_path, extension)
+	}
+	fn _parse_asset(asset_base: &PathBuf, asset_path: &str, extension: &str) -> std::ffi::OsString
+	{
+		asset_base.join(asset_path.replace(".", "/")).with_extension(extension).into()
 	}
 
 	pub fn buffer_preallocate(&self, structure_sizes: &[(usize, BufferDataType)]) -> BufferPreallocator

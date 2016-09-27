@@ -34,6 +34,7 @@ use smaa_extra_textures::*;
 
 use rayon::prelude::*;
 
+use std::rc::Rc;
 use std::cell::RefCell;
 
 // For InputSystem
@@ -166,6 +167,24 @@ impl <'a> WireRenderCommon<'a>
 			0 .. std::mem::size_of::<structures::CVector4>() as u32, &[wirecolor_r, wirecolor_g, wirecolor_b, wirecolor_a])
 	}
 }
+// Wire Render Wrapper with moving pipeline state object
+pub struct WireRender
+{
+	renderstate: interlude::GraphicsPipeline, layout_ref: Rc<interlude::PipelineLayout>
+}
+impl WireRender
+{
+	pub fn new(renderstate: interlude::GraphicsPipeline, layout: &Rc<interlude::PipelineLayout>) -> Self
+	{
+		WireRender { renderstate: renderstate, layout_ref: layout.clone() }
+	}
+	pub fn begin<RecorderT>(&self, comrec: RecorderT, wirecolor_r: f32, wirecolor_g: f32, wirecolor_b: f32, wirecolor_a: f32) -> RecorderT
+		where RecorderT: DrawingCommandRecorder
+	{
+		comrec.bind_pipeline(&self.renderstate).push_constants(&self.layout_ref, &[interlude::ShaderStage::Vertex],
+			0 .. std::mem::size_of::<structures::CVector4>() as u32, &[wirecolor_r, wirecolor_g, wirecolor_b, wirecolor_a])
+	}
+}
 
 fn pack_color(src: DecompressedPSDImageData) -> Vec<u8>
 {
@@ -221,14 +240,92 @@ impl<'a> SMAAResources<'a>
 	}
 }
 
+struct SMAAPipelineStates
+{
+	edgedetect_vshader: interlude::ShaderProgram, blendweight_vshader: interlude::ShaderProgram, combine_vshader: interlude::ShaderProgram,
+	edgedetect_shader: interlude::ShaderProgram, blendweight_shader: interlude::ShaderProgram, combine_shader: interlude::ShaderProgram,
+	descriptor_sets: [interlude::DescriptorSetLayout; 3],
+	pub edgedetect_layout: interlude::PipelineLayout, pub blendweight_layout: interlude::PipelineLayout, pub combine_layout: interlude::PipelineLayout,
+	pub edgedetect: interlude::GraphicsPipeline, pub blendweight_calc: interlude::GraphicsPipeline, pub combine: interlude::GraphicsPipeline
+}
+impl SMAAPipelineStates
+{
+	pub fn new(engine: &interlude::Engine, guniform_layout: &interlude::DescriptorSetLayout, render_pass: &interlude::RenderPass, base_subpass: usize, processing_viewport: VkViewport) -> Self
+	{
+		let evsh = Unrecoverable!(engine.create_postprocess_vertex_shader_from_asset("shaders.smaa.EdgeDetectionV", "main"));
+		let bwvsh = Unrecoverable!(engine.create_postprocess_vertex_shader_from_asset("shaders.smaa.BlendWeightCalcV", "main"));
+		let cvsh = Unrecoverable!(engine.create_postprocess_vertex_shader_from_asset("shaders.smaa.CombineV", "main"));
+		let esh = Unrecoverable!(engine.create_fragment_shader_from_asset("shaders.smaa.EdgeDetection", "main"));
+		let bwsh = Unrecoverable!(engine.create_fragment_shader_from_asset("shaders.smaa.BlendWeightCalc", "main"));
+		let csh = Unrecoverable!(engine.create_fragment_shader_from_asset("shaders.smaa.Combine", "main"));
+		let dss = [
+			Unrecoverable!(engine.create_descriptor_set_layout(&[interlude::Descriptor::CombinedSampler(1, vec![interlude::ShaderStage::Fragment])])),
+			Unrecoverable!(engine.create_descriptor_set_layout(&[interlude::Descriptor::CombinedSampler(3, vec![interlude::ShaderStage::Fragment])])),
+			Unrecoverable!(engine.create_descriptor_set_layout(&[interlude::Descriptor::CombinedSampler(2, vec![interlude::ShaderStage::Fragment])]))
+		];
+		let epl = Unrecoverable!(engine.create_pipeline_layout(&[guniform_layout, &dss[0]], &[]));
+		let bwpl = Unrecoverable!(engine.create_pipeline_layout(&[guniform_layout, &dss[1]], &[]));
+		let cpl = Unrecoverable!(engine.create_pipeline_layout(&[guniform_layout, &dss[2]], &[]));
+		let eps = interlude::GraphicsPipelineBuilder::for_postprocess(engine, &epl, render_pass, base_subpass as u32 + 0, &esh, processing_viewport).vertex_shader(&evsh);
+		let bwps = interlude::GraphicsPipelineBuilder::for_postprocess(engine, &bwpl, render_pass, base_subpass as u32 + 1, &bwsh, processing_viewport).vertex_shader(&bwvsh);
+		let cps = interlude::GraphicsPipelineBuilder::for_postprocess(engine, &cpl, render_pass, base_subpass as u32 + 2, &csh, processing_viewport).vertex_shader(&cvsh);
+		let gps = Unrecoverable!(engine.create_graphics_pipelines(&[&eps, &bwps, &cps]));
+		let cpso = gps.pop().unwrap();
+		let bwpso = gps.pop().unwrap();
+		let epso = gps.pop().unwrap();
+		assert_eq!(gps.len(), 0);
+
+		SMAAPipelineStates
+		{
+			edgedetect_vshader: evsh, blendweight_vshader: bwvsh, combine_vshader: cvsh,
+			edgedetect_shader: esh, blendweight_shader: bwsh, combine_shader: csh,
+			descriptor_sets: dss, edgedetect_layout: epl, blendweight_layout: bwpl, combine_layout: cpl,
+			edgedetect: epso, blendweight_calc: bwpso, combine: cpso
+		}
+	}
+}
+struct PipelineStates
+{
+	geometry_preinstancing_vsh: interlude::ShaderProgram, player_rotate_shader: interlude::ShaderProgram, solid_fragment_shader: interlude::ShaderProgram,
+	enemy_duplication_shader: interlude::ShaderProgram, background_duplication_shader: interlude::ShaderProgram, enemy_rezonator_duplication_shader: interlude::ShaderProgram,
+	global_uniform_layout: interlude::DescriptorSetLayout,
+	pub background: WireRender, pub enemy_body: WireRender, pub enemy_rezonator: WireRender, pub player: WireRender,
+	pub smaa: Option<SMAAPipelineStates>
+}
+impl PipelineStates
+{
+	pub fn new(engine: &interlude::Engine, use_smaa: bool, render_pass: interlude::RenderPass, swapchain_viewport: VkViewport) -> Self
+	{
+		let geometry_preinstancing_vsh = Unrecoverable!(engine.create_vertex_shader_from_asset("shaders.GeometryPreinstancing", "main", &[
+			interlude::VertexBinding::PerVertex(std::mem::size_of::<CVector4>() as u32),
+			interlude::VertexBinding::PerInstance(std::mem::size_of::<u32>() as u32)
+		], &[
+			interlude::VertexAttribute(0, VkFormat::R32G32B32A32_SFLOAT, 0),
+			interlude::VertexAttribute(1, VkFormat::R32_UINT, 0)
+		]));
+		let player_rotate_vsh = Unrecoverable!(engine.create_vertex_shader_from_asset("shaders.PlayerRotor", "main", &[
+			interlude::VertexBinding::PerVertex(std::mem::size_of::<CVector4>() as u32),
+			interlude::VertexBinding::PerInstance(std::mem::size_of::<CVector4>() as u32)
+		], &[
+			interlude::VertexAttribute(0, VkFormat::R32G32B32A32_SFLOAT, 0),
+			interlude::VertexAttribute(1, VkFormat::R32G32B32A32_SFLOAT, 0)
+		]));
+		let solid_fragment_fsh = Unrecoverable!(engine.create_fragment_shader_from_asset("shaders.ThroughColor", "main"));
+		let enemy_duplication_gsh = Unrecoverable!(engine.create_geometry_shader_from_asset("shaders.EnemyDuplicator", "main"));
+		let enemy_rezonator_duplication_gsh = Unrecoverable!(engine.create_geometry_shader_from_asset("shaders.EnemyRezonatorDup", "main"));
+		let background_duplication_gsh = Unrecoverable!(engine.create_geometry_shader_from_asset("shaders.BackgroundDuplicator", "main"));
+
+		let gu_layout = Unrecoverable!(engine.create_descriptor_set_layout(&[interlude::Descriptor::Uniform(1, vec![interlude::ShaderStage::Vertex, interlude::ShaderStage::Geometry])]));
+	}
+}
+
 fn main() { if let Err(e) = app_main() { interlude::crash(e); } }
 fn app_main() -> Result<(), interlude::EngineError>
 {
 	utils::memory_management_test();
 
 	let engine = try!{
-		interlude::Engine::new_with_features("HardGrad->Extent", 0x01, interlude::DeviceFeatures::new().enable_block_texture_compression())
-			.map(|e| e.with_assets_in(std::env::current_dir().unwrap()))
+		interlude::Engine::new("HardGrad->Extent", 0x01, Some(std::env::current_dir().unwrap()), interlude::DeviceFeatures::new().enable_block_texture_compression())
 	};
 	let main_frame = try!(engine.create_render_window(VkExtent2D(640, 480), "HardGrad -> Extent"));
 	let VkExtent2D(frame_width, frame_height) = main_frame.get_extent();
