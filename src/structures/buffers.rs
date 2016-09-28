@@ -28,13 +28,15 @@ impl VertexMemoryForWireRender
 	pub enemy_instance_mult: [u32; MAX_ENEMY_COUNT],
 	pub background_instance_mult: [u32; MAX_BK_COUNT],
 	pub player_rotq: [CVector4; 2],
-	pub enemy_rez_instance_data: [CVector4; MAX_ENEMY_COUNT]
+	pub enemy_rez_instance_data: [CVector4; MAX_ENEMY_COUNT],
+	pub player_bullet_offset_sincos: [CVector4; MAX_PLAYER_BULLET_COUNT]
 }
 impl InstanceMemory
 {
 	pub fn background_offs() -> usize { unsafe { std::mem::transmute(&std::mem::transmute::<_, &InstanceMemory>(0usize).background_instance_mult) } }
 	pub fn player_rot_offs() -> usize { unsafe { std::mem::transmute(&std::mem::transmute::<_, &InstanceMemory>(0usize).player_rotq) } }
 	pub fn enemy_rez_offs() -> usize { unsafe { std::mem::transmute(&std::mem::transmute::<_, &InstanceMemory>(0usize).enemy_rez_instance_data) } }
+	pub fn player_bullet_offs() -> usize { unsafe { std::mem::transmute(&std::mem::transmute::<_, &InstanceMemory>(0usize).player_bullet_offset_sincos) } }
 }
 #[repr(C)] pub struct Matrixes
 {

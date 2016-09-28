@@ -331,7 +331,6 @@ impl UnsizedNativeFileContent<Vec<PSDLayer>> for PSDLayerInfo
 			{
 				try!(if left_bytes <= 0 { Err(PSDLoadingError::StructureSizeMismatching) } else { Ok(()) });
 				let (rec, fr) = try!(PSDChannelImageData::read_from_file(frest, u32::from_be(ch.length) as usize));
-				println!("Channel {} found: {:?}", i16::from_be(ch.id), rec);
 				channels.insert(i16::from_be(ch.id), rec);
 				left_bytes -= u32::from_be(ch.length) as usize;
 				frest = fr;
