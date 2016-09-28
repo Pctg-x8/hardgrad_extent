@@ -3,15 +3,22 @@ use std::io::prelude::*;
 use super::{BinaryLoaderUtils, PSDLoadingError, NativeFileContent, PSDLayerRect};
 
 /// Image Data for each channels
+#[derive(Debug)]
 pub enum PSDChannelImageData
 {
 	Uncompressed(Vec<u8>), RunLengthCompressed(Vec<u8>),
 	ZipWithoutPrediction(Vec<u8>), ZipWithPrediction(Vec<u8>)
 }
+#[derive(Debug)]
 pub struct DecompressedChannelImageData<'a> { data: Vec<u8>, content_rect: &'a PSDLayerRect }
 impl<'a> DecompressedChannelImageData<'a>
 {
 	pub fn fetch(&self, x: usize, y: usize) -> u8 { self.data[x + y * self.content_rect.width() as usize] }
+	
+	pub fn offset_x(&self) -> isize { self.content_rect.left as isize }
+	pub fn offset_y(&self) -> isize { self.content_rect.top as isize }
+	pub fn width(&self) -> usize { self.content_rect.width() as usize }
+	pub fn height(&self) -> usize { self.content_rect.lines() as usize }
 }
 impl PSDChannelImageData
 {

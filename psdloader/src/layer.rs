@@ -97,7 +97,7 @@ impl std::convert::From<u8> for PSDLayerClipping
 #[repr(C, u8)] pub enum PSDGlobalLayerMaskKind { ColorSelected = 0, ColorProtected = 1, UseValueStoredPerLayer = 128 }
 
 // Primitives //
-#[repr(C, packed)] pub struct PSDLayerRect { top: u32, left: u32, bottom: u32, right: u32 }
+#[repr(C, packed)] #[derive(Debug)] pub struct PSDLayerRect { pub top: u32, pub left: u32, pub bottom: u32, pub right: u32 }
 impl PSDLayerRect
 {
 	pub fn lines(&self) -> u32 { self.bottom - self.top }
@@ -331,7 +331,8 @@ impl UnsizedNativeFileContent<Vec<PSDLayer>> for PSDLayerInfo
 			{
 				try!(if left_bytes <= 0 { Err(PSDLoadingError::StructureSizeMismatching) } else { Ok(()) });
 				let (rec, fr) = try!(PSDChannelImageData::read_from_file(frest, u32::from_be(ch.length) as usize));
-				channels.insert(ch.id, rec);
+				println!("Channel {} found: {:?}", i16::from_be(ch.id), rec);
+				channels.insert(i16::from_be(ch.id), rec);
 				left_bytes -= u32::from_be(ch.length) as usize;
 				frest = fr;
 			}

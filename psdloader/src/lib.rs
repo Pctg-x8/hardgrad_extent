@@ -179,5 +179,6 @@ mod tests
 		let decompressed_alpha = psd.layer_raw_channel_image_data(0, PSDChannelIndices::Alpha);
 		assert_eq!(decompressed.pixel(0, 0)[3], 0x00);
 		assert_eq!(decompressed_alpha.fetch(0, 0), 0x00);
+		assert_eq!(decompressed_alpha.fetch(1, 1), 0x00);
 	}
 }

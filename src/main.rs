@@ -186,15 +186,39 @@ impl WireRender
 	}
 }
 
-fn pack_color(src: DecompressedPSDImageData) -> Vec<u8>
+fn pack_color(canvas_size: VkExtent2D, red: DecompressedChannelImageData, green: DecompressedChannelImageData,
+	blue: DecompressedChannelImageData, alpha: DecompressedChannelImageData) -> Vec<u8>
 {
-	let mut color_pixels = Vec::new();
-	for (x, y) in (0 .. src.height).flat_map(|y| (0 .. src.width).map(move |x| (x, y)))
+	println!("Alpha Data: {:?}", alpha);
+	let VkExtent2D(cwidth, cheight) = canvas_size;
+	let mut color_pixels = vec![0u8; (cwidth * cheight) as usize * 4];
+	for (x, y, px, py) in (0 .. red.height()).flat_map(|y| (0 .. red.width()).map(move |x| (x, y))).map(|(x, y)| (x, y, x as isize + red.offset_x(), y as isize + red.offset_y()))
+		.filter(|&(_, _, px, py)| (0 <= px && px < cwidth as isize) && (0 <= py && py < cheight as isize))
 	{
-		for c in 0 .. src.channels
-		{
-			color_pixels.push(src.fetch(x, y, c));
-		}
+		color_pixels[(px + py * cwidth as isize) as usize * 4 + 0] = red.fetch(x, y);
+	}
+	for (x, y, px, py) in (0 .. green.height()).flat_map(|y| (0 .. green.width()).map(move |x| (x, y))).map(|(x, y)| (x, y, x as isize + green.offset_x(), y as isize + green.offset_y()))
+		.filter(|&(_, _, px, py)| (0 <= px && px < cwidth as isize) && (0 <= py && py < cheight as isize))
+	{
+		color_pixels[(px + py * cwidth as isize) as usize * 4 + 1] = green.fetch(x, y);
+	}
+	for (x, y, px, py) in (0 .. blue.height()).flat_map(|y| (0 .. blue.width()).map(move |x| (x, y))).map(|(x, y)| (x, y, x as isize + blue.offset_x(), y as isize + blue.offset_y()))
+		.filter(|&(_, _, px, py)| (0 <= px && px < cwidth as isize) && (0 <= py && py < cheight as isize))
+	{
+		color_pixels[(px + py * cwidth as isize) as usize * 4 + 2] = blue.fetch(x, y);
+	}
+	for (x, y, px, py) in (0 .. alpha.height()).flat_map(|y| (0 .. alpha.width()).map(move |x| (x, y))).map(|(x, y)| (x, y, x as isize + alpha.offset_x(), y as isize + alpha.offset_y()))
+		.filter(|&(_, _, px, py)| (0 <= px && px < cwidth as isize) && (0 <= py && py < cheight as isize))
+	{
+		color_pixels[(px + py * cwidth as isize) as usize * 4 + 3] = alpha.fetch(x, y);
+	}
+	// premultiply
+	for (x, y) in (0 .. cheight as usize).flat_map(|y| (0 .. cwidth as usize).map(move |x| (x, y)))
+	{
+		let alpha_p = color_pixels[(x + y * cwidth as usize) * 4 + 3] as f32 / 255.0;
+		color_pixels[(x + y * cwidth as usize) * 4 + 0] = (color_pixels[(x + y * cwidth as usize) * 4 + 0] as f32 * alpha_p) as u8;
+		color_pixels[(x + y * cwidth as usize) * 4 + 1] = (color_pixels[(x + y * cwidth as usize) * 4 + 1] as f32 * alpha_p) as u8;
+		color_pixels[(x + y * cwidth as usize) * 4 + 2] = (color_pixels[(x + y * cwidth as usize) * 4 + 2] as f32 * alpha_p) as u8;
 	}
 	color_pixels
 }
@@ -309,10 +333,11 @@ impl SMAAPipelineStates
 struct PipelineStates
 {
 	geometry_preinstancing_vsh: interlude::ShaderProgram, erz_preinstancing_vsh: interlude::ShaderProgram, player_rotate_vsh: interlude::ShaderProgram,
-	solid_fsh: interlude::ShaderProgram,
+	solid_fsh: interlude::ShaderProgram, sprite_vsh: interlude::ShaderProgram, sprite_fsh: interlude::ShaderProgram,
 	enemy_duplication_gsh: interlude::ShaderProgram, background_duplication_gsh: interlude::ShaderProgram, enemy_rezonator_duplication_gsh: interlude::ShaderProgram,
-	global_uniform_layout: interlude::DescriptorSetLayout, pub wire_layout: Rc<interlude::PipelineLayout>,
-	pub background: WireRender, pub enemy_body: WireRender, pub enemy_rezonator: WireRender, pub player: WireRender,
+	global_uniform_layout: interlude::DescriptorSetLayout, sprite_texture_layout: interlude::DescriptorSetLayout,
+	pub wire_layout: Rc<interlude::PipelineLayout>, pub sprite_layout: interlude::PipelineLayout,
+	pub background: WireRender, pub enemy_body: WireRender, pub enemy_rezonator: WireRender, pub player: WireRender, pub sprite: interlude::GraphicsPipeline,
 	pub smaa: Option<SMAAPipelineStates>,
 	descriptor_sets: interlude::DescriptorSets
 }
@@ -341,7 +366,13 @@ impl PipelineStates
 			interlude::VertexAttribute(0, VkFormat::R32G32B32A32_SFLOAT, 0),
 			interlude::VertexAttribute(1, VkFormat::R32G32B32A32_SFLOAT, 0)
 		]));
+		let sprite_vsh = Unrecoverable!(engine.create_vertex_shader_from_asset("shaders.SpriteVert", "main", &[
+			interlude::VertexBinding::PerVertex(std::mem::size_of::<CVector4>() as u32)
+		], &[
+			interlude::VertexAttribute(0, VkFormat::R32G32B32A32_SFLOAT, 0)
+		]));
 		let solid_fsh = Unrecoverable!(engine.create_fragment_shader_from_asset("shaders.ThroughColor", "main"));
+		let sprite_fsh = Unrecoverable!(engine.create_fragment_shader_from_asset("shaders.SpriteFrag", "main"));
 		let enemy_duplication_gsh = Unrecoverable!(engine.create_geometry_shader_from_asset("shaders.EnemyDuplicator", "main"));
 		let enemy_rezonator_duplication_gsh = Unrecoverable!(engine.create_geometry_shader_from_asset("shaders.EnemyRezonatorDup", "main"));
 		let background_duplication_gsh = Unrecoverable!(engine.create_geometry_shader_from_asset("shaders.BackLineDuplicator", "main"));
@@ -349,8 +380,12 @@ impl PipelineStates
 		let gu_layout = Unrecoverable!(engine.create_descriptor_set_layout(&[
 			interlude::Descriptor::Uniform(1, vec![interlude::ShaderStage::Vertex, interlude::ShaderStage::Geometry])
 		]));
+		let st_layout = Unrecoverable!(engine.create_descriptor_set_layout(&[
+			interlude::Descriptor::CombinedSampler(1, vec![interlude::ShaderStage::Fragment])
+		]));
 		let wire_pl = Rc::new(Unrecoverable!(engine.create_pipeline_layout(&[&gu_layout],
 			&[interlude::PushConstantDesc(VK_SHADER_STAGE_VERTEX_BIT, 0 .. std::mem::size_of::<CVector4>() as u32)])));
+		let sprite_pl = Unrecoverable!(engine.create_pipeline_layout(&[&gu_layout, &st_layout], &[]));
 
 		let mut gps =
 		{
@@ -368,14 +403,21 @@ impl PipelineStates
 				.vertex_shader(interlude::PipelineShaderProgram::unspecialized(&enemy_rezonator_preinstancing_vsh))
 				.geometry_shader(interlude::PipelineShaderProgram::unspecialized(&enemy_rezonator_duplication_gsh))
 				.primitive_topology(interlude::PrimitiveTopology::TriangleList(false));
-			let player_ps = interlude::GraphicsPipelineBuilder::new(&wire_pl, &render_pass, 0)
+			let player_ps = interlude::GraphicsPipelineBuilder::new(&wire_pl, render_pass, 0)
 				.vertex_shader(interlude::PipelineShaderProgram::unspecialized(&player_rotate_vsh))
 				.fragment_shader(interlude::PipelineShaderProgram::unspecialized(&solid_fsh))
 				.primitive_topology(interlude::PrimitiveTopology::LineList(false))
 				.viewport_scissors(&[interlude::ViewportWithScissorRect::default_scissor(swapchain_viewport)])
 				.blend_state(&[interlude::AttachmentBlendState::Disabled]);
-			Unrecoverable!(engine.create_graphics_pipelines(&[&background_ps, &enemy_ps, &enemy_rezonator_ps, &player_ps]))
+			let sprite_ps = interlude::GraphicsPipelineBuilder::new(&sprite_pl, render_pass, 0)
+				.vertex_shader(interlude::PipelineShaderProgram::unspecialized(&sprite_vsh))
+				.fragment_shader(interlude::PipelineShaderProgram::unspecialized(&sprite_fsh))
+				.primitive_topology(interlude::PrimitiveTopology::TriangleStrip(false))
+				.viewport_scissors(&[interlude::ViewportWithScissorRect::default_scissor(swapchain_viewport)])
+				.blend_state(&[interlude::AttachmentBlendState::PremultipliedAlphaBlend]);
+			Unrecoverable!(engine.create_graphics_pipelines(&[&background_ps, &enemy_ps, &enemy_rezonator_ps, &player_ps, &sprite_ps]))
 		};
+		let sprite_ps = gps.pop().unwrap();
 		let player_wr = WireRender::new(gps.pop().unwrap(), &wire_pl);
 		let enemy_rezonator_wr = WireRender::new(gps.pop().unwrap(), &wire_pl);
 		let enemy_wr = WireRender::new(gps.pop().unwrap(), &wire_pl);
@@ -385,12 +427,12 @@ impl PipelineStates
 		let (smaa, descriptor_sets) = if use_smaa
 		{
 			let ps = SMAAPipelineStates::new(engine, render_pass, 1, swapchain_viewport);
-			let dslist = Unrecoverable!(engine.preallocate_all_descriptor_sets(&[&gu_layout, &ps.descriptor_sets[0], &ps.descriptor_sets[1], &ps.descriptor_sets[2]]));
+			let dslist = Unrecoverable!(engine.preallocate_all_descriptor_sets(&[&gu_layout, &st_layout, &ps.descriptor_sets[0], &ps.descriptor_sets[1], &ps.descriptor_sets[2]]));
 			(Some(ps), dslist)
 		}
 		else
 		{
-			let dslist = Unrecoverable!(engine.preallocate_all_descriptor_sets(&[&gu_layout]));
+			let dslist = Unrecoverable!(engine.preallocate_all_descriptor_sets(&[&gu_layout, &st_layout]));
 			(None, dslist)
 		};
 
@@ -398,17 +440,19 @@ impl PipelineStates
 		{
 			geometry_preinstancing_vsh: geometry_preinstancing_vsh, erz_preinstancing_vsh: enemy_rezonator_preinstancing_vsh, player_rotate_vsh: player_rotate_vsh,
 			solid_fsh: solid_fsh, enemy_duplication_gsh: enemy_duplication_gsh, enemy_rezonator_duplication_gsh: enemy_rezonator_duplication_gsh,
-			background_duplication_gsh: background_duplication_gsh,
-			global_uniform_layout: gu_layout, wire_layout: wire_pl,
-			background: background_wr, enemy_body: enemy_wr, enemy_rezonator: enemy_rezonator_wr, player: player_wr,
+			background_duplication_gsh: background_duplication_gsh, sprite_vsh: sprite_vsh, sprite_fsh: sprite_fsh,
+			global_uniform_layout: gu_layout, sprite_texture_layout: st_layout,
+			wire_layout: wire_pl, sprite_layout: sprite_pl,
+			background: background_wr, enemy_body: enemy_wr, enemy_rezonator: enemy_rezonator_wr, player: player_wr, sprite: sprite_ps,
 			smaa: smaa, descriptor_sets: descriptor_sets
 		}
 	}
 	
 	pub fn get_descriptor_set_for_uniform_buffer(&self) -> VkDescriptorSet { self.descriptor_sets[0] }
-	pub fn get_descriptor_set_for_smaa_edgedetect(&self) -> VkDescriptorSet { self.descriptor_sets[1] }
-	pub fn get_descriptor_set_for_smaa_blendweight(&self) -> VkDescriptorSet { self.descriptor_sets[2] }
-	pub fn get_descriptor_set_for_smaa_combine(&self) -> VkDescriptorSet { self.descriptor_sets[3] }
+	pub fn get_descriptor_set_for_sprite_texture(&self) -> VkDescriptorSet { self.descriptor_sets[1] }
+	pub fn get_descriptor_set_for_smaa_edgedetect(&self) -> VkDescriptorSet { self.descriptor_sets[2] }
+	pub fn get_descriptor_set_for_smaa_blendweight(&self) -> VkDescriptorSet { self.descriptor_sets[3] }
+	pub fn get_descriptor_set_for_smaa_combine(&self) -> VkDescriptorSet { self.descriptor_sets[4] }
 }
 
 fn main() { if let Err(e) = app_main() { interlude::crash(e); } }
@@ -453,7 +497,14 @@ fn app_main() -> Result<(), interlude::EngineError>
 	try!(stage_images.map().map(|mapped|
 	{
 		smaa_resources.init(&stage_images, &mapped);
-		let playerbullet_pixels = pack_color(playerbullet_image.combined_raw_image_data());
+		let playerbullet_pixels = pack_color(
+			VkExtent2D(playerbullet_image.width as u32, playerbullet_image.height as u32),
+			playerbullet_image.layer_raw_channel_image_data(0, PSDChannelIndices::Red),
+			playerbullet_image.layer_raw_channel_image_data(0, PSDChannelIndices::Green),
+			playerbullet_image.layer_raw_channel_image_data(0, PSDChannelIndices::Blue),
+			playerbullet_image.layer_raw_channel_image_data(0, PSDChannelIndices::Alpha)
+		);
+		println!("playerbullet pixels: {:?}", playerbullet_pixels);
 		mapped.range_mut::<u8>(stage_images.image2d_offset(2) as usize, playerbullet_image.width * playerbullet_image.height * 4).copy_from_slice(&playerbullet_pixels);
 	}));
 	let application_buffer_prealloc = engine.buffer_preallocate(&[
@@ -509,6 +560,12 @@ fn app_main() -> Result<(), interlude::EngineError>
 			Position(-1.0f32, -1.0f32, 0.0f32, 1.0f32),
 			Position(1.0f32, -1.0f32, 0.0f32, 1.0f32)
 		];
+		vertices.sprite_plane_vts = [
+			Position(-1.0, -1.0, 0.0, 1.0),
+			Position( 1.0, -1.0, 0.0, 1.0),
+			Position(-1.0,  1.0, 0.0, 1.0),
+			Position( 1.0,  1.0, 0.0, 1.0)
+		];
 		indices.player_cube_ids = [
 			0, 1, 1, 2, 2, 3, 3, 0,
 			4, 5, 5, 6, 6, 7, 7, 4,
@@ -529,13 +586,15 @@ fn app_main() -> Result<(), interlude::EngineError>
 	let blendweight_info = interlude::ImageInfo(&gbuffer_sampler, &blend_weight_view, VkImageLayout::ShaderReadOnlyOptimal);
 	let areatex_info = interlude::ImageInfo(&gbuffer_sampler, &smaa_areatex_view, VkImageLayout::ShaderReadOnlyOptimal);
 	let searchtex_info = interlude::ImageInfo(&gbuffer_sampler, &smaa_searchtex_view, VkImageLayout::ShaderReadOnlyOptimal);
+	let playerbullet_info = interlude::ImageInfo(&gbuffer_sampler, &playerbullet_view, VkImageLayout::ShaderReadOnlyOptimal);
 	if use_post_smaa
 	{
 		engine.update_descriptors(&[
 			interlude::DescriptorSetWriteInfo::UniformBuffer(pipelines.get_descriptor_set_for_uniform_buffer(), 0, vec![uniform_memory_info]),
 			interlude::DescriptorSetWriteInfo::CombinedImageSampler(pipelines.get_descriptor_set_for_smaa_edgedetect(), 0, vec![gbuffer_info.clone()]),
 			interlude::DescriptorSetWriteInfo::CombinedImageSampler(pipelines.get_descriptor_set_for_smaa_blendweight(), 0, vec![edgebuffer_info, areatex_info, searchtex_info]),
-			interlude::DescriptorSetWriteInfo::CombinedImageSampler(pipelines.get_descriptor_set_for_smaa_combine(), 0, vec![gbuffer_info, blendweight_info])
+			interlude::DescriptorSetWriteInfo::CombinedImageSampler(pipelines.get_descriptor_set_for_smaa_combine(), 0, vec![gbuffer_info, blendweight_info]),
+			interlude::DescriptorSetWriteInfo::CombinedImageSampler(pipelines.get_descriptor_set_for_sprite_texture(), 0, vec![playerbullet_info])
 		]);
 	}
 	else
@@ -681,7 +740,10 @@ fn app_main() -> Result<(), interlude::EngineError>
 				.bind_vertex_buffers(&[(&application_data, application_buffer_prealloc.offset(1) + structures::VertexMemoryForWireRender::enemy_rezonator_offs()),
 					(&application_data, application_buffer_prealloc.offset(3) + structures::InstanceMemory::enemy_rez_offs())])
 				.draw(3, MAX_ENEMY_COUNT as u32)
-				// .pipeline_barrier(VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, false, &[], &[], &[ibar_gbuffer_end])
+				.bind_pipeline(&pipelines.sprite)
+				.bind_descriptor_sets_partial(&pipelines.sprite_layout, 1, &[pipelines.get_descriptor_set_for_sprite_texture()])
+				.bind_vertex_buffers(&[(&application_data, application_buffer_prealloc.offset(1) + structures::VertexMemoryForWireRender::sprite_plane_offs())])
+				.draw(4, 1)
 				.next_subpass(false)
 				// Pass 1 : Edge Detection(SMAA 1x) //
 				.bind_vertex_buffers(&[(&application_data, application_buffer_prealloc.offset(0))])
