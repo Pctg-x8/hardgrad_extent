@@ -405,22 +405,10 @@ impl PipelineStates
 		}
 	}
 	
-	pub fn get_descriptor_set_for_uniform_buffer(&self) -> VkDescriptorSet
-	{
-		self.descriptor_sets[0]
-	}
-	pub fn get_descriptor_set_for_smaa_edgedetect(&self) -> VkDescriptorSet
-	{
-		self.descriptor_sets[1]
-	}
-	pub fn get_descriptor_set_for_smaa_blendweight(&self) -> VkDescriptorSet
-	{
-		self.descriptor_sets[2]
-	}
-	pub fn get_descriptor_set_for_smaa_combine(&self) -> VkDescriptorSet
-	{
-		self.descriptor_sets[3]
-	}
+	pub fn get_descriptor_set_for_uniform_buffer(&self) -> VkDescriptorSet { self.descriptor_sets[0] }
+	pub fn get_descriptor_set_for_smaa_edgedetect(&self) -> VkDescriptorSet { self.descriptor_sets[1] }
+	pub fn get_descriptor_set_for_smaa_blendweight(&self) -> VkDescriptorSet { self.descriptor_sets[2] }
+	pub fn get_descriptor_set_for_smaa_combine(&self) -> VkDescriptorSet { self.descriptor_sets[3] }
 }
 
 fn main() { if let Err(e) = app_main() { interlude::crash(e); } }
@@ -429,12 +417,13 @@ fn app_main() -> Result<(), interlude::EngineError>
 	utils::memory_management_test();
 
 	let engine = try!{
-		interlude::Engine::new("HardGrad->Extent", 0x01, Some(std::env::current_dir().unwrap()), interlude::DeviceFeatures::new().enable_block_texture_compression())
+		interlude::Engine::new("hardgrad_extend", 0x01, Some(std::env::current_dir().unwrap()), interlude::DeviceFeatures::new().enable_block_texture_compression())
 	};
-	let main_frame = try!(engine.create_render_window(VkExtent2D(640, 480), "HardGrad -> Extent"));
+	let main_frame = try!(engine.create_render_window(VkExtent2D(640, 480), "HardGrad -> Extend"));
 	let VkExtent2D(frame_width, frame_height) = main_frame.get_extent();
 	let execute_next_signal = try!(engine.create_fence());
 
+	// Resources //
 	let playerbullet_image = PhotoshopDocument::open(engine.parse_asset("graphs.playerbullet", "psd")).unwrap();
 	let (smaa_areatex_desc, smaa_searchtex_desc) = SMAAResources::generate_descriptions();
 	let (backbuffers, stage_images) =
@@ -467,9 +456,17 @@ fn app_main() -> Result<(), interlude::EngineError>
 		let playerbullet_pixels = pack_color(playerbullet_image.combined_raw_image_data());
 		mapped.range_mut::<u8>(stage_images.image2d_offset(2) as usize, playerbullet_image.width * playerbullet_image.height * 4).copy_from_slice(&playerbullet_pixels);
 	}));
+	let application_buffer_prealloc = engine.buffer_preallocate(&[
+		(std::mem::size_of::<[interlude::PosUV; 4]>(), interlude::BufferDataType::Vertex),
+		(std::mem::size_of::<structures::VertexMemoryForWireRender>(), interlude::BufferDataType::Vertex),
+		(std::mem::size_of::<structures::IndexMemory>(), interlude::BufferDataType::Index),
+		(std::mem::size_of::<structures::InstanceMemory>(), interlude::BufferDataType::Vertex),
+		(std::mem::size_of::<structures::UniformMemory>(), interlude::BufferDataType::Uniform)
+	]);
+	let (application_data, appdata_stage) = try!(engine.create_double_buffer(&application_buffer_prealloc));
 
 	// Rendering Switches //
-	let use_post_smaa = false;
+	let use_post_smaa = true;
 
 	let render_passes = RenderPasses::new(&engine, main_frame.get_format());
 	let enabled_pass = if use_post_smaa { &render_passes.fullset } else { &render_passes.noaa };
@@ -481,16 +478,6 @@ fn app_main() -> Result<(), interlude::EngineError>
 	{
 		Unrecoverable!(engine.create_framebuffer(&render_passes.noaa, &[x], VkExtent3D(frame_width, frame_height, 1)))
 	}).collect::<Vec<_>>();
-
-	// Resources //
-	let application_buffer_prealloc = engine.buffer_preallocate(&[
-		(std::mem::size_of::<[interlude::PosUV; 4]>(), interlude::BufferDataType::Vertex),
-		(std::mem::size_of::<structures::VertexMemoryForWireRender>(), interlude::BufferDataType::Vertex),
-		(std::mem::size_of::<structures::IndexMemory>(), interlude::BufferDataType::Index),
-		(std::mem::size_of::<structures::InstanceMemory>(), interlude::BufferDataType::Vertex),
-		(std::mem::size_of::<structures::UniformMemory>(), interlude::BufferDataType::Uniform)
-	]);
-	let (application_data, appdata_stage) = try!(engine.create_double_buffer(&application_buffer_prealloc));
 
 	// setup initial data //
 	try!(appdata_stage.map().map(|mapped|

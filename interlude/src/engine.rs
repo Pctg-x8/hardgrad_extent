@@ -471,23 +471,23 @@ impl Engine
 }
 
 unsafe extern "system" fn device_report_callback(flags: VkDebugReportFlagsEXT, object_type: VkDebugReportObjectTypeEXT, _: u64,
-	_: size_t, _: i32, _: *const c_char, message: *const c_char, _: *mut c_void) -> VkBool32
+	_: size_t, message_code: i32, _: *const c_char, message: *const c_char, _: *mut c_void) -> VkBool32
 {
 	if (flags & VK_DEBUG_REPORT_ERROR_BIT_EXT) != 0
 	{
-		error!(target: format!("Vulkan DebugCall [{:?}]", object_type).as_str(), "{}", CStr::from_ptr(message).to_str().unwrap());
+		error!(target: format!("Vulkan DebugCall [{:?}]", object_type).as_str(), "({}){}", message_code, CStr::from_ptr(message).to_str().unwrap());
 	}
 	else if (flags & VK_DEBUG_REPORT_PERFORMANCE_WARNING_BIT_EXT) != 0
 	{
-		warn!(target: format!("Vulkan PerformanceDebug [{:?}]", object_type).as_str(), "{}", CStr::from_ptr(message).to_str().unwrap());
+		warn!(target: format!("Vulkan PerformanceDebug [{:?}]", object_type).as_str(), "({}){}", message_code, CStr::from_ptr(message).to_str().unwrap());
 	}
 	else if (flags & VK_DEBUG_REPORT_WARNING_BIT_EXT) != 0
 	{
-		warn!(target: format!("Vulkan DebugCall [{:?}]", object_type).as_str(), "{}", CStr::from_ptr(message).to_str().unwrap());
+		warn!(target: format!("Vulkan DebugCall [{:?}]", object_type).as_str(), "({}){}", message_code, CStr::from_ptr(message).to_str().unwrap());
 	}
 	else
 	{
-		info!(target: format!("Vulkan DebugCall [{:?}]", object_type).as_str(), "{}", CStr::from_ptr(message).to_str().unwrap());
+		info!(target: format!("Vulkan DebugCall [{:?}]", object_type).as_str(), "({}){}", message_code, CStr::from_ptr(message).to_str().unwrap());
 	}
-	true as VkBool32
+	false as VkBool32
 }
