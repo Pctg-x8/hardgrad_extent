@@ -892,7 +892,7 @@ fn app_main() -> Result<(), interlude::EngineError>
 
 	info!("Preparing for Render Loop...");
 
-	let engine = {
+	let _/*engine*/ = {
 		let exit_flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
 		let exit_flag_uo = exit_flag.clone();
 		let execute_next_signal = Unrecoverable!(engine.create_fence());
@@ -948,15 +948,16 @@ fn app_main() -> Result<(), interlude::EngineError>
 			let mapped = mapped_range.map_mut::<structures::UniformMemory>(application_buffer_prealloc.offset(4));
 			(&mut mapped.enemy_instance_data, &mut mapped.background_instance_data, &mut mapped.player_center_tf)
 		};
-		let (iref_enemy, iref_bk, iref_player, iref_enemy_rez, iref_player_bullet) =
+		let (iref_enemy, iref_bk, iref_player, iref_enemy_rez, iref_player_bullet, iref_lineburst_particle_groups) =
 		{
 			let mapped = mapped_range.map_mut::<structures::InstanceMemory>(application_buffer_prealloc.offset(3));
 			(&mut mapped.enemy_instance_mult, &mut mapped.background_instance_mult, &mut mapped.player_rotq,
-				&mut mapped.enemy_rez_instance_data, &mut mapped.player_bullet_offset_sincos)
+				&mut mapped.enemy_rez_instance_data, &mut mapped.player_bullet_offset_sincos, &mut mapped.lineburst_particle_groups)
 		};
 		let mut background_datastore = logical_resources::BackgroundDatastore::new(uref_bk, iref_bk);
 		let mut enemy_datastore = logical_resources::EnemyDatastore::new(iref_enemy);
 		let mut pb_memory_manager = utils::MemoryBlockManager::new(MAX_PLAYER_BULLET_COUNT as u32);
+		let mut lineburst_particles = logical_resources::LineBurstParticles::new(iref_lineburst_particle_groups);
 
 		// double-buffered enemy entity list //
 		let mut enemy_entities: [Enemy; MAX_ENEMY_COUNT] = unsafe { std::mem::uninitialized() };
@@ -988,6 +989,11 @@ fn app_main() -> Result<(), interlude::EngineError>
 		let mut secs_from_last_trigger = 0.0;
 		let mut game_secs = 0.0;
 		let mut next_shoot = false;
+		let mut next_particle_spawn = None;
+		let particle_spawn_rate = rand::distributions::Range::new(0, 30);
+		let particle_spawn_count = rand::distributions::Range::new(1, 8);
+		let particle_spawn_wrange = rand::distributions::Range::new(-30.0, 30.0);
+		let particle_spawn_hrange = rand::distributions::Range::new(0.0, 50.0);
 		loop
 		{
 			match event_receiver.recv().unwrap()
@@ -1075,6 +1081,12 @@ fn app_main() -> Result<(), interlude::EngineError>
 					}
 					player.update(delta_time_sec, &input);
 
+					if let Some((count, x, y)) = next_particle_spawn
+					{
+						lineburst_particles.spawn(count, x, y, game_secs);
+						next_particle_spawn = None;
+					}
+
 					background_next_appear = false;
 					prev_time = time::PreciseTime::now();
 					*cputime_ms.borrow_mut() = cputime_start.to(time::PreciseTime::now()).num_microseconds().unwrap_or(0) as f64 / 1000.0f64;
@@ -1087,6 +1099,11 @@ fn app_main() -> Result<(), interlude::EngineError>
 				// fixed update
 				background_next_appear = background_appear_rate.ind_sample(&mut randomizer) == 0;
 				enemy_next_appear = enemy_appear_rate.ind_sample(&mut randomizer) == 0;
+				if particle_spawn_rate.ind_sample(&mut randomizer) == 0
+				{
+					next_particle_spawn = Some((particle_spawn_count.ind_sample(&mut randomizer),
+						particle_spawn_wrange.ind_sample(&mut randomizer), particle_spawn_hrange.ind_sample(&mut randomizer)));
+				}
 				secs_from_last_fixed -= 1.0 / 60.0;
 			}
 			if shooting && secs_from_last_trigger >= 0.0375

@@ -5,7 +5,20 @@ use constants::*;
 use std;
 
 pub type CVector4 = [f32; 4];
+pub type CVector2 = [f32; 2];
 pub type CMatrix4 = [CVector4; 4];
+
+#[repr(C)] pub struct LineBurstParticleGroup
+{
+	pub count: u32, pub start_point: CVector2,
+	pub particles: [LineBurstParticle; MAX_LBPARTICLES_PER_GROUP]
+}
+#[repr(C)] pub struct LineBurstParticle
+{
+	// Length
+	pub length_colrel_lifestart_lifemult: CVector4,
+	pub sincos_xx: CVector4
+}
 
 #[repr(C)] pub struct VertexMemoryForWireRender
 {
@@ -29,7 +42,8 @@ impl VertexMemoryForWireRender
 	pub background_instance_mult: [u32; MAX_BK_COUNT],
 	pub player_rotq: [CVector4; 2],
 	pub enemy_rez_instance_data: [CVector4; MAX_ENEMY_COUNT],
-	pub player_bullet_offset_sincos: [CVector4; MAX_PLAYER_BULLET_COUNT]
+	pub player_bullet_offset_sincos: [CVector4; MAX_PLAYER_BULLET_COUNT],
+	pub lineburst_particle_groups: [LineBurstParticleGroup; MAX_LBPARTICLE_GROUPS]
 }
 impl InstanceMemory
 {
@@ -37,6 +51,7 @@ impl InstanceMemory
 	pub fn player_rot_offs() -> usize { unsafe { std::mem::transmute(&std::mem::transmute::<_, &InstanceMemory>(0usize).player_rotq) } }
 	pub fn enemy_rez_offs() -> usize { unsafe { std::mem::transmute(&std::mem::transmute::<_, &InstanceMemory>(0usize).enemy_rez_instance_data) } }
 	pub fn player_bullet_offs() -> usize { unsafe { std::mem::transmute(&std::mem::transmute::<_, &InstanceMemory>(0usize).player_bullet_offset_sincos) } }
+	pub fn lineburst_pg_offs() -> usize { unsafe { std::mem::transmute(&std::mem::transmute::<_, &InstanceMemory>(0usize).lineburst_particle_groups) } }
 }
 #[repr(C)] pub struct Matrixes
 {
