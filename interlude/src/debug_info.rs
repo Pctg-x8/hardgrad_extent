@@ -175,17 +175,12 @@ pub struct DebugInfo<'a>
 pub trait DebugInfoInternals
 {
 	fn get_transfer_completion_qfence(&self) -> &QueueFence;
-	fn get_transfer_commands(&self) -> &TransferCommandBuffers;
 }
 impl <'a> DebugInfoInternals for DebugInfo<'a>
 {
 	fn get_transfer_completion_qfence(&self) -> &QueueFence
 	{
 		&self.transfer_completion
-	}
-	fn get_transfer_commands(&self) -> &TransferCommandBuffers
-	{
-		&self.update_commands
 	}
 }
 impl <'a> std::ops::Drop for DebugInfo<'a>
@@ -704,5 +699,10 @@ impl <'a> DebugInfo<'a>
 			if has_unit { rendering_params[rp_index + 1].0 = left; }
 			*call_param = IndirectCallParameter(4, (header_offs + total_len) as u32, 0, line.render_param_offset() * offset_mult);
 		}
+	}
+
+	pub fn get_transfer_commands(&self) -> &TransferCommandBuffers
+	{
+		&self.update_commands
 	}
 }

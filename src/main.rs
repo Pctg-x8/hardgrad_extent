@@ -517,6 +517,11 @@ impl PipelineStates
 	pub fn get_descriptor_set_for_smaa_combine(&self) -> VkDescriptorSet { self.descriptor_sets[4] }
 }
 
+enum ApplicationEvent
+{
+	Update, Exit
+}
+
 fn main() { if let Err(e) = app_main() { interlude::crash(e); } }
 fn app_main() -> Result<(), interlude::EngineError>
 {
@@ -525,9 +530,9 @@ fn app_main() -> Result<(), interlude::EngineError>
 	let engine = try!{
 		interlude::Engine::new("hardgrad_extend", 0x01, Some(std::env::current_dir().unwrap()), interlude::DeviceFeatures::new().enable_block_texture_compression())
 	};
+	let window_system = engine.window_system_ref().clone();
 	let main_frame = try!(engine.create_render_window(VkExtent2D(640, 480), "HardGrad -> Extend"));
 	let VkExtent2D(frame_width, frame_height) = main_frame.get_extent();
-	let execute_next_signal = try!(engine.create_fence());
 
 	// Resources //
 	let playerbullet_image = PhotoshopDocument::open(engine.parse_asset("graphs.playerbullet", "psd")).unwrap();
@@ -887,161 +892,205 @@ fn app_main() -> Result<(), interlude::EngineError>
 
 	info!("Preparing for Render Loop...");
 
-	let mut frame_index = try!(main_frame.execute_rendering(&engine, &framebuffer_commands, None, Some(&debug_info), &execute_next_signal));
-
-	let mapped_range = try!(appdata_stage.map());
-	let (uref_enemy, uref_bk, uref_player_center) =
 	{
-		let mapped = mapped_range.map_mut::<structures::UniformMemory>(application_buffer_prealloc.offset(4));
-		(&mut mapped.enemy_instance_data, &mut mapped.background_instance_data, &mut mapped.player_center_tf)
-	};
-	let (iref_enemy, iref_bk, iref_player, iref_enemy_rez, iref_player_bullet) =
-	{
-		let mapped = mapped_range.map_mut::<structures::InstanceMemory>(application_buffer_prealloc.offset(3));
-		(&mut mapped.enemy_instance_mult, &mut mapped.background_instance_mult, &mut mapped.player_rotq,
-			&mut mapped.enemy_rez_instance_data, &mut mapped.player_bullet_offset_sincos)
-	};
-	let mut background_datastore = logical_resources::BackgroundDatastore::new(uref_bk, iref_bk);
-	let mut enemy_datastore = logical_resources::EnemyDatastore::new(iref_enemy);
-	let mut pb_memory_manager = utils::MemoryBlockManager::new(MAX_PLAYER_BULLET_COUNT as u32);
-
-	// double-buffered enemy entity list //
-	let mut enemy_entities: [Enemy; MAX_ENEMY_COUNT] = unsafe { std::mem::uninitialized() };
-	for n in 0 .. MAX_ENEMY_COUNT { enemy_entities[n] = Enemy::Free; }
-	let mut player = Player::new(uref_player_center, iref_player);
-	let mut player_bullets: [PlayerBullet; MAX_PLAYER_BULLET_COUNT] = unsafe { std::mem::uninitialized() };
-	for n in 0 .. MAX_PLAYER_BULLET_COUNT { player_bullets[n] = PlayerBullet::Free; }
-
-	let mut secs_from_last_fixed = 0.0f32;
-	let mut input = try!(interlude::InputSystem::new())
-		.add_input(LogicalInputTypes::Horizontal, InputType::Axis(InputAxis::X))
-		.add_input(LogicalInputTypes::Horizontal, InputType::KeyAsAxis(InputKeys::Left, InputKeys::Right))
-		.add_input(LogicalInputTypes::Vertical, InputType::Axis(InputAxis::Y))
-		.add_input(LogicalInputTypes::Vertical, InputType::KeyAsAxis(InputKeys::Up, InputKeys::Down))
-		.add_input(LogicalInputTypes::Shoot, InputType::Key(InputKeys::ButtonA))
-		.add_input(LogicalInputTypes::Shoot, InputType::Key(InputKeys::Character('z')))
-		.add_input(LogicalInputTypes::Slowdown, InputType::Axis(InputAxis::RZ))
-		.add_input(LogicalInputTypes::Slowdown, InputType::Key(InputKeys::ButtonX))
-		.add_input(LogicalInputTypes::Slowdown, InputType::Key(InputKeys::Character('x')))
-		.add_input(LogicalInputTypes::Overdrive, InputType::Axis(InputAxis::Z));
-	let mut randomizer = rand::thread_rng();
-	let background_appear_rate = rand::distributions::Range::new(0, 6);
-	let enemy_appear_rate = rand::distributions::Range::new(0, 40);
-	let enemy_left_range = rand::distributions::Range::new(-25.0f32, 25.0f32);
-	let mut background_next_appear = false;
-	let mut enemy_next_appear = false;
-	let mut prev_time = time::PreciseTime::now();
-	let mut shooting = false;
-	let mut secs_from_last_trigger = 0.0;
-	let mut game_secs = 0.0;
-	let mut next_shoot = false;
-	while engine.process_messages()
-	{
-		// Render code...
-		if execute_next_signal.get_status().is_ok()
+		let cmdsend = engine.new_command_sender();
+		let graphics_queue_ref = engine.graphics_queue_ref();
+		let execute_next_signal = Unrecoverable!(engine.create_fence());
+		let copy_completion_sig = Unrecoverable!(engine.create_fence());
+		let dbg_copy_completion_sig = Unrecoverable!(engine.create_fence());
+		let rendering_order_sem = Unrecoverable!(engine.create_queue_fence());
+		let debug_transfer_commands = debug_info.get_transfer_commands();
+		let (event_sender, event_receiver) = std::sync::mpsc::channel();
+		let event_sender2 = event_sender.clone();
+		let update_observer = unsafe { thread_scoped::scoped(move ||
 		{
-			let delta_time = prev_time.to(time::PreciseTime::now());
-			*frame_time_ms.borrow_mut() = delta_time.num_microseconds().unwrap_or(-1) as f64 / 1000.0f64;
-			frame_index = try!
+			let framebuffer_commands = framebuffer_commands;
+			let update_commands = update_commands;
+			let mut frame_index = Unrecoverable!(
+				main_frame.acquire_next_backbuffer_index(&rendering_order_sem).and_then(|findex|
+					cmdsend.submit_graphics_commands(&framebuffer_commands[findex as usize .. findex as usize + 1],
+						&[(&rendering_order_sem, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT)],
+						None, Some(&execute_next_signal)).map(|()| findex)
+				)
+			);
+			loop
 			{
-				execute_next_signal.clear().and_then(|()|
-				main_frame.present(&engine, frame_index).and_then(|()|
-				main_frame.execute_rendering(&engine, &framebuffer_commands, Some(&update_commands), Some(&debug_info), &execute_next_signal)))
-			};
-
-			// normal update
-			let cputime_start = time::PreciseTime::now();
-			input.update();
-			let timescale = (1.0f32 + input[LogicalInputTypes::Slowdown] * 2.0f32) / (1.0f32 + input[LogicalInputTypes::Overdrive]);
-			let delta_time_sec = (delta_time.num_microseconds().unwrap() as f32 / 1_000_000.0f32) / timescale;
-			secs_from_last_fixed += delta_time_sec;
-			secs_from_last_trigger += delta_time_sec;
-			game_secs += delta_time_sec;
-			background_datastore.update(&mut randomizer, delta_time_sec, background_next_appear);
-
-			let new_shooting = input[LogicalInputTypes::Shoot] > 0.0;
-			next_shoot = if !shooting && new_shooting
-			{
-				// start timer
-				secs_from_last_trigger = delta_time_sec;
-				shooting = true;
-				true
-			} else if shooting && !new_shooting
-			{
-				// stop timer
-				shooting = false;
-				false
-			} else { next_shoot };
-			if next_shoot
-			{
-				let winder_angle_abs = (game_secs * std::f32::consts::PI).sin() * 25.0;
-				for a in -1 .. 2
-				{
-					let block_index = pb_memory_manager.allocate();
-					if let Some(bindex) = block_index
+				Unrecoverable!(execute_next_signal.wait());
+				Unrecoverable!(execute_next_signal.clear());
+				Unrecoverable!(cmdsend.submit_transfer_commands(&debug_transfer_commands, &[], None, Some(&dbg_copy_completion_sig)));
+				Unrecoverable!(cmdsend.submit_transfer_commands(&update_commands, &[], None, Some(&copy_completion_sig)));
+				Unrecoverable!(copy_completion_sig.wait());  Unrecoverable!(dbg_copy_completion_sig.wait());
+				Unrecoverable!(copy_completion_sig.clear()); Unrecoverable!(dbg_copy_completion_sig.clear());
+				event_sender.send(ApplicationEvent::Update).unwrap();
+				frame_index = Unrecoverable!(
+					main_frame.present(graphics_queue_ref, frame_index).and_then(|()|
+					main_frame.acquire_next_backbuffer_index(&rendering_order_sem).and_then(|findex|
 					{
-						let bindex = bindex as usize;
-						player_bullets[bindex] = unsafe
+						cmdsend.submit_graphics_commands(&framebuffer_commands[findex as usize .. findex as usize + 1],
+							&[(&rendering_order_sem, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT)],
+							None, Some(&execute_next_signal)).map(|()| findex)
+					}))
+				);
+			}
+		}) };
+		let ws_event_observer = unsafe { thread_scoped::scoped(move ||
+		{
+			window_system.process_all_events();
+			event_sender2.send(ApplicationEvent::Exit).unwrap();
+		}) };
+
+		let mapped_range = try!(appdata_stage.map());
+		let (uref_enemy, uref_bk, uref_player_center) =
+		{
+			let mapped = mapped_range.map_mut::<structures::UniformMemory>(application_buffer_prealloc.offset(4));
+			(&mut mapped.enemy_instance_data, &mut mapped.background_instance_data, &mut mapped.player_center_tf)
+		};
+		let (iref_enemy, iref_bk, iref_player, iref_enemy_rez, iref_player_bullet) =
+		{
+			let mapped = mapped_range.map_mut::<structures::InstanceMemory>(application_buffer_prealloc.offset(3));
+			(&mut mapped.enemy_instance_mult, &mut mapped.background_instance_mult, &mut mapped.player_rotq,
+				&mut mapped.enemy_rez_instance_data, &mut mapped.player_bullet_offset_sincos)
+		};
+		let mut background_datastore = logical_resources::BackgroundDatastore::new(uref_bk, iref_bk);
+		let mut enemy_datastore = logical_resources::EnemyDatastore::new(iref_enemy);
+		let mut pb_memory_manager = utils::MemoryBlockManager::new(MAX_PLAYER_BULLET_COUNT as u32);
+
+		// double-buffered enemy entity list //
+		let mut enemy_entities: [Enemy; MAX_ENEMY_COUNT] = unsafe { std::mem::uninitialized() };
+		for n in 0 .. MAX_ENEMY_COUNT { enemy_entities[n] = Enemy::Free; }
+		let mut player = Player::new(uref_player_center, iref_player);
+		let mut player_bullets: [PlayerBullet; MAX_PLAYER_BULLET_COUNT] = unsafe { std::mem::uninitialized() };
+		for n in 0 .. MAX_PLAYER_BULLET_COUNT { player_bullets[n] = PlayerBullet::Free; }
+
+		let mut secs_from_last_fixed = 0.0f32;
+		let mut input = try!(interlude::InputSystem::new())
+			.add_input(LogicalInputTypes::Horizontal, InputType::Axis(InputAxis::X))
+			.add_input(LogicalInputTypes::Horizontal, InputType::KeyAsAxis(InputKeys::Left, InputKeys::Right))
+			.add_input(LogicalInputTypes::Vertical, InputType::Axis(InputAxis::Y))
+			.add_input(LogicalInputTypes::Vertical, InputType::KeyAsAxis(InputKeys::Up, InputKeys::Down))
+			.add_input(LogicalInputTypes::Shoot, InputType::Key(InputKeys::ButtonA))
+			.add_input(LogicalInputTypes::Shoot, InputType::Key(InputKeys::Character('z')))
+			.add_input(LogicalInputTypes::Slowdown, InputType::Axis(InputAxis::RZ))
+			.add_input(LogicalInputTypes::Slowdown, InputType::Key(InputKeys::ButtonX))
+			.add_input(LogicalInputTypes::Slowdown, InputType::Key(InputKeys::Character('x')))
+			.add_input(LogicalInputTypes::Overdrive, InputType::Axis(InputAxis::Z));
+		let mut randomizer = rand::thread_rng();
+		let background_appear_rate = rand::distributions::Range::new(0, 6);
+		let enemy_appear_rate = rand::distributions::Range::new(0, 40);
+		let enemy_left_range = rand::distributions::Range::new(-25.0f32, 25.0f32);
+		let mut background_next_appear = false;
+		let mut enemy_next_appear = false;
+		let mut prev_time = time::PreciseTime::now();
+		let mut shooting = false;
+		let mut secs_from_last_trigger = 0.0;
+		let mut game_secs = 0.0;
+		let mut next_shoot = false;
+		loop
+		{
+			match event_receiver.recv().unwrap()
+			{
+				ApplicationEvent::Exit => break,
+				ApplicationEvent::Update =>
+				{
+					let delta_time = prev_time.to(time::PreciseTime::now());
+					*frame_time_ms.borrow_mut() = delta_time.num_microseconds().unwrap_or(-1) as f64 / 1000.0f64;
+
+					// normal update
+					let cputime_start = time::PreciseTime::now();
+					input.update();
+					let timescale = (1.0f32 + input[LogicalInputTypes::Slowdown] * 2.0f32) / (1.0f32 + input[LogicalInputTypes::Overdrive]);
+					let delta_time_sec = (delta_time.num_microseconds().unwrap() as f32 / 1_000_000.0f32) / timescale;
+					secs_from_last_fixed += delta_time_sec;
+					secs_from_last_trigger += delta_time_sec;
+					game_secs += delta_time_sec;
+					background_datastore.update(&mut randomizer, delta_time_sec, background_next_appear);
+
+					let new_shooting = input[LogicalInputTypes::Shoot] > 0.0;
+					next_shoot = if !shooting && new_shooting
+					{
+						// start timer
+						secs_from_last_trigger = delta_time_sec;
+						shooting = true;
+						true
+					} else if shooting && !new_shooting
+					{
+						// stop timer
+						shooting = false;
+						false
+					} else { next_shoot };
+					if next_shoot
+					{
+						let winder_angle_abs = (game_secs * std::f32::consts::PI).sin() * 25.0;
+						for a in -1 .. 2
 						{
-							let iref_player_bullet_ref_ptr = iref_player_bullet.as_mut_ptr();
-							PlayerBullet::init(player.left(), player.top(), winder_angle_abs * a as f32, bindex as u32,
-								&mut *iref_player_bullet_ref_ptr.offset(bindex as isize))
-						};
+							let block_index = pb_memory_manager.allocate();
+							if let Some(bindex) = block_index
+							{
+								let bindex = bindex as usize;
+								player_bullets[bindex] = unsafe
+								{
+									let iref_player_bullet_ref_ptr = iref_player_bullet.as_mut_ptr();
+									PlayerBullet::init(player.left(), player.top(), winder_angle_abs * a as f32, bindex as u32,
+										&mut *iref_player_bullet_ref_ptr.offset(bindex as isize))
+								};
+							}
+							else { warn!("Player Bullet Datastore is full!!"); }
+						}
+						next_shoot = false;
 					}
-					else { warn!("Player Bullet Datastore is full!!"); }
-				}
-				next_shoot = false;
-			}
-			player_bullets.par_iter_mut().for_each(|e| e.update(delta_time_sec));
-			for e in player_bullets.iter_mut().filter(|e| e.is_garbage())
-			{
-				match e { &mut PlayerBullet::Garbage(bindex) => pb_memory_manager.free(bindex), _ => unreachable!() };
-				*e = PlayerBullet::Free;
-			}
-
-			if enemy_next_appear
-			{
-				let block_index = enemy_datastore.allocate_block();
-				if let Some(bindex) = block_index
-				{
-					let bindex = bindex as usize;
-					enemy_entities[bindex] = unsafe
+					player_bullets.par_iter_mut().for_each(|e| e.update(delta_time_sec));
+					for e in player_bullets.iter_mut().filter(|e| e.is_garbage())
 					{
-						let uref_enemy_ptr = uref_enemy.as_mut_ptr();
-						let iref_enemy_rez_ptr = iref_enemy_rez.as_mut_ptr();
-						Enemy::init(enemy_left_range.ind_sample(&mut randomizer), bindex as u32,
-							&mut *uref_enemy_ptr.offset(bindex as isize), &mut *iref_enemy_rez_ptr.offset(bindex as isize))
-					};
-					*enemy_count.borrow_mut() += 1;
+						match e { &mut PlayerBullet::Garbage(bindex) => pb_memory_manager.free(bindex), _ => unreachable!() };
+						*e = PlayerBullet::Free;
+					}
+
+					if enemy_next_appear
+					{
+						let block_index = enemy_datastore.allocate_block();
+						if let Some(bindex) = block_index
+						{
+							let bindex = bindex as usize;
+							enemy_entities[bindex] = unsafe
+							{
+								let uref_enemy_ptr = uref_enemy.as_mut_ptr();
+								let iref_enemy_rez_ptr = iref_enemy_rez.as_mut_ptr();
+								Enemy::init(enemy_left_range.ind_sample(&mut randomizer), bindex as u32,
+									&mut *uref_enemy_ptr.offset(bindex as isize), &mut *iref_enemy_rez_ptr.offset(bindex as isize))
+							};
+							*enemy_count.borrow_mut() += 1;
+						}
+						else { warn!("Enemy Datastore is full!!"); }
+						enemy_next_appear = false;
+					}
+					enemy_entities.par_iter_mut().for_each(|e| e.update(delta_time_sec));
+					for e in enemy_entities.iter_mut().filter(|e| e.is_garbage())
+					{
+						match e { &mut Enemy::Garbage(bindex) => enemy_datastore.free_block(bindex), _ => unreachable!() };
+						*e = Enemy::Free;
+						*enemy_count.borrow_mut() -= 1;
+					}
+					player.update(delta_time_sec, &input);
+
+					background_next_appear = false;
+					prev_time = time::PreciseTime::now();
+					*cputime_ms.borrow_mut() = cputime_start.to(time::PreciseTime::now()).num_microseconds().unwrap_or(0) as f64 / 1000.0f64;
+					debug_info.update();
 				}
-				else { warn!("Enemy Datastore is full!!"); }
-				enemy_next_appear = false;
 			}
-			enemy_entities.par_iter_mut().for_each(|e| e.update(delta_time_sec));
-			for e in enemy_entities.iter_mut().filter(|e| e.is_garbage())
+
+			if secs_from_last_fixed >= 1.0 / 60.0
 			{
-				match e { &mut Enemy::Garbage(bindex) => enemy_datastore.free_block(bindex), _ => unreachable!() };
-				*e = Enemy::Free;
-				*enemy_count.borrow_mut() -= 1;
+				// fixed update
+				background_next_appear = background_appear_rate.ind_sample(&mut randomizer) == 0;
+				enemy_next_appear = enemy_appear_rate.ind_sample(&mut randomizer) == 0;
+				secs_from_last_fixed -= 1.0 / 60.0;
 			}
-			player.update(delta_time_sec, &input);
-
-			background_next_appear = false;
-			prev_time = time::PreciseTime::now();
-			*cputime_ms.borrow_mut() = cputime_start.to(time::PreciseTime::now()).num_microseconds().unwrap_or(0) as f64 / 1000.0f64;
-		}
-
-		if secs_from_last_fixed >= 1.0f32 / 60.0f32
-		{
-			// fixed update
-			background_next_appear = background_appear_rate.ind_sample(&mut randomizer) == 0;
-			enemy_next_appear = enemy_appear_rate.ind_sample(&mut randomizer) == 0;
-			secs_from_last_fixed -= 1.0 / 60.0;
-		}
-		if shooting && secs_from_last_trigger >= 0.0375
-		{
-			next_shoot = true;
-			secs_from_last_trigger -= 0.0375;
+			if shooting && secs_from_last_trigger >= 0.0375
+			{
+				next_shoot = true;
+				secs_from_last_trigger -= 0.0375;
+			}
 		}
 	}
 	try!(engine.wait_device());

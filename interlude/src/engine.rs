@@ -8,6 +8,7 @@ use vk::ffi::*;
 use vk::traits::*;
 use ansi_term::*;
 use std::rc::Rc;
+use std::sync::Arc;
 use libc::size_t;
 use std::os::raw::*;
 use std::ffi::CStr;
@@ -76,7 +77,7 @@ impl DeviceFeatures
 
 pub trait EngineExports
 {
-	fn get_window_server(&self) -> &Rc<WindowServer>;
+	fn get_window_server(&self) -> &Arc<WindowServer>;
 	fn get_instance(&self) -> &Rc<vk::Instance>;
 	fn get_device(&self) -> &DeviceExports;
 	fn get_memory_type_index_for_device_local(&self) -> u32;
@@ -85,7 +86,7 @@ pub trait EngineExports
 }
 pub struct Engine
 {
-	window_system: Rc<WindowServer>, instance: Rc<vk::Instance>, #[allow(dead_code)] debug_callback: vk::DebugReportCallback,
+	window_system: Arc<WindowServer>, instance: Rc<vk::Instance>, #[allow(dead_code)] debug_callback: vk::DebugReportCallback,
 	device: Device, pools: CommandPool, pipeline_cache: Rc<vk::PipelineCache>,
 	asset_dir: std::path::PathBuf,
 	physical_device_limits: VkPhysicalDeviceLimits,
@@ -94,13 +95,14 @@ pub struct Engine
 	// CommonResources //
 	pub postprocess_vsh: ShaderProgram
 }
+unsafe impl Send for Engine {}
 impl std::ops::Drop for Engine
 {
 	fn drop(&mut self) { self.device.wait_for_idle().unwrap(); }
 }
 impl EngineExports for Engine
 {
-	fn get_window_server(&self) -> &Rc<WindowServer> { &self.window_system }
+	fn get_window_server(&self) -> &Arc<WindowServer> { &self.window_system }
 	fn get_instance(&self) -> &Rc<vk::Instance> { &self.instance }
 	fn get_device(&self) -> &DeviceExports { &self.device }
 	fn get_memory_type_index_for_device_local(&self) -> u32 { self.memory_type_index_for_device_local }
@@ -185,6 +187,8 @@ impl Engine
 
 		ppvsh
 	}
+
+	pub fn window_system_ref(&self) -> &Arc<WindowServer> { &self.window_system }
 
 	pub fn process_messages(&self) -> bool
 	{
@@ -420,29 +424,13 @@ impl Engine
 		Ok(())
 	}
 
-	pub fn submit_graphics_commands(&self, commands: &GraphicsCommandBuffersView, wait_for_execute: &[(&QueueFence, VkPipelineStageFlags)],
-		signal_on_complete: Option<&QueueFence>, signal_on_complete_host: Option<&Fence>) -> Result<(), EngineError>
+	pub fn new_command_sender(&self) -> CommandSender
 	{
-		let signals_on_complete = signal_on_complete.map(|q| vec![q.get_internal().get()]).unwrap_or(vec![]);
-		let wait_stages = if wait_for_execute.is_empty() { vec![VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT] }
-		else { wait_for_execute.into_iter().map(|&(_, s)| s).collect::<Vec<_>>() };
-
-		self.device.get_graphics_queue().submit_commands(commands,
-			&wait_for_execute.into_iter().map(|&(q, _)| q.get_internal().get()).collect::<Vec<_>>(), &wait_stages,
-			&signals_on_complete, signal_on_complete_host.map(|f| f.get_internal()))
-			.map_err(EngineError::from)
+		CommandSender { device: &self.device }
 	}
-	pub fn submit_transfer_commands(&self, commands: &TransferCommandBuffers, wait_for_execute: &[(&QueueFence, VkPipelineStageFlags)],
-		signal_on_complete: Option<&QueueFence>, signal_on_complete_host: Option<&Fence>) -> Result<(), EngineError>
+	pub fn graphics_queue_ref(&self) -> &vk::Queue
 	{
-		let signals_on_complete = signal_on_complete.map(|q| vec![q.get_internal().get()]).unwrap_or(vec![]);
-		let wait_stages = if wait_for_execute.is_empty() { vec![VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT] }
-		else { wait_for_execute.into_iter().map(|&(_, s)| s).collect::<Vec<_>>() };
-
-		self.device.get_transfer_queue().submit_commands(commands.get_internal(),
-			&wait_for_execute.into_iter().map(|&(q, _)| q.get_internal().get()).collect::<Vec<_>>(), &wait_stages,
-			&signals_on_complete, signal_on_complete_host.map(|f| f.get_internal()))
-			.map_err(EngineError::from)
+		self.device.get_graphics_queue()
 	}
 
 	fn diagnose_adapter(server_con: &WindowServer, adapter: &vk::PhysicalDevice, queue_index: u32)
@@ -469,6 +457,33 @@ impl Engine
 		if !server_con.is_vk_presentation_support(adapter, queue_index) { panic!("Vulkan Presentation is not supported by window system"); }
 	}
 }
+impl CommandSubmitter for Engine
+{
+	fn submit_graphics_commands(&self, commands: &GraphicsCommandBuffersView, wait_for_execute: &[(&QueueFence, VkPipelineStageFlags)],
+		signal_on_complete: Option<&QueueFence>, signal_on_complete_host: Option<&Fence>) -> Result<(), EngineError>
+	{
+		let signals_on_complete = signal_on_complete.map(|q| vec![q.get_internal().get()]).unwrap_or(vec![]);
+		let wait_stages = if wait_for_execute.is_empty() { vec![VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT] }
+		else { wait_for_execute.into_iter().map(|&(_, s)| s).collect::<Vec<_>>() };
+
+		self.device.get_graphics_queue().submit_commands(commands,
+			&wait_for_execute.into_iter().map(|&(q, _)| q.get_internal().get()).collect::<Vec<_>>(), &wait_stages,
+			&signals_on_complete, signal_on_complete_host.map(|f| f.get_internal()))
+			.map_err(EngineError::from)
+	}
+	fn submit_transfer_commands(&self, commands: &TransferCommandBuffers, wait_for_execute: &[(&QueueFence, VkPipelineStageFlags)],
+		signal_on_complete: Option<&QueueFence>, signal_on_complete_host: Option<&Fence>) -> Result<(), EngineError>
+	{
+		let signals_on_complete = signal_on_complete.map(|q| vec![q.get_internal().get()]).unwrap_or(vec![]);
+		let wait_stages = if wait_for_execute.is_empty() { vec![VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT] }
+		else { wait_for_execute.into_iter().map(|&(_, s)| s).collect::<Vec<_>>() };
+
+		self.device.get_transfer_queue().submit_commands(commands.get_internal(),
+			&wait_for_execute.into_iter().map(|&(q, _)| q.get_internal().get()).collect::<Vec<_>>(), &wait_stages,
+			&signals_on_complete, signal_on_complete_host.map(|f| f.get_internal()))
+			.map_err(EngineError::from)
+	}
+}
 
 unsafe extern "system" fn device_report_callback(flags: VkDebugReportFlagsEXT, object_type: VkDebugReportObjectTypeEXT, _: u64,
 	_: size_t, message_code: i32, _: *const c_char, message: *const c_char, _: *mut c_void) -> VkBool32
@@ -490,4 +505,44 @@ unsafe extern "system" fn device_report_callback(flags: VkDebugReportFlagsEXT, o
 		info!(target: format!("Vulkan DebugCall [{:?}]", object_type).as_str(), "({}){}", message_code, CStr::from_ptr(message).to_str().unwrap());
 	}
 	false as VkBool32
+}
+
+pub trait CommandSubmitter
+{
+	fn submit_graphics_commands(&self, commands: &GraphicsCommandBuffersView, wait_for_execute: &[(&QueueFence, VkPipelineStageFlags)],
+		signal_on_complete: Option<&QueueFence>, signal_on_complete_host: Option<&Fence>) -> Result<(), EngineError>;
+	fn submit_transfer_commands(&self, commands: &TransferCommandBuffers, wait_for_execute: &[(&QueueFence, VkPipelineStageFlags)],
+		signal_on_complete: Option<&QueueFence>, signal_on_complete_host: Option<&Fence>) -> Result<(), EngineError>;
+}
+pub struct CommandSender<'a>
+{
+	device: &'a Device
+}
+unsafe impl<'a> Send for CommandSender<'a> {}
+impl<'a> CommandSubmitter for CommandSender<'a>
+{
+	fn submit_graphics_commands(&self, commands: &GraphicsCommandBuffersView, wait_for_execute: &[(&QueueFence, VkPipelineStageFlags)],
+		signal_on_complete: Option<&QueueFence>, signal_on_complete_host: Option<&Fence>) -> Result<(), EngineError>
+	{
+		let signals_on_complete = signal_on_complete.map(|q| vec![q.get_internal().get()]).unwrap_or(vec![]);
+		let wait_stages = if wait_for_execute.is_empty() { vec![VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT] }
+		else { wait_for_execute.into_iter().map(|&(_, s)| s).collect::<Vec<_>>() };
+
+		self.device.get_graphics_queue().submit_commands(commands,
+			&wait_for_execute.into_iter().map(|&(q, _)| q.get_internal().get()).collect::<Vec<_>>(), &wait_stages,
+			&signals_on_complete, signal_on_complete_host.map(|f| f.get_internal()))
+			.map_err(EngineError::from)
+	}
+	fn submit_transfer_commands(&self, commands: &TransferCommandBuffers, wait_for_execute: &[(&QueueFence, VkPipelineStageFlags)],
+		signal_on_complete: Option<&QueueFence>, signal_on_complete_host: Option<&Fence>) -> Result<(), EngineError>
+	{
+		let signals_on_complete = signal_on_complete.map(|q| vec![q.get_internal().get()]).unwrap_or(vec![]);
+		let wait_stages = if wait_for_execute.is_empty() { vec![VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT] }
+		else { wait_for_execute.into_iter().map(|&(_, s)| s).collect::<Vec<_>>() };
+
+		self.device.get_transfer_queue().submit_commands(commands.get_internal(),
+			&wait_for_execute.into_iter().map(|&(q, _)| q.get_internal().get()).collect::<Vec<_>>(), &wait_stages,
+			&signals_on_complete, signal_on_complete_host.map(|f| f.get_internal()))
+			.map_err(EngineError::from)
+	}
 }

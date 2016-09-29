@@ -54,16 +54,18 @@ pub use self::descriptor::{ShaderStage, Descriptor, BufferInfo, ImageInfo, Descr
 pub use self::debug_info::DebugLine;
 pub use self::input::*;
 pub use self::data::*;
+pub use self::window::ApplicationState;
 pub use self::vk::ffi;
 
 pub mod traits
 {
+	pub use super::engine::CommandSubmitter;
 	pub use super::command::{PrimaryCommandBuffers, SecondaryCommandBuffers, DrawingCommandRecorder};
 	pub use super::resource::{ImageDescriptor, ImageView, BufferResource};
 }
 // exported objects
 pub use self::engine::Engine;
-pub use self::synchronize::{QueueFence, Fence};
+pub use self::synchronize::{QueueFence, Fence, FenceRef};
 pub use self::framebuffer::{RenderPass, Framebuffer};
 pub use self::command::{GraphicsCommandBuffers, BundledCommandBuffers, TransferCommandBuffers, TransientTransferCommandBuffers, TransientGraphicsCommandBuffers};
 pub use self::resource::{Buffer, Image1D, Image2D, Image3D, LinearImage2D, DeviceBuffer, StagingBuffer, DeviceImage, StagingImage, ImageView2D, MemoryMappedRange};

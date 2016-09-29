@@ -248,6 +248,7 @@ impl Queue
 		unsafe { vkQueueWaitIdle(self.obj) }.to_result()
 	}
 }
+unsafe impl Sync for Queue {}
 pub struct DeviceMemory { parent: Rc<Device>, obj: VkDeviceMemory }
 impl std::ops::Drop for DeviceMemory { fn drop(&mut self) { unsafe { vkFreeMemory(self.parent.obj, self.obj, std::ptr::null()) }; } }
 impl DeviceMemory

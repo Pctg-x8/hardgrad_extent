@@ -181,6 +181,8 @@ impl std::ops::Deref for GraphicsCommandBuffers
 	type Target = GraphicsCommandBuffersView;
 	fn deref(&self) -> &Self::Target { &self.internal }
 }
+unsafe impl Sync for GraphicsCommandBuffers {}
+unsafe impl Send for GraphicsCommandBuffers {}
 impl InternalExports<Vec<VkCommandBuffer>> for GraphicsCommandBuffers { fn get_internal(&self) -> &Vec<VkCommandBuffer> { &self.internal } }
 pub trait GraphicsCommandBuffersInternals { fn new(parent: &Rc<vk::CommandPool>, cbs: Vec<VkCommandBuffer>) -> Self; }
 impl GraphicsCommandBuffersInternals for GraphicsCommandBuffers
@@ -220,6 +222,8 @@ impl std::ops::Drop for TransferCommandBuffers
 		unsafe { vkFreeCommandBuffers(self.parent.parent().get(), self.parent.get(), self.internal.len() as u32, self.internal.as_ptr()) };
 	}
 }
+unsafe impl Sync for TransferCommandBuffers {}
+unsafe impl Send for TransferCommandBuffers {}
 impl InternalExports<Vec<VkCommandBuffer>> for TransferCommandBuffers { fn get_internal(&self) -> &Vec<VkCommandBuffer> { &self.internal } }
 pub trait TransferCommandBuffersInternals { fn new(parent: &Rc<vk::CommandPool>, cbs: Vec<VkCommandBuffer>) -> Self; }
 impl TransferCommandBuffersInternals for TransferCommandBuffers

@@ -5,6 +5,7 @@
 use super::internals::*;
 use {std, vk};
 use std::rc::Rc;
+use std::sync::Arc;
 use vk::ffi::*;
 use vk::traits::*;
 use xcb::ffi::*;
@@ -60,12 +61,13 @@ impl NativeWindow for xcb_window_t
 		}
 	}
 }
-pub trait WindowServer
+pub trait WindowServer: std::marker::Sync + std::marker::Send
 {
 	fn create_unresizable_window(&self, size: VkExtent2D, title: &str) -> Result<Box<NativeWindow>, EngineError>;
 	fn show_window(&self, target: &NativeWindow);
 	fn flush(&self);
 	fn process_events(&self) -> ApplicationState;
+	fn process_all_events(&self);
 	fn is_vk_presentation_support(&self, adapter: &vk::PhysicalDevice, qf_index: u32) -> bool;
 	fn make_vk_surface(&self, target: &NativeWindow, instance: &Rc<vk::Instance>) -> Result<vk::Surface, EngineError>;
 }
@@ -75,13 +77,15 @@ pub struct XServer
 	root_depth: u8, root_visual: xcb_visualid_t, root_window: xcb_window_t,
 	atom_protocols: xcb_atom_t, atom_delete_window: xcb_atom_t
 }
+unsafe impl Sync for XServer {}
+unsafe impl Send for XServer {}
 impl InternalExports<*mut xcb_connection_t> for XServer
 {
 	fn get_internal(&self) -> &*mut xcb_connection_t { &self.internal }
 }
 impl XServer
 {
-	pub fn connect() -> Result<Rc<WindowServer>, EngineError>
+	pub fn connect() -> Result<Arc<WindowServer>, EngineError>
 	{
 		let mut screen_num = 0i32;
 		let con_ptr = unsafe { xcb_connect(std::ptr::null(), &mut screen_num) };
@@ -103,7 +107,7 @@ impl XServer
 		let protocols_atom = XInternAtom::request(&con_ptr, "WM_PROTOCOLS");
 		let delete_window_atom = XInternAtom::request(&con_ptr, "WM_DELETE_WINDOW");
 
-		Ok(Rc::new(XServer
+		Ok(Arc::new(XServer
 		{
 			internal: con_ptr,
 			root_depth: rd, root_visual: rv, root_window: rw,
@@ -170,6 +174,26 @@ impl WindowServer for XServer
 
 		recursive(self, unsafe { xcb_poll_for_event(self.internal) })
 	}
+	fn process_all_events(&self)
+	{
+		loop
+		{
+			let event_ptr = unsafe { xcb_wait_for_event(self.internal) };
+			assert!(!event_ptr.is_null());
+			let event = &unsafe { *event_ptr };
+			match event.response_type & 0x7f
+			{
+				XCB_CLIENT_MESSAGE =>
+				{
+					let cm_event: &xcb_client_message_event_t = unsafe { std::mem::transmute(event) };
+					let event_data: [u32; 5] = unsafe { std::mem::transmute(cm_event.data) };
+					if event_data[0] == self.atom_delete_window { break; }
+				},
+				34 => /* keymap change event(ignored) */(),
+				_ => info!(target: "Prelude <- XServer", "xcb_event_response: {:02x}", event.response_type)
+			}
+		}
+	}
 	fn is_vk_presentation_support(&self, adapter: &vk::PhysicalDevice, qf_index: u32) -> bool
 	{
 		adapter.is_xcb_presentation_support(qf_index, self.internal, self.root_visual)
@@ -186,7 +210,7 @@ impl std::ops::Drop for XServer
 		unsafe { xcb_disconnect(self.internal) };
 	}
 }
-pub fn connect_to_window_server() -> Result<Rc<WindowServer>, EngineError>
+pub fn connect_to_window_server() -> Result<Arc<WindowServer>, EngineError>
 {
 	XServer::connect()
 }
@@ -208,27 +232,25 @@ pub trait InternalWindow where Self: std::marker::Sized
 {
 	fn create_unresizable(engine: &Engine, size: VkExtent2D, title: &str) -> Result<Box<Self>, EngineError>;
 }
-pub trait RenderWindow
+pub trait RenderWindow: std::marker::Send
 {
 	fn get_back_images(&self) -> Vec<&EntireImage>;
 	fn get_format(&self) -> VkFormat;
 	fn get_extent(&self) -> VkExtent2D;
-	fn execute_rendering(&self, engine: &Engine, g_commands: &GraphicsCommandBuffersView, t_commands: Option<&TransferCommandBuffers>,
-		injected_debugger: Option<&DebugInfo>, signal_on_complete: &Fence)
-		-> Result<u32, EngineError>;
 	fn acquire_next_backbuffer_index(&self, wait_semaphore: &QueueFence) -> Result<u32, EngineError>;
-	fn present(&self, engine: &Engine, index: u32) -> Result<(), EngineError>;
+	fn present(&self, gqueue: &vk::Queue, index: u32) -> Result<(), EngineError>;
 }
 pub struct EntireImage { pub resource: VkImage, pub view: vk::ImageView }
 impl ImageResource for EntireImage { fn get_resource(&self) -> VkImage { self.resource } }
 impl ImageView for EntireImage { fn get_native(&self) -> VkImageView { self.view.get() } }
 pub struct Window
 {
-	#[allow(dead_code)] server: Rc<WindowServer>, #[allow(dead_code)] native: Box<NativeWindow>,
+	#[allow(dead_code)] server: Arc<WindowServer>, #[allow(dead_code)] native: Box<NativeWindow>,
 	#[allow(dead_code)] device_obj: Rc<vk::Surface>, swapchain: Rc<vk::Swapchain>, render_targets: Vec<EntireImage>,
 	format: VkFormat, extent: VkExtent2D, has_vsync: bool,
 	backbuffer_available_signal: QueueFence, transfer_complete_signal: QueueFence
 }
+unsafe impl Send for Window {}
 impl Window
 {
 	pub fn create_unresizable(engine: &Engine, size: VkExtent2D, title: &str) -> Result<Box<Self>, EngineError>
@@ -304,55 +326,9 @@ impl RenderWindow for Window
 	fn get_back_images(&self) -> Vec<&EntireImage> { self.render_targets.iter().collect() }
 	fn get_format(&self) -> VkFormat { self.format }
 	fn get_extent(&self) -> VkExtent2D { self.extent }
-	fn execute_rendering(&self, engine: &Engine, g_fb_commands: &GraphicsCommandBuffersView, t_commands: Option<&TransferCommandBuffers>,
-		injected_debugger: Option<&DebugInfo>, signal_on_complete: &Fence)
-		-> Result<u32, EngineError>
+	fn present(&self, gqueue: &vk::Queue, index: u32) -> Result<(), EngineError>
 	{
-		if let Some(d) = injected_debugger { d.update(); }
-		self.acquire_next_backbuffer_index(&self.backbuffer_available_signal).and_then(|bb_index|
-		{
-			if let Some(tcs) = t_commands
-			{
-				if let Some(d) = injected_debugger
-				{
-					engine.submit_transfer_commands(tcs, &[], Some(&self.transfer_complete_signal), None).and_then(|()|
-					engine.submit_transfer_commands(d.get_transfer_commands(), &[], Some(d.get_transfer_completion_qfence()), None)).and_then(|()|
-						engine.submit_graphics_commands(&[g_fb_commands[bb_index as usize]], &[
-							(&self.backbuffer_available_signal, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT),
-							(&self.transfer_complete_signal, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT),
-							(d.get_transfer_completion_qfence(), VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT)
-						], None, Some(signal_on_complete)))
-				}
-				else
-				{
-					engine.submit_transfer_commands(tcs, &[], Some(&self.transfer_complete_signal), None)
-						.and_then(|()| engine.submit_graphics_commands(&[g_fb_commands[bb_index as usize]], &[
-							(&self.backbuffer_available_signal, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT),
-							(&self.transfer_complete_signal, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT)
-						], None, Some(signal_on_complete)))
-				}
-			}
-			else
-			{
-				if let Some(d) = injected_debugger
-				{
-					engine.submit_transfer_commands(d.get_transfer_commands(), &[], Some(d.get_transfer_completion_qfence()), None).and_then(|()|
-						engine.submit_graphics_commands(&[g_fb_commands[bb_index as usize]], &[
-							(&self.backbuffer_available_signal, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT),
-							(d.get_transfer_completion_qfence(), VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT)
-						], None, Some(signal_on_complete)))
-				}
-				else
-				{
-					engine.submit_graphics_commands(&[g_fb_commands[bb_index as usize]], &[(&self.backbuffer_available_signal, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT)],
-						None, Some(signal_on_complete))
-				}
-			}.map(|()| bb_index)
-		})
-	}
-	fn present(&self, engine: &Engine, index: u32) -> Result<(), EngineError>
-	{
-		self.swapchain.present(engine.get_device().get_graphics_queue(), index, &[]).map_err(EngineError::from)
+		self.swapchain.present(gqueue, index, &[]).map_err(EngineError::from)
 	}
 	fn acquire_next_backbuffer_index(&self, wait_semaphore: &QueueFence) -> Result<u32, EngineError>
 	{
