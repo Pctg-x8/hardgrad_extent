@@ -760,7 +760,7 @@ fn app_main() -> Result<(), interlude::EngineError>
 				.end()
 			));
 			try!(combine_commands.begin(1 + 2 * n, enabled_pass, 3, f).and_then(|recorder|
-				recorder.inject_commands(|r| debug_info.inject_render_commands(r)).end()
+				/*recorder.inject_commands(|r| debug_info.inject_render_commands(r)).end()*/recorder.end()
 			));
 		}
 		Some(combine_commands)
@@ -827,7 +827,7 @@ fn app_main() -> Result<(), interlude::EngineError>
 				// .pipeline_barrier(VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, false, &[], &[], &[ibar_blendweight_end])
 				.next_subpass(true)
 				// Pass 3 : SMAA Combine and Debug Print //
-				.execute_commands(&combine_commands.as_ref().unwrap()[i * 2 .. i * 2 + 2])
+				.execute_commands(&combine_commands.as_ref().unwrap()[i * 2 .. i * 2 + 1])
 				.end_render_pass()
 			.end().unwrap()
 		}
@@ -892,9 +892,9 @@ fn app_main() -> Result<(), interlude::EngineError>
 
 	info!("Preparing for Render Loop...");
 
-	{
-		let cmdsend = engine.new_command_sender();
-		let graphics_queue_ref = engine.graphics_queue_ref();
+	let engine = {
+		let exit_flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+		let exit_flag_uo = exit_flag.clone();
 		let execute_next_signal = Unrecoverable!(engine.create_fence());
 		let copy_completion_sig = Unrecoverable!(engine.create_fence());
 		let dbg_copy_completion_sig = Unrecoverable!(engine.create_fence());
@@ -908,30 +908,33 @@ fn app_main() -> Result<(), interlude::EngineError>
 			let update_commands = update_commands;
 			let mut frame_index = Unrecoverable!(
 				main_frame.acquire_next_backbuffer_index(&rendering_order_sem).and_then(|findex|
-					cmdsend.submit_graphics_commands(&framebuffer_commands[findex as usize .. findex as usize + 1],
+					engine.submit_graphics_commands(&framebuffer_commands[findex as usize .. findex as usize + 1],
 						&[(&rendering_order_sem, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT)],
 						None, Some(&execute_next_signal)).map(|()| findex)
 				)
 			);
-			loop
+			while !exit_flag_uo.load(std::sync::atomic::Ordering::Acquire)
 			{
 				Unrecoverable!(execute_next_signal.wait());
 				Unrecoverable!(execute_next_signal.clear());
-				Unrecoverable!(cmdsend.submit_transfer_commands(&debug_transfer_commands, &[], None, Some(&dbg_copy_completion_sig)));
-				Unrecoverable!(cmdsend.submit_transfer_commands(&update_commands, &[], None, Some(&copy_completion_sig)));
+				Unrecoverable!(engine.submit_transfer_commands(&debug_transfer_commands, &[], None, Some(&dbg_copy_completion_sig)));
+				Unrecoverable!(engine.submit_transfer_commands(&update_commands, &[], None, Some(&copy_completion_sig)));
 				Unrecoverable!(copy_completion_sig.wait());  Unrecoverable!(dbg_copy_completion_sig.wait());
 				Unrecoverable!(copy_completion_sig.clear()); Unrecoverable!(dbg_copy_completion_sig.clear());
 				event_sender.send(ApplicationEvent::Update).unwrap();
 				frame_index = Unrecoverable!(
-					main_frame.present(graphics_queue_ref, frame_index).and_then(|()|
+					main_frame.present(engine.graphics_queue_ref(), frame_index).and_then(|()|
 					main_frame.acquire_next_backbuffer_index(&rendering_order_sem).and_then(|findex|
 					{
-						cmdsend.submit_graphics_commands(&framebuffer_commands[findex as usize .. findex as usize + 1],
+						engine.submit_graphics_commands(&framebuffer_commands[findex as usize .. findex as usize + 1],
 							&[(&rendering_order_sem, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT)],
 							None, Some(&execute_next_signal)).map(|()| findex)
 					}))
 				);
 			}
+
+			Unrecoverable!(engine.wait_device());
+			engine
 		}) };
 		let ws_event_observer = unsafe { thread_scoped::scoped(move ||
 		{
@@ -1092,8 +1095,11 @@ fn app_main() -> Result<(), interlude::EngineError>
 				secs_from_last_trigger -= 0.0375;
 			}
 		}
-	}
-	try!(engine.wait_device());
+
+		ws_event_observer.join();
+		exit_flag.store(true, std::sync::atomic::Ordering::Release);
+		update_observer.join()
+	};
 
 	Ok(())
 }
