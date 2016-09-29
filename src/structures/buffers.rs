@@ -10,8 +10,7 @@ pub type CMatrix4 = [CVector4; 4];
 
 #[repr(C)] pub struct LineBurstParticleGroup
 {
-	pub count: u32, pub start_point: CVector2,
-	pub particles: [LineBurstParticle; MAX_LBPARTICLES_PER_GROUP]
+	pub count: u32, pub start_point: CVector2
 }
 #[repr(C)] pub struct LineBurstParticle
 {
@@ -51,7 +50,7 @@ impl InstanceMemory
 	pub fn player_rot_offs() -> usize { unsafe { std::mem::transmute(&std::mem::transmute::<_, &InstanceMemory>(0usize).player_rotq) } }
 	pub fn enemy_rez_offs() -> usize { unsafe { std::mem::transmute(&std::mem::transmute::<_, &InstanceMemory>(0usize).enemy_rez_instance_data) } }
 	pub fn player_bullet_offs() -> usize { unsafe { std::mem::transmute(&std::mem::transmute::<_, &InstanceMemory>(0usize).player_bullet_offset_sincos) } }
-	pub fn lineburst_pg_offs() -> usize { unsafe { std::mem::transmute(&std::mem::transmute::<_, &InstanceMemory>(0usize).lineburst_particle_groups) } }
+	pub fn lbparticle_groups_offs() -> usize { unsafe { std::mem::transmute(&std::mem::transmute::<_, &InstanceMemory>(0usize).lineburst_particle_groups) } }
 }
 #[repr(C)] pub struct Matrixes
 {
@@ -70,5 +69,6 @@ impl InstanceMemory
 	pub projection_matrixes: Matrixes,
 	pub enemy_instance_data: [CharacterLocation; MAX_ENEMY_COUNT],
 	pub background_instance_data: [BackgroundInstance; MAX_BK_COUNT],
-	pub player_center_tf: CVector4
+	pub player_center_tf: CVector4, pub gametime: CVector4,
+	pub lineburst_particles: [LineBurstParticle; MAX_LBPARTICLE_GROUPS * MAX_LBPARTICLES_PER_GROUP]
 }

@@ -25,8 +25,8 @@ use vertex_formats::*;
 mod structures;
 use structures::*;
 mod logical_resources;
+use logical_resources::*;
 mod utils;
-use nalgebra::*;
 use rand::distributions::*;
 
 mod smaa_extra_textures;
@@ -42,153 +42,6 @@ use std::cell::RefCell;
 pub enum LogicalInputTypes
 {
 	Horizontal, Vertical, Shoot, Slowdown, Overdrive
-}
-
-fn store_quaternion(to: &mut CVector4, q: &Quaternion<f32>)
-{
-	*to = [q.i, q.j, q.k, q.w];
-}
-
-enum Enemy<'a>
-{
-	Free, Entity
-	{
-		block_index: u32, uniform_ref: &'a mut CharacterLocation, rezonator_iref: &'a mut CVector4,
-		left: f32, living_secs: f32, rezonator_left: u32
-	}, Garbage(u32)
-}
-unsafe impl <'a> std::marker::Send for Enemy<'a> {}
-impl <'a> Enemy<'a>
-{
-	pub fn init(init_left: f32, block_index: u32, uref: &'a mut structures::CharacterLocation, iref_rez: &'a mut structures::CVector4) -> Self
-	{
-		uref.center_tf = [init_left, 0.0, 0.0, 0.0];
-		store_quaternion(&mut uref.rotq[0], UnitQuaternion::new(Vector3::new(0.0, 0.0, 0.0)).quaternion());
-		store_quaternion(&mut uref.rotq[1], UnitQuaternion::new(Vector3::new(0.0, 0.0, 0.0)).quaternion());
-		*iref_rez = [3.0, 0.0, 0.0, 0.0];
-
-		Enemy::Entity
-		{
-			block_index: block_index, uniform_ref: uref, rezonator_iref: iref_rez,
-			left: init_left, living_secs: 0.0f32, rezonator_left: 3
-		}
-	}
-	pub fn update(&mut self, delta_time: f32)
-	{
-		// update values
-		let died_bi = match self
-		{
-			&mut Enemy::Entity { block_index, ref mut uniform_ref, ref mut rezonator_iref, left: _, ref mut living_secs, rezonator_left } =>
-			{
-				let current_y = if *living_secs < 0.875f32
-				{
-					15.0f32 * (1.0f32 - (1.0f32 - *living_secs / 0.875f32).powi(2)) - 3.0f32
-				}
-				else
-				{
-					15.0f32 + (*living_secs - 0.875f32) * 2.5f32 - 3.0f32
-				};
-				uniform_ref.center_tf[1] = current_y;
-				store_quaternion(&mut uniform_ref.rotq[0], UnitQuaternion::new(Vector3::new(-1.0, 0.0, 0.75).normalize() * (260.0 * *living_secs).to_radians()).quaternion());
-				store_quaternion(&mut uniform_ref.rotq[1], UnitQuaternion::new(Vector3::new(1.0, -1.0, 0.5).normalize() * (-260.0 * *living_secs + 13.0).to_radians()).quaternion());
-				rezonator_iref[0] = rezonator_left as f32;
-				rezonator_iref[1] -= 130.0f32.to_radians() * delta_time;
-				rezonator_iref[2] += 220.0f32.to_radians() * delta_time;
-				*living_secs += delta_time;
-
-				if current_y >= 52.0 { rezonator_iref[0] = 0.0; Some(block_index) } else { None }
-			},
-			_ => None
-		};
-
-		// state change
-		if let Some(bindex) = died_bi { *self = Enemy::Garbage(bindex); }
-	}
-	pub fn is_garbage(&self) -> bool
-	{
-		match self { &Enemy::Garbage(_) => true, _ => false }
-	}
-}
-enum PlayerBullet<'a>
-{
-	Free, Entity { block_index: u32, offs_sincos_ref: &'a mut CVector4 }, Garbage(u32)
-}
-impl<'a> PlayerBullet<'a>
-{
-	pub fn init(init_left: f32, init_top: f32, init_angle: f32, block_index: u32, offs_sincos_ref: &'a mut CVector4) -> Self
-	{
-		offs_sincos_ref[0] = init_left;
-		offs_sincos_ref[1] = init_top;
-		let (s, c) = init_angle.to_radians().sin_cos();
-		offs_sincos_ref[2] = s; offs_sincos_ref[3] = c;
-
-		PlayerBullet::Entity { block_index: block_index, offs_sincos_ref: offs_sincos_ref }
-	}
-	pub fn update(&mut self, delta_time: f32)
-	{
-		let died_index = match self
-		{
-			&mut PlayerBullet::Entity { block_index: block, offs_sincos_ref: ref mut offs_sincos } =>
-			{
-				offs_sincos[0] += offs_sincos[2] * 8.0 * 14.0 * delta_time;
-				offs_sincos[1] -= offs_sincos[3] * 8.0 * 14.0 * delta_time;
-				if offs_sincos[0].abs() > 32.0 || !(0.0 <= offs_sincos[1] && offs_sincos[1] <= 50.0)
-				{
-					offs_sincos[0] = std::f32::MAX;
-					offs_sincos[1] = std::f32::MAX;
-					Some(block)
-				}
-				else { None }
-			}, _ => None
-		};
-		
-		if let Some(bindex) = died_index { *self = PlayerBullet::Garbage(bindex); }
-	}
-	pub fn is_garbage(&self) -> bool { match self { &PlayerBullet::Garbage(_) => true, _ => false } }
-}
-
-struct Player<'a>
-{
-	uniform_memory: &'a mut structures::CVector4, instance_memory: &'a mut [structures::CVector4; 2],
-	living_secs: f32
-}
-impl <'a> Player<'a>
-{
-	fn new(uniform_ref: &'a mut structures::CVector4, instance_ref: &'a mut [structures::CVector4; 2]) -> Self
-	{
-		let u_quaternion = UnitQuaternion::new(Vector3::new(0.0f32, 0.0f32, 0.0f32));
-		let quaternion_ref = u_quaternion.quaternion();
-
-		instance_ref[0] = [quaternion_ref.i, quaternion_ref.j, quaternion_ref.k, quaternion_ref.w];
-		instance_ref[1] = [quaternion_ref.i, quaternion_ref.j, quaternion_ref.k, quaternion_ref.w];
-		*uniform_ref = [0.0f32, 38.0f32, 0.0f32, 0.0f32];
-
-		Player
-		{
-			uniform_memory: uniform_ref, instance_memory: instance_ref,
-			living_secs: 0.0f32
-		}
-	}
-	fn update(&mut self, frame_delta: f32, input: &interlude::InputSystem<LogicalInputTypes>)
-	{
-		let u_quaternions = [
-			UnitQuaternion::new(Vector3::new(-1.0f32, 0.0f32, 0.75f32).normalize() * (260.0f32 * self.living_secs as f32).to_radians()),
-			UnitQuaternion::new(Vector3::new(1.0f32, -1.0f32, 0.5f32).normalize() * (-260.0f32 * self.living_secs as f32 + 13.0f32).to_radians())
-		];
-		let mut quaternions = u_quaternions.iter().map(|x| x.quaternion()).map(|q| [q.i, q.j, q.k, q.w]);
-		self.living_secs += frame_delta;
-
-		self.uniform_memory[0] =
-			(self.uniform_memory[0] + input[LogicalInputTypes::Horizontal] * 40.0f32 * frame_delta).max(-33.0f32).min(33.0f32);
-		self.uniform_memory[1] =
-			(self.uniform_memory[1] + input[LogicalInputTypes::Vertical] * 40.0f32 * frame_delta).max(1.5f32).min(45.0f32);
-
-		self.instance_memory[0] = quaternions.next().unwrap();
-		self.instance_memory[1] = quaternions.next().unwrap();
-	}
-
-	pub fn left(&self) -> f32 { self.uniform_memory[0] }
-	pub fn top(&self) -> f32 { self.uniform_memory[1] }
 }
 
 pub struct WireRenderCommon<'a>
@@ -389,15 +242,74 @@ impl SMAAPipelineStates
 		}
 	}
 }
+struct ShaderStore
+{
+	// Vertex Shaders //
+	geometry_preinstancing_vsh: interlude::ShaderProgram, erz_preinstancing_vsh: interlude::ShaderProgram, player_rotate_vsh: interlude::ShaderProgram,
+	playerbullet_vsh: interlude::ShaderProgram, lineburst_particle_vsh: interlude::ShaderProgram,
+	// Geometry Shaders //
+	enemy_duplication_gsh: interlude::ShaderProgram, background_duplication_gsh: interlude::ShaderProgram, enemy_rezonator_duplication_gsh: interlude::ShaderProgram,
+	lineburst_particle_instantiate_gsh: interlude::ShaderProgram,
+	// Fragment Shaders //
+	solid_fsh: interlude::ShaderProgram, sprite_fsh: interlude::ShaderProgram
+}
+impl ShaderStore
+{
+	fn new(engine: &interlude::Engine) -> Box<Self>
+	{
+		Box::new(ShaderStore
+		{
+			geometry_preinstancing_vsh: Unrecoverable!(engine.create_vertex_shader_from_asset("shaders.GeometryPreinstancing", "main", &[
+				interlude::VertexBinding::PerVertex(std::mem::size_of::<CVector4>() as u32),
+				interlude::VertexBinding::PerInstance(std::mem::size_of::<u32>() as u32)
+			], &[
+				interlude::VertexAttribute(0, VkFormat::R32G32B32A32_SFLOAT, 0),
+				interlude::VertexAttribute(1, VkFormat::R32_UINT, 0)
+			])),
+			erz_preinstancing_vsh: Unrecoverable!(engine.create_vertex_shader_from_asset("shaders.EnemyRezonatorV", "main", &[
+				interlude::VertexBinding::PerVertex(std::mem::size_of::<CVector4>() as u32),
+				interlude::VertexBinding::PerInstance(std::mem::size_of::<CVector4>() as u32)
+			], &[
+				interlude::VertexAttribute(0, VkFormat::R32G32B32A32_SFLOAT, 0),
+				interlude::VertexAttribute(1, VkFormat::R32G32B32A32_SFLOAT, 0)
+			])),
+			player_rotate_vsh: Unrecoverable!(engine.create_vertex_shader_from_asset("shaders.PlayerRotor", "main", &[
+				interlude::VertexBinding::PerVertex(std::mem::size_of::<CVector4>() as u32),
+				interlude::VertexBinding::PerInstance(std::mem::size_of::<CVector4>() as u32)
+			], &[
+				interlude::VertexAttribute(0, VkFormat::R32G32B32A32_SFLOAT, 0),
+				interlude::VertexAttribute(1, VkFormat::R32G32B32A32_SFLOAT, 0)
+			])),
+			playerbullet_vsh: Unrecoverable!(engine.create_vertex_shader_from_asset("shaders.PlayerBullet", "main", &[
+				interlude::VertexBinding::PerVertex(std::mem::size_of::<CVector4>() as u32),
+				interlude::VertexBinding::PerInstance(std::mem::size_of::<CVector4>() as u32)
+			], &[
+				interlude::VertexAttribute(0, VkFormat::R32G32B32A32_SFLOAT, 0),
+				interlude::VertexAttribute(1, VkFormat::R32G32B32A32_SFLOAT, 0)
+			])),
+			lineburst_particle_vsh: Unrecoverable!(engine.create_vertex_shader_from_asset("shaders.LineBurstParticleVert", "main", &[
+				interlude::VertexBinding::PerVertex(std::mem::size_of::<structures::LineBurstParticleGroup>() as u32)
+			], &[
+				interlude::VertexAttribute(0, VkFormat::R32_UINT, 0),
+				interlude::VertexAttribute(0, VkFormat::R32G32_SFLOAT, std::mem::size_of::<u32>() as u32)
+			])),
+			enemy_duplication_gsh: Unrecoverable!(engine.create_geometry_shader_from_asset("shaders.EnemyDuplicator", "main")),
+			background_duplication_gsh: Unrecoverable!(engine.create_geometry_shader_from_asset("shaders.BackLineDuplicator", "main")),
+			enemy_rezonator_duplication_gsh: Unrecoverable!(engine.create_geometry_shader_from_asset("shaders.EnemyRezonatorDup", "main")),
+			lineburst_particle_instantiate_gsh: Unrecoverable!(engine.create_geometry_shader_from_asset("shaders.LineBurstParticleInstantiate", "main")),
+			solid_fsh: Unrecoverable!(engine.create_fragment_shader_from_asset("shaders.ThroughColor", "main")),
+			sprite_fsh: Unrecoverable!(engine.create_fragment_shader_from_asset("shaders.SpriteFrag", "main"))
+		})
+	}
+}
 #[allow(dead_code)]
 struct PipelineStates
 {
-	geometry_preinstancing_vsh: interlude::ShaderProgram, erz_preinstancing_vsh: interlude::ShaderProgram, player_rotate_vsh: interlude::ShaderProgram,
-	solid_fsh: interlude::ShaderProgram, playerbullet_vsh: interlude::ShaderProgram, sprite_fsh: interlude::ShaderProgram,
-	enemy_duplication_gsh: interlude::ShaderProgram, background_duplication_gsh: interlude::ShaderProgram, enemy_rezonator_duplication_gsh: interlude::ShaderProgram,
+	shaderstore: Box<ShaderStore>,
 	global_uniform_layout: interlude::DescriptorSetLayout, sprite_texture_layout: interlude::DescriptorSetLayout,
-	pub wire_layout: Rc<interlude::PipelineLayout>, pub sprite_layout: Rc<interlude::PipelineLayout>,
+	pub wire_layout: Rc<interlude::PipelineLayout>, pub sprite_layout: Rc<interlude::PipelineLayout>, pub particle_layout: interlude::PipelineLayout,
 	pub background: WireRender, pub enemy_body: WireRender, pub enemy_rezonator: WireRender, pub player: WireRender, pub playerbullet: SpriteRender,
+	pub lineburst: interlude::GraphicsPipeline,
 	pub smaa: Option<SMAAPipelineStates>,
 	descriptor_sets: interlude::DescriptorSets
 }
@@ -405,39 +317,7 @@ impl PipelineStates
 {
 	pub fn new(engine: &interlude::Engine, use_smaa: bool, render_pass: &interlude::RenderPass, swapchain_viewport: VkViewport) -> Self
 	{
-		let geometry_preinstancing_vsh = Unrecoverable!(engine.create_vertex_shader_from_asset("shaders.GeometryPreinstancing", "main", &[
-			interlude::VertexBinding::PerVertex(std::mem::size_of::<CVector4>() as u32),
-			interlude::VertexBinding::PerInstance(std::mem::size_of::<u32>() as u32)
-		], &[
-			interlude::VertexAttribute(0, VkFormat::R32G32B32A32_SFLOAT, 0),
-			interlude::VertexAttribute(1, VkFormat::R32_UINT, 0)
-		]));
-		let enemy_rezonator_preinstancing_vsh = Unrecoverable!(engine.create_vertex_shader_from_asset("shaders.EnemyRezonatorV", "main", &[
-			interlude::VertexBinding::PerVertex(std::mem::size_of::<CVector4>() as u32),
-			interlude::VertexBinding::PerInstance(std::mem::size_of::<CVector4>() as u32)
-		], &[
-			interlude::VertexAttribute(0, VkFormat::R32G32B32A32_SFLOAT, 0),
-			interlude::VertexAttribute(1, VkFormat::R32G32B32A32_SFLOAT, 0)
-		]));
-		let player_rotate_vsh = Unrecoverable!(engine.create_vertex_shader_from_asset("shaders.PlayerRotor", "main", &[
-			interlude::VertexBinding::PerVertex(std::mem::size_of::<CVector4>() as u32),
-			interlude::VertexBinding::PerInstance(std::mem::size_of::<CVector4>() as u32)
-		], &[
-			interlude::VertexAttribute(0, VkFormat::R32G32B32A32_SFLOAT, 0),
-			interlude::VertexAttribute(1, VkFormat::R32G32B32A32_SFLOAT, 0)
-		]));
-		let playerbullet_vsh = Unrecoverable!(engine.create_vertex_shader_from_asset("shaders.PlayerBullet", "main", &[
-			interlude::VertexBinding::PerVertex(std::mem::size_of::<CVector4>() as u32),
-			interlude::VertexBinding::PerInstance(std::mem::size_of::<CVector4>() as u32)
-		], &[
-			interlude::VertexAttribute(0, VkFormat::R32G32B32A32_SFLOAT, 0),
-			interlude::VertexAttribute(1, VkFormat::R32G32B32A32_SFLOAT, 0)
-		]));
-		let solid_fsh = Unrecoverable!(engine.create_fragment_shader_from_asset("shaders.ThroughColor", "main"));
-		let sprite_fsh = Unrecoverable!(engine.create_fragment_shader_from_asset("shaders.SpriteFrag", "main"));
-		let enemy_duplication_gsh = Unrecoverable!(engine.create_geometry_shader_from_asset("shaders.EnemyDuplicator", "main"));
-		let enemy_rezonator_duplication_gsh = Unrecoverable!(engine.create_geometry_shader_from_asset("shaders.EnemyRezonatorDup", "main"));
-		let background_duplication_gsh = Unrecoverable!(engine.create_geometry_shader_from_asset("shaders.BackLineDuplicator", "main"));
+		let shaderstore = ShaderStore::new(engine);
 
 		let gu_layout = Unrecoverable!(engine.create_descriptor_set_layout(&[
 			interlude::Descriptor::Uniform(1, vec![interlude::ShaderStage::Vertex, interlude::ShaderStage::Geometry])
@@ -447,38 +327,47 @@ impl PipelineStates
 		]));
 		let wire_pl = Rc::new(Unrecoverable!(engine.create_pipeline_layout(&[&gu_layout],
 			&[interlude::PushConstantDesc(VK_SHADER_STAGE_VERTEX_BIT, 0 .. std::mem::size_of::<CVector4>() as u32)])));
+		let particle_pl = Unrecoverable!(engine.create_pipeline_layout(&[&gu_layout], &[]));
 		let sprite_pl = Rc::new(Unrecoverable!(engine.create_pipeline_layout(&[&gu_layout, &st_layout], &[])));
 
 		let mut gps =
 		{
 			let background_ps = interlude::GraphicsPipelineBuilder::new(&wire_pl, render_pass, 0)
-				.vertex_shader(interlude::PipelineShaderProgram::unspecialized(&geometry_preinstancing_vsh))
-				.geometry_shader(interlude::PipelineShaderProgram::unspecialized(&background_duplication_gsh))
-				.fragment_shader(interlude::PipelineShaderProgram::unspecialized(&solid_fsh))
+				.vertex_shader(interlude::PipelineShaderProgram::unspecialized(&shaderstore.geometry_preinstancing_vsh))
+				.geometry_shader(interlude::PipelineShaderProgram::unspecialized(&shaderstore.background_duplication_gsh))
+				.fragment_shader(interlude::PipelineShaderProgram::unspecialized(&shaderstore.solid_fsh))
 				.primitive_topology(interlude::PrimitiveTopology::LineList(true))
 				.viewport_scissors(&[interlude::ViewportWithScissorRect::default_scissor(swapchain_viewport)])
 				.blend_state(&[interlude::AttachmentBlendState::PremultipliedAlphaBlend]);
 			let enemy_ps = interlude::GraphicsPipelineBuilder::inherit(&background_ps)
-				.geometry_shader(interlude::PipelineShaderProgram::unspecialized(&enemy_duplication_gsh))
+				.geometry_shader(interlude::PipelineShaderProgram::unspecialized(&shaderstore.enemy_duplication_gsh))
 				.blend_state(&[interlude::AttachmentBlendState::Disabled]);
 			let enemy_rezonator_ps = interlude::GraphicsPipelineBuilder::inherit(&enemy_ps)
-				.vertex_shader(interlude::PipelineShaderProgram::unspecialized(&enemy_rezonator_preinstancing_vsh))
-				.geometry_shader(interlude::PipelineShaderProgram::unspecialized(&enemy_rezonator_duplication_gsh))
+				.vertex_shader(interlude::PipelineShaderProgram::unspecialized(&shaderstore.erz_preinstancing_vsh))
+				.geometry_shader(interlude::PipelineShaderProgram::unspecialized(&shaderstore.enemy_rezonator_duplication_gsh))
 				.primitive_topology(interlude::PrimitiveTopology::TriangleList(false));
 			let player_ps = interlude::GraphicsPipelineBuilder::new(&wire_pl, render_pass, 0)
-				.vertex_shader(interlude::PipelineShaderProgram::unspecialized(&player_rotate_vsh))
-				.fragment_shader(interlude::PipelineShaderProgram::unspecialized(&solid_fsh))
+				.vertex_shader(interlude::PipelineShaderProgram::unspecialized(&shaderstore.player_rotate_vsh))
+				.fragment_shader(interlude::PipelineShaderProgram::unspecialized(&shaderstore.solid_fsh))
 				.primitive_topology(interlude::PrimitiveTopology::LineList(false))
 				.viewport_scissors(&[interlude::ViewportWithScissorRect::default_scissor(swapchain_viewport)])
 				.blend_state(&[interlude::AttachmentBlendState::Disabled]);
 			let playerbullet_ps = interlude::GraphicsPipelineBuilder::new(&sprite_pl, render_pass, 0)
-				.vertex_shader(interlude::PipelineShaderProgram(&playerbullet_vsh, vec![(0, interlude::ConstantEntry::Float(0.75))]))
-				.fragment_shader(interlude::PipelineShaderProgram::unspecialized(&sprite_fsh))
+				.vertex_shader(interlude::PipelineShaderProgram(&shaderstore.playerbullet_vsh, vec![(0, interlude::ConstantEntry::Float(0.75))]))
+				.fragment_shader(interlude::PipelineShaderProgram::unspecialized(&shaderstore.sprite_fsh))
 				.primitive_topology(interlude::PrimitiveTopology::TriangleStrip(false))
 				.viewport_scissors(&[interlude::ViewportWithScissorRect::default_scissor(swapchain_viewport)])
 				.blend_state(&[interlude::AttachmentBlendState::PremultipliedAlphaBlend]);
-			Unrecoverable!(engine.create_graphics_pipelines(&[&background_ps, &enemy_ps, &enemy_rezonator_ps, &player_ps, &playerbullet_ps]))
+			let lineburst_ps = interlude::GraphicsPipelineBuilder::new(&particle_pl, render_pass, 0)
+				.vertex_shader(interlude::PipelineShaderProgram::unspecialized(&shaderstore.lineburst_particle_vsh))
+				.geometry_shader(interlude::PipelineShaderProgram::unspecialized(&shaderstore.lineburst_particle_instantiate_gsh))
+				.fragment_shader(interlude::PipelineShaderProgram::unspecialized(&shaderstore.solid_fsh))
+				.primitive_topology(interlude::PrimitiveTopology::Point)
+				.viewport_scissors(&[interlude::ViewportWithScissorRect::default_scissor(swapchain_viewport)])
+				.blend_state(&[interlude::AttachmentBlendState::PremultipliedAlphaBlend]);
+			Unrecoverable!(engine.create_graphics_pipelines(&[&background_ps, &enemy_ps, &enemy_rezonator_ps, &player_ps, &playerbullet_ps, &lineburst_ps]))
 		};
+		let lineburst_ps = gps.pop().unwrap();
 		let playerbullet_sr = SpriteRender::new(gps.pop().unwrap(), &sprite_pl);
 		let player_wr = WireRender::new(gps.pop().unwrap(), &wire_pl);
 		let enemy_rezonator_wr = WireRender::new(gps.pop().unwrap(), &wire_pl);
@@ -500,12 +389,11 @@ impl PipelineStates
 
 		PipelineStates
 		{
-			geometry_preinstancing_vsh: geometry_preinstancing_vsh, erz_preinstancing_vsh: enemy_rezonator_preinstancing_vsh, player_rotate_vsh: player_rotate_vsh,
-			solid_fsh: solid_fsh, enemy_duplication_gsh: enemy_duplication_gsh, enemy_rezonator_duplication_gsh: enemy_rezonator_duplication_gsh,
-			background_duplication_gsh: background_duplication_gsh, playerbullet_vsh: playerbullet_vsh, sprite_fsh: sprite_fsh,
+			shaderstore: shaderstore,
 			global_uniform_layout: gu_layout, sprite_texture_layout: st_layout,
-			wire_layout: wire_pl, sprite_layout: sprite_pl,
+			wire_layout: wire_pl, sprite_layout: sprite_pl, particle_layout: particle_pl,
 			background: background_wr, enemy_body: enemy_wr, enemy_rezonator: enemy_rezonator_wr, player: player_wr, playerbullet: playerbullet_sr,
+			lineburst: lineburst_ps,
 			smaa: smaa, descriptor_sets: descriptor_sets
 		}
 	}
@@ -760,7 +648,7 @@ fn app_main() -> Result<(), interlude::EngineError>
 				.end()
 			));
 			try!(combine_commands.begin(1 + 2 * n, enabled_pass, 3, f).and_then(|recorder|
-				/*recorder.inject_commands(|r| debug_info.inject_render_commands(r)).end()*/recorder.end()
+				recorder.inject_commands(|r| debug_info.inject_render_commands(r)).end()
 			));
 		}
 		Some(combine_commands)
@@ -812,6 +700,9 @@ fn app_main() -> Result<(), interlude::EngineError>
 					(&application_data, application_buffer_prealloc.offset(3) + structures::InstanceMemory::player_bullet_offs())
 				])
 				.draw(4, MAX_PLAYER_BULLET_COUNT as u32)
+				.bind_pipeline(&pipelines.lineburst)
+				.bind_vertex_buffers(&[(&application_data, application_buffer_prealloc.offset(3) + structures::InstanceMemory::lbparticle_groups_offs())])
+				.draw(MAX_LBPARTICLE_GROUPS as u32, 1)
 				.next_subpass(false)
 				// Pass 1 : Edge Detection(SMAA 1x) //
 				.bind_vertex_buffers(&[(&application_data, application_buffer_prealloc.offset(0))])
@@ -827,7 +718,7 @@ fn app_main() -> Result<(), interlude::EngineError>
 				// .pipeline_barrier(VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, false, &[], &[], &[ibar_blendweight_end])
 				.next_subpass(true)
 				// Pass 3 : SMAA Combine and Debug Print //
-				.execute_commands(&combine_commands.as_ref().unwrap()[i * 2 .. i * 2 + 1])
+				.execute_commands(&combine_commands.as_ref().unwrap()[i * 2 .. i * 2 + 2])
 				.end_render_pass()
 			.end().unwrap()
 		}
@@ -943,10 +834,11 @@ fn app_main() -> Result<(), interlude::EngineError>
 		}) };
 
 		let mapped_range = try!(appdata_stage.map());
-		let (uref_enemy, uref_bk, uref_player_center) =
+		let (uref_enemy, uref_bk, uref_player_center, uref_gametime, uref_particle_infos) =
 		{
 			let mapped = mapped_range.map_mut::<structures::UniformMemory>(application_buffer_prealloc.offset(4));
-			(&mut mapped.enemy_instance_data, &mut mapped.background_instance_data, &mut mapped.player_center_tf)
+			(&mut mapped.enemy_instance_data, &mut mapped.background_instance_data, &mut mapped.player_center_tf,
+				&mut mapped.gametime, &mut mapped.lineburst_particles)
 		};
 		let (iref_enemy, iref_bk, iref_player, iref_enemy_rez, iref_player_bullet, iref_lineburst_particle_groups) =
 		{
@@ -955,9 +847,9 @@ fn app_main() -> Result<(), interlude::EngineError>
 				&mut mapped.enemy_rez_instance_data, &mut mapped.player_bullet_offset_sincos, &mut mapped.lineburst_particle_groups)
 		};
 		let mut background_datastore = logical_resources::BackgroundDatastore::new(uref_bk, iref_bk);
-		let mut enemy_datastore = logical_resources::EnemyDatastore::new(iref_enemy);
+		let mut enemy_datastore = EnemyDatastore::new(iref_enemy);
 		let mut pb_memory_manager = utils::MemoryBlockManager::new(MAX_PLAYER_BULLET_COUNT as u32);
-		let mut lineburst_particles = logical_resources::LineBurstParticles::new(iref_lineburst_particle_groups);
+		let mut lineburst_particles = LineBurstParticles::new(iref_lineburst_particle_groups, uref_particle_infos);
 
 		// double-buffered enemy entity list //
 		let mut enemy_entities: [Enemy; MAX_ENEMY_COUNT] = unsafe { std::mem::uninitialized() };
@@ -1012,6 +904,7 @@ fn app_main() -> Result<(), interlude::EngineError>
 					secs_from_last_fixed += delta_time_sec;
 					secs_from_last_trigger += delta_time_sec;
 					game_secs += delta_time_sec;
+					uref_gametime[0] = game_secs;
 					background_datastore.update(&mut randomizer, delta_time_sec, background_next_appear);
 
 					let new_shooting = input[LogicalInputTypes::Shoot] > 0.0;
@@ -1086,6 +979,7 @@ fn app_main() -> Result<(), interlude::EngineError>
 						lineburst_particles.spawn(count, x, y, game_secs);
 						next_particle_spawn = None;
 					}
+					lineburst_particles = lineburst_particles.garbage_collect(game_secs);
 
 					background_next_appear = false;
 					prev_time = time::PreciseTime::now();
