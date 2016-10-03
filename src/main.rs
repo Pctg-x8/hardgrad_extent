@@ -6,6 +6,7 @@ extern crate thread_scoped;
 extern crate glob;
 extern crate rayon;
 #[macro_use] extern crate log;
+extern crate itertools;
 
 #[macro_use] extern crate interlude;
 extern crate texture_compression;
@@ -28,6 +29,9 @@ mod logical_resources;
 mod utils;
 use nalgebra::*;
 use rand::distributions::*;
+
+mod postludium;
+use postludium::*;
 
 mod smaa_extra_textures;
 use smaa_extra_textures::*;

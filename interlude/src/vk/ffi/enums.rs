@@ -7,11 +7,7 @@ use super::types::VkFlags;
 #[repr(C)]
 pub enum VkSystemAllocationScope
 {
-	Command = 0,
-	Object = 1,
-	Cache = 2,
-	Device = 3,
-	Instance = 4
+	Command = 0, Object = 1, Cache = 2, Device = 3, Instance = 4
 }
 #[repr(C)]
 pub enum VkInternalAllocationType

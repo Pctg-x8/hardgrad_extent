@@ -10,12 +10,12 @@ use super::*;
 use xcb;
 
 // Basic Types(Copyable) //
-#[repr(C)] #[derive(Clone, Copy, Debug)] pub struct VkOffset2D(pub i32, pub i32);
-#[repr(C)] #[derive(Clone, Copy, Debug)] pub struct VkExtent2D(pub u32, pub u32);
-#[repr(C)] #[derive(Clone, Copy, Debug)] pub struct VkRect2D(pub VkOffset2D, pub VkExtent2D);
-#[repr(C)] #[derive(Clone, Copy, Debug)] pub struct VkOffset3D(pub i32, pub i32, pub i32);
-#[repr(C)] #[derive(Clone, Copy, Debug)] pub struct VkExtent3D(pub u32, pub u32, pub u32);
-#[repr(C)] #[derive(Clone, Copy, Debug)] pub struct VkViewport(pub f32, pub f32, pub f32, pub f32, pub f32, pub f32);
+#[repr(C)] #[derive(Clone, Copy, Debug, PartialEq, Eq)] pub struct VkOffset2D(pub i32, pub i32);
+#[repr(C)] #[derive(Clone, Copy, Debug, PartialEq, Eq)] pub struct VkExtent2D(pub u32, pub u32);
+#[repr(C)] #[derive(Clone, Copy, Debug, PartialEq, Eq)] pub struct VkRect2D(pub VkOffset2D, pub VkExtent2D);
+#[repr(C)] #[derive(Clone, Copy, Debug, PartialEq, Eq)] pub struct VkOffset3D(pub i32, pub i32, pub i32);
+#[repr(C)] #[derive(Clone, Copy, Debug, PartialEq, Eq)] pub struct VkExtent3D(pub u32, pub u32, pub u32);
+#[repr(C)] #[derive(Clone, Copy, Debug, PartialEq)] pub struct VkViewport(pub f32, pub f32, pub f32, pub f32, pub f32, pub f32);
 
 #[repr(C)]
 pub struct VkInstanceCreateInfo
@@ -700,4 +700,19 @@ pub struct VkPresentInfoKHR
 	pub sType: VkStructureType, pub pNext: *const c_void,
 	pub flags: VkDebugReportFlagsEXT, pub pfnCallback: PFN_vkDebugReportCallbackEXT,
 	pub pUserData: *mut c_void
+}
+
+use std;
+// Structure Conversions
+impl std::convert::From<VkExtent3D> for VkExtent2D
+{
+	fn from(v: VkExtent3D) -> Self { VkExtent2D(v.0, v.1) }
+}
+impl std::convert::From<VkExtent3D> for u32
+{
+	fn from(v: VkExtent3D) -> Self { v.0 }
+}
+impl std::convert::From<VkExtent2D> for u32
+{
+	fn from(v: VkExtent2D) -> Self { v.0 }
 }

@@ -61,7 +61,7 @@ pub mod traits
 {
 	pub use super::engine::CommandSubmitter;
 	pub use super::command::{PrimaryCommandBuffers, SecondaryCommandBuffers, DrawingCommandRecorder};
-	pub use super::resource::{ImageDescriptor, ImageView, BufferResource};
+	pub use super::resource::{ImageDescriptor, ImageView, BufferResource, ImageResource};
 }
 // exported objects
 pub use self::engine::Engine;
