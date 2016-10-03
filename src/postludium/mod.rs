@@ -7,10 +7,42 @@ use interlude::traits::*;
 use std::rc::Rc;
 use std::path::Path;
 
+pub trait LazyLines
+{
+	fn next(&mut self) -> Option<&(usize, String)>;
+	fn pop(&mut self) -> Option<&(usize, String)>;
+}
+pub struct LazyLinesStr<'a>
+{
+	iter: std::iter::Enumerate<std::str::Lines<'a>>, cache: Option<(usize, String)>, acquire_next: bool
+}
+impl<'a> LazyLinesStr<'a>
+{
+	pub fn new(source: &'a String) -> Self
+	{
+		LazyLinesStr { iter: source.lines().enumerate(), cache: None, acquire_next: true }
+	}
+}
+impl<'a> LazyLines for LazyLinesStr<'a>
+{
+	fn next(&mut self) -> Option<&(usize, String)>
+	{
+		if self.acquire_next { self.cache = self.iter.next().map(|(u, s)| (u, s.to_owned())); self.acquire_next = false; }
+		self.cache.as_ref()
+	}
+	fn pop(&mut self) -> Option<&(usize, String)>
+	{
+		if self.acquire_next { self.cache = self.iter.next().map(|(u, s)| (u, s.to_owned())); self.acquire_next = false; }
+		self.acquire_next = true;
+		self.cache.as_ref()
+	}
+}
+
 pub enum DevConfParsingResult<T>
 {
 	Ok(T), IOError(std::io::Error), NumericParseError(std::num::ParseIntError),
-	InvalidFormatError, InvalidUsageFlagError(String)
+	InvalidFormatError, InvalidUsageFlagError(String), InvalidFilterError(String),
+	UnsupportedDimension, UnsupportedParameter(String)
 }
 impl<T> DevConfParsingResult<T>
 {
@@ -22,7 +54,24 @@ impl<T> DevConfParsingResult<T>
 			DevConfParsingResult::IOError(e) => panic!(e),
 			DevConfParsingResult::NumericParseError(e) => panic!(e),
 			DevConfParsingResult::InvalidFormatError => panic!("Invalid Image Format"),
-			DevConfParsingResult::InvalidUsageFlagError(s) => panic!("Invalid Usage Flag: {}", s)
+			DevConfParsingResult::InvalidUsageFlagError(s) => panic!("Invalid Usage Flag: {}", s),
+			DevConfParsingResult::InvalidFilterError(s) => panic!("Invalid Filter Type: {}", s),
+			DevConfParsingResult::UnsupportedDimension => panic!("Unsupported Image Dimension"),
+			DevConfParsingResult::UnsupportedParameter(dep) => panic!("Unsupported Parameter for {}", dep)
+		}
+	}
+	pub fn unwrap_on_line(self, line: usize) -> T
+	{
+		match self
+		{
+			DevConfParsingResult::Ok(t) => t,
+			DevConfParsingResult::IOError(e) => panic!("{} at line {}", e, line),
+			DevConfParsingResult::NumericParseError(e) => panic!("{} at line {}", e, line),
+			DevConfParsingResult::InvalidFormatError => panic!("Invalid Image Format at line {}", line),
+			DevConfParsingResult::InvalidUsageFlagError(s) => panic!("Invalid Usage Flag: {} at line {}", s, line),
+			DevConfParsingResult::InvalidFilterError(s) => panic!("Invalid Filter Type: {} at line {}", s, line),
+			DevConfParsingResult::UnsupportedDimension => panic!("Unsupported Image Dimension at line {}", line),
+			DevConfParsingResult::UnsupportedParameter(dep) => panic!("Unsupported Parameter for {} at line {}", dep, line)
 		}
 	}
 	pub fn is_invalid_format_err(&self) -> bool
@@ -36,6 +85,10 @@ impl<T> DevConfParsingResult<T>
 	pub fn is_numeric_parsing_failed(&self) -> bool
 	{
 		match self { &DevConfParsingResult::NumericParseError(_) => true, _ => false }
+	}
+	pub fn is_invalid_filter_type_err(&self) -> bool
+	{
+		match self { &DevConfParsingResult::InvalidFilterError(_) => true, _ => false }
 	}
 }
 impl<T> std::convert::From<Result<T, std::num::ParseIntError>> for DevConfParsingResult<T>
@@ -115,9 +168,7 @@ pub fn parse_image_extent(args: &[char], dims: ImageDimensions, screen_size: VkE
 {
 	let parse_arg = |input: &str| match input
 	{
-		"$ScreenWidth" => Ok(screen_size.0),
-		"$ScreenHeight" => Ok(screen_size.1),
-		_ => input.parse()
+		"$ScreenWidth" => Ok(screen_size.0), "$ScreenHeight" => Ok(screen_size.1), _ => input.parse()
 	};
 	DevConfParsingResult::from(match dims
 	{
@@ -139,6 +190,72 @@ pub fn parse_image_extent(args: &[char], dims: ImageDimensions, screen_size: VkE
 				parse_arg(&dstr.into_iter().cloned().collect::<String>()).map(move |d| VkExtent3D(w, h, d))))
 		}
 	})
+}
+pub fn parse_filter_type(args: &[char]) -> DevConfParsingResult<VkFilter>
+{
+	let str = take_while(args, not_ignored).0.into_iter().cloned().collect::<String>();
+	match str.as_ref()
+	{
+		"Nearest" => DevConfParsingResult::Ok(VkFilter::Nearest),
+		"Linear" => DevConfParsingResult::Ok(VkFilter::Linear),
+		_ => DevConfParsingResult::InvalidFilterError(str)
+	}
+}
+pub fn parse_configuration_image<LinesT: LazyLines>(lines_iter: &mut LinesT, screen_size: VkExtent2D, screen_format: VkFormat) -> DevConfImage
+{
+	let (headline, dim) =
+	{
+		let &(headline, ref conf_head) = lines_iter.pop().unwrap();
+		assert!(conf_head.starts_with("Image"));
+		let dim_str = conf_head.chars().skip(5).skip_while(is_ignored).take_while(not_ignored).collect::<String>();
+		let dim = match dim_str.as_ref()
+		{
+			"1D" => ImageDimensions::Single, "2D" => ImageDimensions::Double, "3D" => ImageDimensions::Triple, _ => DevConfParsingResult::UnsupportedDimension.unwrap_on_line(headline)
+		};
+
+		(headline, dim)
+	};
+	
+	let (mut format, mut extent, mut usage) = (None, None, None);
+	while let Some(&(paramline, ref param)) =
+	{
+		let pop_next = if let Some(&(paramline, ref param)) = lines_iter.next() { if param.starts_with("-") { true } else { false } } else { false };
+		if pop_next { lines_iter.pop() } else { None }
+	}
+	{
+		let param_line = param.chars().skip(1).skip_while(is_ignored).collect::<Vec<_>>();
+		let (param_name, rest) = take_while(&param_line, |c| not_ignored(c) && *c != ':');
+		let param_value = skip_spaces(&skip_spaces(rest)[1..]);
+		match param_name.into_iter().cloned().collect::<String>().as_ref()
+		{
+			"Format" => format = Some(parse_image_format(param_value, screen_format).unwrap_on_line(paramline)),
+			"Extent" => extent = Some(parse_image_extent(param_value, dim, screen_size).unwrap_on_line(paramline)),
+			"Usage" => usage = Some(parse_image_usage_flags(param_value, 0, false).unwrap_on_line(paramline)),
+			_ => DevConfParsingResult::UnsupportedParameter("Image".to_owned()).unwrap_on_line(paramline)
+		}
+	}
+	let (usage, devlocal) = usage.expect(&format!("Usage parameter is not presented at line {}", headline));
+	match dim
+	{
+		ImageDimensions::Single => DevConfImage::Dim1
+		{
+			format: format.expect(&format!("Format parameter is not presented at line {}", headline)),
+			extent: extent.expect(&format!("Extent parameter is not presented at line {}", headline)).0,
+			usage: usage, device_local: devlocal
+		},
+		ImageDimensions::Double => DevConfImage::Dim2
+		{
+			format: format.expect(&format!("Format parameter is not presented at line {}", headline)),
+			extent: VkExtent2D::from(extent.expect(&format!("Extent parameter is not presented at line {}", headline))),
+			usage: usage, device_local: devlocal
+		},
+		ImageDimensions::Triple => DevConfImage::Dim3
+		{
+			format: format.expect(&format!("Format parameter is not presented at line {}", headline)),
+			extent: extent.expect(&format!("Extent parameter is not presented at line {}", headline)),
+			usage: usage, device_local: devlocal
+		}
+	}
 }
 
 #[cfg(test)]
@@ -173,13 +290,36 @@ mod test
 		assert!(parse_image_extent(&"$screenwidth $screenHeight".chars().collect::<Vec<_>>(), ImageDimensions::Double, VkExtent2D(1920, 1080)).is_numeric_parsing_failed());
 		assert!(parse_image_extent(&"$screenwidth aaa".chars().collect::<Vec<_>>(), ImageDimensions::Double, VkExtent2D(1920, 1080)).is_numeric_parsing_failed());
 	}
+	#[test] fn parse_filter_types()
+	{
+		assert_eq!(parse_filter_type(&"Nearest ".chars().collect::<Vec<_>>()).unwrap(), VkFilter::Nearest);
+		assert_eq!(parse_filter_type(&"Linear".chars().collect::<Vec<_>>()).unwrap(), VkFilter::Linear);
+		assert!(parse_filter_type(&"Bilinear".chars().collect::<Vec<_>>()).is_invalid_filter_type_err());
+	}
+	#[test] fn parse_image_conf()
+	{
+		let testcase = "Image 2D\n- Format: R8G8B8A8 UNORM\n- Extent: $ScreenWidth $ScreenHeight\n- Usage: AsColorTexture\n".to_owned();
+		let mut testcase_wrap = LazyLinesStr::new(&testcase);
+		let img = parse_configuration_image(&mut testcase_wrap, VkExtent2D(640, 480), VkFormat::R8G8B8A8_UNORM);
+		match img
+		{
+			DevConfImage::Dim2 { format, extent, usage, device_local } =>
+			{
+				assert_eq!(format, VkFormat::R8G8B8A8_UNORM);
+				assert_eq!(extent, VkExtent2D(640, 480));
+				assert_eq!(usage, interlude::ImageUsagePresets::AsColorTexture);
+				assert_eq!(device_local, false);
+			},
+			_ => unreachable!()
+		}
+	}
 }
 
-enum DevConfImage
+pub enum DevConfImage
 {
-	Dim1 { format: VkFormat, extent: u32, usage: VkImageUsageFlags },
-	Dim2 { format: VkFormat, extent: VkExtent2D, usage: VkImageUsageFlags },
-	Dim3 { format: VkFormat, extent: VkExtent3D, usage: VkImageUsageFlags }
+	Dim1 { format: VkFormat, extent: u32, usage: VkImageUsageFlags, device_local: bool },
+	Dim2 { format: VkFormat, extent: VkExtent2D, usage: VkImageUsageFlags, device_local: bool },
+	Dim3 { format: VkFormat, extent: VkExtent3D, usage: VkImageUsageFlags, device_local: bool }
 }
 pub struct ImageViewPair(pub Rc<interlude::traits::ImageResource>, pub Box<interlude::traits::ImageView>);
 pub struct DevConfImages

@@ -572,7 +572,7 @@ pub const VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT: VkFlags	= 0x01;
 	StorageBufferDynamic = 9,
 	InputAttachment = 10
 }
-#[repr(C)] pub enum VkFilter
+#[repr(C)] #[derive(PartialEq, Eq, Debug)] pub enum VkFilter
 {
 	Nearest = 0, Linear = 1,
 	CubicImg = 1000015000
