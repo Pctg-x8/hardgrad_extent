@@ -291,45 +291,6 @@ mod framebuffer;
 use framebuffer::*;
 
 #[allow(dead_code)]
-struct SMAAResources<'a>
-{
-	areatex_index: usize, searchtex_index: usize,
-	areatex_desc: interlude::ImageDescriptor2, searchtex_desc: interlude::ImageDescriptor2,
-	areatex_view: interlude::ImageView2D, searchtex_view: interlude::ImageView2D,
-	ph: std::marker::PhantomData<&'a interlude::DeviceBuffer>
-}
-impl<'a> SMAAResources<'a>
-{
-	pub fn generate_descriptions() -> (interlude::ImageDescriptor2, interlude::ImageDescriptor2)
-	{
-		(interlude::ImageDescriptor2::new(VkFormat::BC5_UNORM_BLOCK, VkExtent2D(AREATEX_WIDTH, AREATEX_HEIGHT), VK_IMAGE_USAGE_SAMPLED_BIT),
-		interlude::ImageDescriptor2::new(VkFormat::BC4_UNORM_BLOCK, VkExtent2D(SEARCHTEX_WIDTH, SEARCHTEX_HEIGHT), VK_IMAGE_USAGE_SAMPLED_BIT))
-	}
-	pub fn new(engine: &interlude::Engine, res: &'a interlude::DeviceImage, adesc: interlude::ImageDescriptor2, sdesc: interlude::ImageDescriptor2, aindex: usize, sindex: usize) -> Self
-	{
-		let areatex_view = Unrecoverable!(engine.create_image_view_2d(res.dim2(aindex), VkFormat::BC5_UNORM_BLOCK,
-			interlude::ComponentMapping::double_swizzle_rep(interlude::ComponentSwizzle::R, interlude::ComponentSwizzle::G), interlude::ImageSubresourceRange::base_color()));
-		let searchtex_view = Unrecoverable!(engine.create_image_view_2d(res.dim2(sindex), VkFormat::BC4_UNORM_BLOCK,
-			interlude::ComponentMapping::single_swizzle(interlude::ComponentSwizzle::R), interlude::ImageSubresourceRange::base_color()));
-		
-		SMAAResources
-		{
-			areatex_index: aindex, searchtex_index: sindex,
-			areatex_desc: adesc, searchtex_desc: sdesc,
-			areatex_view: areatex_view, searchtex_view: searchtex_view,
-			ph: std::marker::PhantomData
-		}
-	}
-	pub fn init(&self, sres: &'a interlude::StagingImage, mapped: &'a interlude::MemoryMappedRange)
-	{
-		let areatex_compressed = BC5::compress(&AREATEX_BYTES, (AREATEX_WIDTH as usize, AREATEX_HEIGHT as usize));
-		mapped.map_mut::<[u8; AREATEX_SIZE as usize / 2]>(sres.image2d_offset(0) as usize).copy_from_slice(&areatex_compressed);
-		let searchtex_compressed = BC4::compress(&SEARCHTEX_BYTES, (SEARCHTEX_WIDTH as usize, SEARCHTEX_HEIGHT as usize));
-		mapped.map_mut::<[u8; SEARCHTEX_SIZE as usize / 2]>(sres.image2d_offset(1) as usize).copy_from_slice(&searchtex_compressed);
-	}
-}
-
-#[allow(dead_code)]
 struct SMAAPipelineStates
 {
 	edgedetect_vshader: interlude::ShaderProgram, blendweight_vshader: interlude::ShaderProgram, combine_vshader: interlude::ShaderProgram,
@@ -539,35 +500,29 @@ fn app_main() -> Result<(), interlude::EngineError>
 	let VkExtent2D(frame_width, frame_height) = main_frame.get_extent();
 
 	// Resources //
+	let images = DevConfImages::from_file(&engine, engine.parse_asset("devconf.images", "pdc"), main_frame.get_extent(), VkFormat::R8G8B8A8_UNORM);
+	// Reference Bindings //
+	let (ref gbuffer, ref gbuffer_view) = images.images_2d()[0];
+	let (ref edgebuffer, ref edgebuffer_view) = images.images_2d()[1];
+	let (ref blend_weight, ref blend_weight_view) = images.images_2d()[2];
+	let (ref smaa_areatex, ref smaa_areatex_view) = images.images_2d()[3];
+	let (ref smaa_searchtex, ref smaa_searchtex_view) = images.images_2d()[4];
+	let (ref playerbullet_tex, ref playerbullet_view) = images.images_2d()[5];
+	let (_, ref lineburst_particle_gradient_view) = images.images_1d()[0];
+	let ref gbuffer_sampler = images.samplers()[0];
+	let ref smaa_areatex_stg = images.staging_images().unwrap()[0];
+	let ref smaa_searchtex_stg = images.staging_images().unwrap()[1];
+	let ref playerbullet_tex_stg = images.staging_images().unwrap()[2];
+
 	let playerbullet_image = PhotoshopDocument::open(engine.parse_asset("graphs.playerbullet", "psd")).unwrap();
-	let (smaa_areatex_desc, smaa_searchtex_desc) = SMAAResources::generate_descriptions();
-	let (backbuffers, stage_images) =
+	if let Some(mapped) = images.map_staging_images_memory()
 	{
-		let gbuffer_desc = interlude::ImageDescriptor2::new(VkFormat::R8G8B8A8_UNORM, main_frame.get_extent(), interlude::ImageUsagePresets::AsColorTexture).device_resource();
-		let edgebuffer_desc = interlude::ImageDescriptor2::new(VkFormat::R8G8_UNORM, main_frame.get_extent(), interlude::ImageUsagePresets::AsColorTexture).device_resource();
-		let blend_weight_desc = interlude::ImageDescriptor2::new(VkFormat::R8G8B8A8_UNORM, main_frame.get_extent(), interlude::ImageUsagePresets::AsColorTexture).device_resource();
-		let playerbullet_desc = interlude::ImageDescriptor2::new(VkFormat::R8G8B8A8_UNORM, VkExtent2D(playerbullet_image.width as u32, playerbullet_image.height as u32), interlude::ImageUsagePresets::AsColorTexture);
-		let imagebuffer_placement = interlude::ImagePreallocator::new().image_2d(vec![&gbuffer_desc, &edgebuffer_desc, &blend_weight_desc, &smaa_areatex_desc, &smaa_searchtex_desc, &playerbullet_desc]);
-		let (backbuffers, stage_images) = try!(engine.create_double_image(&imagebuffer_placement));
-		(backbuffers, stage_images.unwrap())
-	};
-	let gbuffer_view = try!(engine.create_image_view_2d(backbuffers.dim2(0), VkFormat::R8G8B8A8_UNORM,
-		interlude::ComponentMapping::straight(), interlude::ImageSubresourceRange::base_color()));
-	let edgebuffer_view = try!(engine.create_image_view_2d(backbuffers.dim2(1), VkFormat::R8G8_UNORM,
-		interlude::ComponentMapping::straight(), interlude::ImageSubresourceRange::base_color()));
-	let blend_weight_view = try!(engine.create_image_view_2d(backbuffers.dim2(2), VkFormat::R8G8B8A8_UNORM,
-		interlude::ComponentMapping::straight(), interlude::ImageSubresourceRange::base_color()));
-	let smaa_areatex_view = try!(engine.create_image_view_2d(backbuffers.dim2(3), VkFormat::BC5_UNORM_BLOCK,
-		interlude::ComponentMapping::double_swizzle_rep(interlude::ComponentSwizzle::R, interlude::ComponentSwizzle::G), interlude::ImageSubresourceRange::base_color()));
-	let smaa_searchtex_view = try!(engine.create_image_view_2d(backbuffers.dim2(4), VkFormat::BC4_UNORM_BLOCK,
-		interlude::ComponentMapping::single_swizzle(interlude::ComponentSwizzle::R), interlude::ImageSubresourceRange::base_color()));
-	let playerbullet_view = try!(engine.create_image_view_2d(backbuffers.dim2(5), VkFormat::R8G8B8A8_UNORM,
-		interlude::ComponentMapping::straight(), interlude::ImageSubresourceRange::base_color()));
-	let gbuffer_sampler = try!(engine.create_sampler(&interlude::SamplerState::new()));
-	let smaa_resources = SMAAResources::new(&engine, &backbuffers, smaa_areatex_desc, smaa_searchtex_desc, 3, 4);
-	try!(stage_images.map().map(|mapped|
-	{
-		smaa_resources.init(&stage_images, &mapped);
+		let offsets = images.staging_offsets().unwrap();
+		let areatex_compressed = BC5::compress(&AREATEX_BYTES, (AREATEX_WIDTH as usize, AREATEX_HEIGHT as usize));
+		mapped.map_mut::<[u8; AREATEX_SIZE as usize / 2]>(offsets[0] as usize).copy_from_slice(&areatex_compressed);
+		let searchtex_compressed = BC4::compress(&SEARCHTEX_BYTES, (SEARCHTEX_WIDTH as usize, SEARCHTEX_HEIGHT as usize));
+		mapped.map_mut::<[u8; SEARCHTEX_SIZE as usize / 2]>(offsets[1] as usize).copy_from_slice(&searchtex_compressed);
+
 		let playerbullet_pixels = pack_color(
 			VkExtent2D(playerbullet_image.width as u32, playerbullet_image.height as u32),
 			playerbullet_image.layer_raw_channel_image_data(0, PSDChannelIndices::Red),
@@ -575,8 +530,8 @@ fn app_main() -> Result<(), interlude::EngineError>
 			playerbullet_image.layer_raw_channel_image_data(0, PSDChannelIndices::Blue),
 			playerbullet_image.layer_raw_channel_image_data(0, PSDChannelIndices::Alpha)
 		);
-		mapped.range_mut::<u8>(stage_images.image2d_offset(2) as usize, playerbullet_image.width * playerbullet_image.height * 4).copy_from_slice(&playerbullet_pixels);
-	}));
+		mapped.range_mut::<u8>(offsets[2] as usize, 16 * 16 * 4).copy_from_slice(&playerbullet_pixels);
+	};
 	let application_buffer_prealloc = engine.buffer_preallocate(&[
 		(std::mem::size_of::<[interlude::PosUV; 4]>(), interlude::BufferDataType::Vertex),
 		(std::mem::size_of::<structures::VertexMemoryForWireRender>(), interlude::BufferDataType::Vertex),
@@ -593,7 +548,7 @@ fn app_main() -> Result<(), interlude::EngineError>
 	let enabled_pass = if use_post_smaa { &render_passes.fullset } else { &render_passes.noaa };
 	let framebuffers = main_frame.get_back_images().iter().map(|&x| if use_post_smaa
 	{
-		Unrecoverable!(engine.create_framebuffer(&render_passes.fullset, &[&gbuffer_view, &edgebuffer_view, &blend_weight_view, x], VkExtent3D(frame_width, frame_height, 1)))
+		Unrecoverable!(engine.create_framebuffer(&render_passes.fullset, &[gbuffer_view, edgebuffer_view, blend_weight_view, x], VkExtent3D(frame_width, frame_height, 1)))
 	}
 	else
 	{
@@ -651,12 +606,12 @@ fn app_main() -> Result<(), interlude::EngineError>
 
 	// Descriptor Set //
 	let uniform_memory_info = interlude::BufferInfo(&application_data, application_buffer_prealloc.offset(4) .. application_buffer_prealloc.total_size());
-	let gbuffer_info = interlude::ImageInfo(&gbuffer_sampler, &gbuffer_view, VkImageLayout::ShaderReadOnlyOptimal);
-	let edgebuffer_info = interlude::ImageInfo(&gbuffer_sampler, &edgebuffer_view, VkImageLayout::ShaderReadOnlyOptimal);
-	let blendweight_info = interlude::ImageInfo(&gbuffer_sampler, &blend_weight_view, VkImageLayout::ShaderReadOnlyOptimal);
-	let areatex_info = interlude::ImageInfo(&gbuffer_sampler, &smaa_areatex_view, VkImageLayout::ShaderReadOnlyOptimal);
-	let searchtex_info = interlude::ImageInfo(&gbuffer_sampler, &smaa_searchtex_view, VkImageLayout::ShaderReadOnlyOptimal);
-	let playerbullet_info = interlude::ImageInfo(&gbuffer_sampler, &playerbullet_view, VkImageLayout::ShaderReadOnlyOptimal);
+	let gbuffer_info = interlude::ImageInfo(gbuffer_sampler, gbuffer_view, VkImageLayout::ShaderReadOnlyOptimal);
+	let edgebuffer_info = interlude::ImageInfo(gbuffer_sampler, edgebuffer_view, VkImageLayout::ShaderReadOnlyOptimal);
+	let blendweight_info = interlude::ImageInfo(gbuffer_sampler, blend_weight_view, VkImageLayout::ShaderReadOnlyOptimal);
+	let areatex_info = interlude::ImageInfo(gbuffer_sampler, smaa_areatex_view, VkImageLayout::ShaderReadOnlyOptimal);
+	let searchtex_info = interlude::ImageInfo(gbuffer_sampler, smaa_searchtex_view, VkImageLayout::ShaderReadOnlyOptimal);
+	let playerbullet_info = interlude::ImageInfo(gbuffer_sampler, playerbullet_view, VkImageLayout::ShaderReadOnlyOptimal);
 	if use_post_smaa
 	{
 		engine.update_descriptors(&[
@@ -692,19 +647,19 @@ fn app_main() -> Result<(), interlude::EngineError>
 		];
 		let blitted_image_templates =
 		[
-			interlude::ImageMemoryBarrier::template(&**backbuffers.dim2(3), interlude::ImageSubresourceRange::base_color()),
-			interlude::ImageMemoryBarrier::template(&**backbuffers.dim2(4), interlude::ImageSubresourceRange::base_color()),
-			interlude::ImageMemoryBarrier::template(&**backbuffers.dim2(5), interlude::ImageSubresourceRange::base_color()),
-			interlude::ImageMemoryBarrier::template(stage_images.dim2(0), interlude::ImageSubresourceRange::base_color()),
-			interlude::ImageMemoryBarrier::template(stage_images.dim2(1), interlude::ImageSubresourceRange::base_color()),
-			interlude::ImageMemoryBarrier::template(stage_images.dim2(2), interlude::ImageSubresourceRange::base_color())
+			interlude::ImageMemoryBarrier::template(&**smaa_areatex, interlude::ImageSubresourceRange::base_color()),
+			interlude::ImageMemoryBarrier::template(&**smaa_searchtex, interlude::ImageSubresourceRange::base_color()),
+			interlude::ImageMemoryBarrier::template(&**playerbullet_tex, interlude::ImageSubresourceRange::base_color()),
+			interlude::ImageMemoryBarrier::template(smaa_areatex_stg, interlude::ImageSubresourceRange::base_color()),
+			interlude::ImageMemoryBarrier::template(smaa_searchtex_stg, interlude::ImageSubresourceRange::base_color()),
+			interlude::ImageMemoryBarrier::template(playerbullet_tex_stg, interlude::ImageSubresourceRange::base_color())
 		];
 		let image_memory_barriers = main_frame.get_back_images().iter()
 			.map(|x| interlude::ImageMemoryBarrier::hold_ownership(*x, interlude::ImageSubresourceRange::base_color(),
 			0, VK_ACCESS_MEMORY_READ_BIT, VkImageLayout::Undefined, VkImageLayout::PresentSrcKHR)).chain([
-				interlude::ImageMemoryBarrier::hold_ownership(&**backbuffers.dim2(0), interlude::ImageSubresourceRange::base_color(), VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VkImageLayout::Preinitialized, VkImageLayout::ColorAttachmentOptimal),
-				interlude::ImageMemoryBarrier::hold_ownership(&**backbuffers.dim2(1), interlude::ImageSubresourceRange::base_color(), VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VkImageLayout::Preinitialized, VkImageLayout::ColorAttachmentOptimal),
-				interlude::ImageMemoryBarrier::hold_ownership(&**backbuffers.dim2(2), interlude::ImageSubresourceRange::base_color(), VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VkImageLayout::Preinitialized, VkImageLayout::ColorAttachmentOptimal),
+				interlude::ImageMemoryBarrier::hold_ownership(&**gbuffer, interlude::ImageSubresourceRange::base_color(), VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VkImageLayout::Preinitialized, VkImageLayout::ColorAttachmentOptimal),
+				interlude::ImageMemoryBarrier::hold_ownership(&**edgebuffer, interlude::ImageSubresourceRange::base_color(), VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VkImageLayout::Preinitialized, VkImageLayout::ColorAttachmentOptimal),
+				interlude::ImageMemoryBarrier::hold_ownership(&**blend_weight, interlude::ImageSubresourceRange::base_color(), VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VkImageLayout::Preinitialized, VkImageLayout::ColorAttachmentOptimal),
 				blitted_image_templates[0].into_transfer_dst(VK_ACCESS_HOST_WRITE_BIT, VkImageLayout::Preinitialized),
 				blitted_image_templates[1].into_transfer_dst(VK_ACCESS_HOST_WRITE_BIT, VkImageLayout::Preinitialized),
 				blitted_image_templates[2].into_transfer_dst(VK_ACCESS_HOST_WRITE_BIT, VkImageLayout::Preinitialized),
@@ -723,11 +678,11 @@ fn app_main() -> Result<(), interlude::EngineError>
 			recorder.pipeline_barrier(VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, false,
 				&[], &buffer_memory_barriers, &image_memory_barriers)
 			.copy_buffer(&appdata_stage, &application_data, &[interlude::BufferCopyRegion(0, 0, application_buffer_prealloc.total_size() as usize)])
-			.copy_image(stage_images.dim2(0), &**backbuffers.dim2(3), VkImageLayout::TransferSrcOptimal, VkImageLayout::TransferDestOptimal,
+			.copy_image(smaa_areatex_stg, &**smaa_areatex, VkImageLayout::TransferSrcOptimal, VkImageLayout::TransferDestOptimal,
 				&[interlude::ImageCopyRegion(interlude::ImageSubresourceLayers::base_color(), VkOffset3D(0, 0, 0), interlude::ImageSubresourceLayers::base_color(), VkOffset3D(0, 0, 0), VkExtent3D(AREATEX_WIDTH, AREATEX_HEIGHT, 1))])
-			.copy_image(stage_images.dim2(1), &**backbuffers.dim2(4), VkImageLayout::TransferSrcOptimal, VkImageLayout::TransferDestOptimal,
+			.copy_image(smaa_searchtex_stg, &**smaa_searchtex, VkImageLayout::TransferSrcOptimal, VkImageLayout::TransferDestOptimal,
 				&[interlude::ImageCopyRegion(interlude::ImageSubresourceLayers::base_color(), VkOffset3D(0, 0, 0), interlude::ImageSubresourceLayers::base_color(), VkOffset3D(0, 0, 0), VkExtent3D(SEARCHTEX_WIDTH, SEARCHTEX_HEIGHT, 1))])
-			.copy_image(stage_images.dim2(2), &**backbuffers.dim2(5), VkImageLayout::TransferSrcOptimal, VkImageLayout::TransferDestOptimal,
+			.copy_image(playerbullet_tex_stg, &**playerbullet_tex, VkImageLayout::TransferSrcOptimal, VkImageLayout::TransferDestOptimal,
 				&[interlude::ImageCopyRegion(interlude::ImageSubresourceLayers::base_color(), VkOffset3D(0, 0, 0), interlude::ImageSubresourceLayers::base_color(), VkOffset3D(0, 0, 0), VkExtent3D(playerbullet_image.width as u32, playerbullet_image.height as u32, 1))])
 			.pipeline_barrier(VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, false, &[], &buffer_memory_barriers_ret, &image_memory_barriers_ret)
 			.end()

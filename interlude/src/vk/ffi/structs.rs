@@ -10,11 +10,11 @@ use super::*;
 use xcb;
 
 // Basic Types(Copyable) //
-#[repr(C)] #[derive(Clone, Copy, Debug, PartialEq, Eq)] pub struct VkOffset2D(pub i32, pub i32);
-#[repr(C)] #[derive(Clone, Copy, Debug, PartialEq, Eq)] pub struct VkExtent2D(pub u32, pub u32);
-#[repr(C)] #[derive(Clone, Copy, Debug, PartialEq, Eq)] pub struct VkRect2D(pub VkOffset2D, pub VkExtent2D);
-#[repr(C)] #[derive(Clone, Copy, Debug, PartialEq, Eq)] pub struct VkOffset3D(pub i32, pub i32, pub i32);
-#[repr(C)] #[derive(Clone, Copy, Debug, PartialEq, Eq)] pub struct VkExtent3D(pub u32, pub u32, pub u32);
+#[repr(C)] #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)] pub struct VkOffset2D(pub i32, pub i32);
+#[repr(C)] #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)] pub struct VkExtent2D(pub u32, pub u32);
+#[repr(C)] #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)] pub struct VkRect2D(pub VkOffset2D, pub VkExtent2D);
+#[repr(C)] #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)] pub struct VkOffset3D(pub i32, pub i32, pub i32);
+#[repr(C)] #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)] pub struct VkExtent3D(pub u32, pub u32, pub u32);
 #[repr(C)] #[derive(Clone, Copy, Debug, PartialEq)] pub struct VkViewport(pub f32, pub f32, pub f32, pub f32, pub f32, pub f32);
 
 #[repr(C)]

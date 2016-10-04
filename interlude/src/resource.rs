@@ -109,7 +109,7 @@ pub trait ImageDescriptor : std::marker::Sized + InternalExports<VkImageCreateIn
 	fn array_layers(mut self, layers: u32) -> Self;
 	fn sample_flags(mut self, samples: &[SampleCount]) -> Self;
 }
-pub struct ImageDescriptor1 { internal: VkImageCreateInfo }
+pub struct ImageDescriptor1 { internal: VkImageCreateInfo, device_resource: bool }
 pub struct ImageDescriptor2 { internal: VkImageCreateInfo, device_resource: bool }
 pub struct ImageDescriptor3 { internal: VkImageCreateInfo }
 impl ImageDescriptor1
@@ -125,9 +125,10 @@ impl ImageDescriptor1
 				mipLevels: 1, arrayLayers: 1, samples: VK_SAMPLE_COUNT_1_BIT, tiling: VkImageTiling::Optimal,
 				usage: usage, sharingMode: VkSharingMode::Exclusive, initialLayout: VkImageLayout::Preinitialized,
 				queueFamilyIndexCount: 0, pQueueFamilyIndices: std::ptr::null()
-			}
+			}, device_resource: false
 		}
 	}
+	pub fn device_resource(mut self) -> Self { self.device_resource = true; self }
 }
 impl ImageDescriptor2
 {
@@ -405,7 +406,7 @@ impl StagingBuffer
 
 pub struct DeviceImage
 {
-	dim1: Vec<Image1D>, dim2: Vec<Rc<Image2D>>, dim3: Vec<Image3D>,
+	dim1: Vec<Rc<Image1D>>, dim2: Vec<Rc<Image2D>>, dim3: Vec<Rc<Image3D>>,
 	memory: vk::DeviceMemory, size: VkDeviceSize
 }
 pub trait DeviceImageInternals : std::marker::Sized
@@ -451,12 +452,18 @@ impl DeviceImageInternals for DeviceImage
 			Ok(memory)
 		}).map(move |memory| DeviceImage
 		{
-			dim1: d1_images, dim2: d2_images.into_iter().map(|x| Rc::new(x)).collect(), dim3: d3_images, memory: memory, size: memory_size
+			dim1: d1_images.into_iter().map(Rc::new).collect(),
+			dim2: d2_images.into_iter().map(Rc::new).collect(),
+			dim3: d3_images.into_iter().map(Rc::new).collect(),
+			memory: memory, size: memory_size
 		}).map_err(EngineError::from)
 	}
 }
 impl DeviceImage
 {
+	pub fn dim1vec(&self) -> &Vec<Rc<Image1D>> { &self.dim1 }
+	pub fn dim2vec(&self) -> &Vec<Rc<Image2D>> { &self.dim2 }
+	pub fn dim3vec(&self) -> &Vec<Rc<Image3D>> { &self.dim3 }
 	pub fn dim2(&self, index: usize) -> &Rc<Image2D>
 	{
 		&self.dim2[index]
@@ -523,6 +530,11 @@ impl StagingImage
 	{
 		self.linear_dim2_images_offset[index]
 	}
+	pub fn image2d_offsets(&self) -> &Vec<VkDeviceSize>
+	{
+		&self.linear_dim2_images_offset
+	}
+	pub fn dim2vec(&self) -> &Vec<LinearImage2D> { &self.linear_dim2_images }
 	pub fn size(&self) -> VkDeviceSize { self.size }
 }
 
@@ -576,7 +588,7 @@ impl <'a> std::ops::Drop for MemoryMappedRange<'a>
 	fn drop(&mut self) { if !self.ptr.is_null() { self.parent.unmap(); } }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub enum Filter
 {
 	Nearest, Linear
@@ -626,6 +638,11 @@ impl SamplerState
 			max_anisotropy: None
 		}
 	}
+	pub fn filters(mut self, mag_filter: Filter, min_filter: Filter) -> Self
+	{
+		self.mag_filter = mag_filter; self.min_filter = min_filter;
+		self
+	}
 }
 impl <'a> std::convert::Into<VkSamplerCreateInfo> for &'a SamplerState
 {
@@ -663,7 +680,7 @@ impl SamplerInternals for Sampler
 	fn get_native(&self) -> VkSampler { self.internal.get() }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub enum ComponentSwizzle { R, G, B, A }
 impl std::convert::Into<VkComponentSwizzle> for ComponentSwizzle
 {
@@ -678,7 +695,7 @@ impl std::convert::Into<VkComponentSwizzle> for ComponentSwizzle
 		}
 	}
 }
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub struct ComponentMapping(pub ComponentSwizzle, pub ComponentSwizzle, pub ComponentSwizzle, pub ComponentSwizzle);
 impl ComponentMapping
 {
@@ -710,31 +727,50 @@ impl std::convert::Into<VkComponentMapping> for ComponentMapping
 		}
 	}
 }
-pub struct ImageView2D
+pub struct ImageView1D { parent: Rc<Image1D>, internal: vk::ImageView }
+pub struct ImageView2D { parent: Rc<Image2D>, internal: vk::ImageView }
+pub struct ImageView3D { parent: Rc<Image3D>, internal: vk::ImageView }
+pub trait ImageViewFactory<ResourceT: ImageResource>: std::marker::Sized
 {
-	parent: Rc<Image2D>, internal: vk::ImageView
+	fn new(engine: &Engine, res: &Rc<ResourceT>, format: VkFormat, cm: ComponentMapping, subrange: ImageSubresourceRange) -> Result<Self, EngineError>;
 }
-pub trait ImageView2DInternals : std::marker::Sized
+impl ImageViewFactory<Image1D> for ImageView1D
 {
-	fn new(engine: &Engine, res: &Rc<Image2D>, format: VkFormat, c_maps: ComponentMapping, sub_range: ImageSubresourceRange) -> Result<Self, EngineError>;
+	fn new(engine: &Engine, res: &Rc<Image1D>, format: VkFormat, cm: ComponentMapping, subrange: ImageSubresourceRange) -> Result<Self, EngineError>
+	{
+		vk::ImageView::new(engine.get_device().get_internal(), &VkImageViewCreateInfo
+		{
+			sType: VkStructureType::ImageViewCreateInfo, pNext: std::ptr::null(), flags: 0,
+			image: res.get_resource(), viewType: VkImageViewType::Dim1, format: format,
+			components: cm.into(), subresourceRange: subrange.into()	
+		}).map(|v| ImageView1D { parent: res.clone(), internal: v }).map_err(EngineError::from)
+	}
 }
-impl ImageView2DInternals for ImageView2D
+impl ImageViewFactory<Image2D> for ImageView2D
 {
-	fn new(engine: &Engine, res: &Rc<Image2D>, format: VkFormat, c_maps: ComponentMapping, sub_range: ImageSubresourceRange) -> Result<Self, EngineError>
+	fn new(engine: &Engine, res: &Rc<Image2D>, format: VkFormat, cm: ComponentMapping, subrange: ImageSubresourceRange) -> Result<Self, EngineError>
 	{
 		vk::ImageView::new(engine.get_device().get_internal(), &VkImageViewCreateInfo
 		{
 			sType: VkStructureType::ImageViewCreateInfo, pNext: std::ptr::null(), flags: 0,
 			image: res.get_resource(), viewType: VkImageViewType::Dim2, format: format,
-			components: c_maps.into(), subresourceRange: sub_range.into()
+			components: cm.into(), subresourceRange: subrange.into()	
 		}).map(|v| ImageView2D { parent: res.clone(), internal: v }).map_err(EngineError::from)
 	}
 }
-pub trait ImageView
+impl ImageViewFactory<Image3D> for ImageView3D
 {
-	fn get_native(&self) -> VkImageView;
+	fn new(engine: &Engine, res: &Rc<Image3D>, format: VkFormat, cm: ComponentMapping, subrange: ImageSubresourceRange) -> Result<Self, EngineError>
+	{
+		vk::ImageView::new(engine.get_device().get_internal(), &VkImageViewCreateInfo
+		{
+			sType: VkStructureType::ImageViewCreateInfo, pNext: std::ptr::null(), flags: 0,
+			image: res.get_resource(), viewType: VkImageViewType::Dim3, format: format,
+			components: cm.into(), subresourceRange: subrange.into()	
+		}).map(|v| ImageView3D { parent: res.clone(), internal: v }).map_err(EngineError::from)
+	}
 }
-impl ImageView for ImageView2D
-{
-	fn get_native(&self) -> VkImageView { self.internal.get() }
-}
+pub trait ImageView { fn get_native(&self) -> VkImageView; }
+impl ImageView for ImageView1D { fn get_native(&self) -> VkImageView { self.internal.get() } }
+impl ImageView for ImageView2D { fn get_native(&self) -> VkImageView { self.internal.get() } }
+impl ImageView for ImageView3D { fn get_native(&self) -> VkImageView { self.internal.get() } }

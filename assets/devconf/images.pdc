@@ -1,0 +1,40 @@
+# HardGrad -> Extend Device Configuration File
+
+# SMAA Backbuffers
+Image 2D
+- Format: R8G8B8A8 UNORM
+- Extent: $ScreenWidth $ScreenHeight
+- Usage: Sampled / ColorAttachment / DeviceLocal
+Image 2D
+- Format: R8G8 UNORM
+- Extent: $ScreenWidth $ScreenHeight
+- Usage: Sampled / ColorAttachment / DeviceLocal
+- ComponentMap: RGBA
+Image 2D
+- Format: R8G8B8A8 UNORM
+- Extent: $ScreenWidth $ScreenHeight
+- Usage: Sampled / ColorAttachment / DeviceLocal
+Image 2D
+- Format: BlockCompression5 UNORM
+- Extent: 160 560
+- Usage: Sampled
+- ComponentMap: RGRG
+Image 2D
+- Format: BlockCompression4 UNORM
+- Extent: 64 16
+- Usage: Sampled
+- ComponentMap: RRRR
+
+# Game Resources
+Image 2D
+- Format: R8G8B8A8 UNORM
+- Extent: 16 16
+- Usage: Sampled
+Image 1D
+- Format: R16G16B16A16 SFLOAT
+- Extent: 4
+- Usage: Sampled
+
+# Samplers
+Sampler
+- Filter: Linear

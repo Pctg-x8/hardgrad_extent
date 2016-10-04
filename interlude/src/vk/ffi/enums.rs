@@ -83,7 +83,7 @@ pub enum VkStructureType
 	DebugMarker_ObjectTagInfoEXT = 1000022001,
 	DebugMarker_MarkerInfoEXT = 1000022002
 }
-#[repr(C)] #[derive(Clone, Debug, Eq, PartialEq, Copy)]
+#[repr(C)] #[derive(Clone, Debug, Eq, PartialEq, Copy, Hash)]
 pub enum VkFormat
 {
 	UNDEFINED = 0,

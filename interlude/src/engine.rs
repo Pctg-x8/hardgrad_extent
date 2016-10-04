@@ -358,10 +358,17 @@ impl Engine
 	{
 		Sampler::new(self, &state.into())
 	}
-	pub fn create_image_view_2d(&self, res: &Rc<Image2D>, format: VkFormat, c_map: ComponentMapping, subres: ImageSubresourceRange)
-		-> Result<ImageView2D, EngineError>
+	pub fn create_image_view_1d(&self, res: &Rc<Image1D>, format: VkFormat, c_map: ComponentMapping, subres: ImageSubresourceRange) -> Result<ImageView1D, EngineError>
+	{
+		ImageView1D::new(self, res, format, c_map, subres)
+	}
+	pub fn create_image_view_2d(&self, res: &Rc<Image2D>, format: VkFormat, c_map: ComponentMapping, subres: ImageSubresourceRange) -> Result<ImageView2D, EngineError>
 	{
 		ImageView2D::new(self, res, format, c_map, subres)
+	}
+	pub fn create_image_view_3d(&self, res: &Rc<Image3D>, format: VkFormat, c_map: ComponentMapping, subres: ImageSubresourceRange) -> Result<ImageView3D, EngineError>
+	{
+		ImageView3D::new(self, res, format, c_map, subres)
 	}
 	pub fn wait_device(&self) -> Result<(), EngineError> { self.device.get_internal().wait_for_idle().map_err(EngineError::from) }
 

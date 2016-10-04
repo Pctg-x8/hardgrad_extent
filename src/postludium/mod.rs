@@ -3,21 +3,27 @@
 use std;
 use interlude;
 use interlude::ffi::*;
-use interlude::traits::*;
 use std::rc::Rc;
 use std::path::Path;
+use std::fs::File;
+use std::io::prelude::*;
+use std::io::BufReader;
+use itertools::Itertools;
+use std::collections::HashMap;
 
 pub trait LazyLines
 {
 	fn next(&mut self) -> Option<&(usize, String)>;
 	fn pop(&mut self) -> Option<&(usize, String)>;
 }
+#[allow(dead_code)]
 pub struct LazyLinesStr<'a>
 {
 	iter: std::iter::Enumerate<std::str::Lines<'a>>, cache: Option<(usize, String)>, acquire_next: bool
 }
 impl<'a> LazyLinesStr<'a>
 {
+	#[allow(dead_code)]
 	pub fn new(source: &'a String) -> Self
 	{
 		LazyLinesStr { iter: source.lines().enumerate(), cache: None, acquire_next: true }
@@ -27,33 +33,57 @@ impl<'a> LazyLines for LazyLinesStr<'a>
 {
 	fn next(&mut self) -> Option<&(usize, String)>
 	{
-		if self.acquire_next { self.cache = self.iter.next().map(|(u, s)| (u, s.to_owned())); self.acquire_next = false; }
+		if self.acquire_next { self.cache = self.iter.next().map(|(u, s)| (u + 1, s.to_owned())); self.acquire_next = false; }
 		self.cache.as_ref()
 	}
 	fn pop(&mut self) -> Option<&(usize, String)>
 	{
-		if self.acquire_next { self.cache = self.iter.next().map(|(u, s)| (u, s.to_owned())); self.acquire_next = false; }
+		if self.acquire_next { self.cache = self.iter.next().map(|(u, s)| (u + 1, s.to_owned())); self.acquire_next = false; }
+		self.acquire_next = true;
+		self.cache.as_ref()
+	}
+}
+pub struct LazyLinesBR
+{
+	iter: std::iter::Enumerate<std::io::Lines<BufReader<File>>>, cache: Option<(usize, String)>, acquire_next: bool
+}
+impl LazyLinesBR
+{
+	fn new(reader: BufReader<File>) -> Self { LazyLinesBR { iter: reader.lines().enumerate(), cache: None, acquire_next: true } }
+}
+impl LazyLines for LazyLinesBR
+{
+	fn next(&mut self) -> Option<&(usize, String)>
+	{
+		if self.acquire_next { self.cache = self.iter.next().map(|(u, s)| (u + 1, s.unwrap())); self.acquire_next = false; }
+		self.cache.as_ref()
+	}
+	fn pop(&mut self) -> Option<&(usize, String)>
+	{
+		if self.acquire_next { self.cache = self.iter.next().map(|(u, s)| (u + 1, s.unwrap())); self.acquire_next = false; }
 		self.acquire_next = true;
 		self.cache.as_ref()
 	}
 }
 
-pub enum DevConfParsingResult<T>
+#[derive(Clone)]
+pub enum DevConfParsingResult<T: Clone>
 {
-	Ok(T), IOError(std::io::Error), NumericParseError(std::num::ParseIntError),
+	Ok(T), NumericParseError(std::num::ParseIntError),
 	InvalidFormatError, InvalidUsageFlagError(String), InvalidFilterError(String),
-	UnsupportedDimension, UnsupportedParameter(String)
+	UnsupportedDimension, UnsupportedParameter(String), InvalidSwizzle
 }
-impl<T> DevConfParsingResult<T>
+impl<T: Clone> DevConfParsingResult<T>
 {
+	#[cfg(test)]
 	pub fn unwrap(self) -> T
 	{
 		match self
 		{
 			DevConfParsingResult::Ok(t) => t,
-			DevConfParsingResult::IOError(e) => panic!(e),
 			DevConfParsingResult::NumericParseError(e) => panic!(e),
 			DevConfParsingResult::InvalidFormatError => panic!("Invalid Image Format"),
+			DevConfParsingResult::InvalidSwizzle => panic!("Invalid Swizzle"),
 			DevConfParsingResult::InvalidUsageFlagError(s) => panic!("Invalid Usage Flag: {}", s),
 			DevConfParsingResult::InvalidFilterError(s) => panic!("Invalid Filter Type: {}", s),
 			DevConfParsingResult::UnsupportedDimension => panic!("Unsupported Image Dimension"),
@@ -65,33 +95,37 @@ impl<T> DevConfParsingResult<T>
 		match self
 		{
 			DevConfParsingResult::Ok(t) => t,
-			DevConfParsingResult::IOError(e) => panic!("{} at line {}", e, line),
 			DevConfParsingResult::NumericParseError(e) => panic!("{} at line {}", e, line),
 			DevConfParsingResult::InvalidFormatError => panic!("Invalid Image Format at line {}", line),
+			DevConfParsingResult::InvalidSwizzle => panic!("Invalid Swizzle at line {}", line),
 			DevConfParsingResult::InvalidUsageFlagError(s) => panic!("Invalid Usage Flag: {} at line {}", s, line),
 			DevConfParsingResult::InvalidFilterError(s) => panic!("Invalid Filter Type: {} at line {}", s, line),
 			DevConfParsingResult::UnsupportedDimension => panic!("Unsupported Image Dimension at line {}", line),
 			DevConfParsingResult::UnsupportedParameter(dep) => panic!("Unsupported Parameter for {} at line {}", dep, line)
 		}
 	}
+	#[cfg(test)]
 	pub fn is_invalid_format_err(&self) -> bool
 	{
 		match self { &DevConfParsingResult::InvalidFormatError => true, _ => false }
 	}
+	#[cfg(test)]
 	pub fn is_invalid_usage_flag_err(&self) -> bool
 	{
 		match self { &DevConfParsingResult::InvalidUsageFlagError(_) => true, _ => false }
 	}
+	#[cfg(test)]
 	pub fn is_numeric_parsing_failed(&self) -> bool
 	{
 		match self { &DevConfParsingResult::NumericParseError(_) => true, _ => false }
 	}
+	#[cfg(test)]
 	pub fn is_invalid_filter_type_err(&self) -> bool
 	{
 		match self { &DevConfParsingResult::InvalidFilterError(_) => true, _ => false }
 	}
 }
-impl<T> std::convert::From<Result<T, std::num::ParseIntError>> for DevConfParsingResult<T>
+impl<T: Clone> std::convert::From<Result<T, std::num::ParseIntError>> for DevConfParsingResult<T>
 {
 	fn from(r: Result<T, std::num::ParseIntError>) -> Self
 	{
@@ -122,6 +156,11 @@ pub fn parse_image_format(args: &[char], screen_format: VkFormat) -> DevConfPars
 		let element_type = element_type.into_iter().cloned().collect::<String>();
 		match bit_arrange.as_ref()
 		{
+			"R8G8" => match element_type.as_ref()
+			{
+				"UNORM" => DevConfParsingResult::Ok(VkFormat::R8G8_UNORM),
+				_ => DevConfParsingResult::InvalidFormatError
+			},
 			"R8G8B8A8" => match element_type.as_ref()
 			{
 				"UNORM" => DevConfParsingResult::Ok(VkFormat::R8G8B8A8_UNORM),
@@ -131,6 +170,16 @@ pub fn parse_image_format(args: &[char], screen_format: VkFormat) -> DevConfPars
 			"R16G16B16A16" => match element_type.as_ref()
 			{
 				"SFLOAT" => DevConfParsingResult::Ok(VkFormat::R16G16B16A16_SFLOAT),
+				_ => DevConfParsingResult::InvalidFormatError
+			},
+			"BlockCompression4" => match element_type.as_ref()
+			{
+				"UNORM" => DevConfParsingResult::Ok(VkFormat::BC4_UNORM_BLOCK),
+				_ => DevConfParsingResult::InvalidFormatError
+			},
+			"BlockCompression5" => match element_type.as_ref()
+			{
+				"UNORM" => DevConfParsingResult::Ok(VkFormat::BC5_UNORM_BLOCK),
 				_ => DevConfParsingResult::InvalidFormatError
 			},
 			_ => DevConfParsingResult::InvalidFormatError
@@ -148,8 +197,8 @@ pub fn parse_image_usage_flags(args: &[char], agg_usage: VkImageUsageFlags, devi
 		let has_next = !processing_rest.is_empty() && processing_rest[0] == '/';
 		let current_parsed = match usage_str.as_ref()
 		{
-			"AsColorTexture" => Ok((interlude::ImageUsagePresets::AsColorTexture, false)),
 			"Sampled" => Ok((VK_IMAGE_USAGE_SAMPLED_BIT, false)),
+			"ColorAttachment" => Ok((VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT, false)),
 			"DeviceLocal" => Ok((0, true)),
 			_ => Err(())
 		};
@@ -191,14 +240,58 @@ pub fn parse_image_extent(args: &[char], dims: ImageDimensions, screen_size: VkE
 		}
 	})
 }
-pub fn parse_filter_type(args: &[char]) -> DevConfParsingResult<VkFilter>
+pub fn parse_filter_type(args: &[char]) -> DevConfParsingResult<(interlude::Filter, interlude::Filter)>
 {
 	let str = take_while(args, not_ignored).0.into_iter().cloned().collect::<String>();
-	match str.as_ref()
+	let min_str = take_while(skip_spaces(args), not_ignored).0.into_iter().cloned().collect::<String>();
+	let mag_filter = match str.as_ref()
 	{
-		"Nearest" => DevConfParsingResult::Ok(VkFilter::Nearest),
-		"Linear" => DevConfParsingResult::Ok(VkFilter::Linear),
+		"Nearest" => DevConfParsingResult::Ok(interlude::Filter::Nearest),
+		"Linear" => DevConfParsingResult::Ok(interlude::Filter::Linear),
 		_ => DevConfParsingResult::InvalidFilterError(str)
+	};
+	let min_filter = if min_str.is_empty() { mag_filter.clone() } else
+	{
+		match min_str.as_ref()
+		{
+			"Nearest" => DevConfParsingResult::Ok(interlude::Filter::Nearest),
+			"Linear" => DevConfParsingResult::Ok(interlude::Filter::Linear),
+			_ => DevConfParsingResult::InvalidFilterError(min_str)
+		}
+	};
+	match mag_filter
+	{
+		DevConfParsingResult::Ok(mag) => match min_filter
+		{
+			DevConfParsingResult::Ok(min) => DevConfParsingResult::Ok((mag, min)),
+			DevConfParsingResult::InvalidFilterError(e) => DevConfParsingResult::InvalidFilterError(e),
+			_ => unreachable!()
+		},
+		DevConfParsingResult::InvalidFilterError(e) => DevConfParsingResult::InvalidFilterError(e),
+		_ => unreachable!()
+	}
+}
+pub fn parse_component_map(args: &[char]) -> DevConfParsingResult<interlude::ComponentMapping>
+{
+	fn char_to_swizzle(ch: char) -> Result<interlude::ComponentSwizzle, ()>
+	{
+		match ch
+		{
+			'R' | 'r' => Ok(interlude::ComponentSwizzle::R),
+			'G' | 'g' => Ok(interlude::ComponentSwizzle::G),
+			'B' | 'b' => Ok(interlude::ComponentSwizzle::B),
+			'A' | 'a' => Ok(interlude::ComponentSwizzle::A),
+			_ => Err(())
+		}
+	}
+
+	match char_to_swizzle(args[0]).and_then(|r|
+		char_to_swizzle(args[1]).and_then(move |g|
+		char_to_swizzle(args[2]).and_then(move |b|
+		char_to_swizzle(args[3]).map(move |a| interlude::ComponentMapping(r, g, b, a)))))
+	{
+		Ok(cm) => DevConfParsingResult::Ok(cm),
+		_ => DevConfParsingResult::InvalidSwizzle
 	}
 }
 pub fn parse_configuration_image<LinesT: LazyLines>(lines_iter: &mut LinesT, screen_size: VkExtent2D, screen_format: VkFormat) -> DevConfImage
@@ -216,10 +309,10 @@ pub fn parse_configuration_image<LinesT: LazyLines>(lines_iter: &mut LinesT, scr
 		(headline, dim)
 	};
 	
-	let (mut format, mut extent, mut usage) = (None, None, None);
+	let (mut format, mut extent, mut usage, mut component_map) = (None, None, None, interlude::ComponentMapping::straight());
 	while let Some(&(paramline, ref param)) =
 	{
-		let pop_next = if let Some(&(paramline, ref param)) = lines_iter.next() { if param.starts_with("-") { true } else { false } } else { false };
+		let pop_next = if let Some(&(_, ref param)) = lines_iter.next() { if param.starts_with("-") { true } else { false } } else { false };
 		if pop_next { lines_iter.pop() } else { None }
 	}
 	{
@@ -231,6 +324,7 @@ pub fn parse_configuration_image<LinesT: LazyLines>(lines_iter: &mut LinesT, scr
 			"Format" => format = Some(parse_image_format(param_value, screen_format).unwrap_on_line(paramline)),
 			"Extent" => extent = Some(parse_image_extent(param_value, dim, screen_size).unwrap_on_line(paramline)),
 			"Usage" => usage = Some(parse_image_usage_flags(param_value, 0, false).unwrap_on_line(paramline)),
+			"ComponentMap" => component_map = parse_component_map(param_value).unwrap_on_line(paramline),
 			_ => DevConfParsingResult::UnsupportedParameter("Image".to_owned()).unwrap_on_line(paramline)
 		}
 	}
@@ -241,20 +335,53 @@ pub fn parse_configuration_image<LinesT: LazyLines>(lines_iter: &mut LinesT, scr
 		{
 			format: format.expect(&format!("Format parameter is not presented at line {}", headline)),
 			extent: extent.expect(&format!("Extent parameter is not presented at line {}", headline)).0,
-			usage: usage, device_local: devlocal
+			usage: usage, device_local: devlocal, component_map: component_map
 		},
 		ImageDimensions::Double => DevConfImage::Dim2
 		{
 			format: format.expect(&format!("Format parameter is not presented at line {}", headline)),
 			extent: VkExtent2D::from(extent.expect(&format!("Extent parameter is not presented at line {}", headline))),
-			usage: usage, device_local: devlocal
+			usage: usage, device_local: devlocal, component_map: component_map
 		},
 		ImageDimensions::Triple => DevConfImage::Dim3
 		{
 			format: format.expect(&format!("Format parameter is not presented at line {}", headline)),
 			extent: extent.expect(&format!("Extent parameter is not presented at line {}", headline)),
-			usage: usage, device_local: devlocal
+			usage: usage, device_local: devlocal, component_map: component_map
 		}
+	}
+}
+pub fn parse_configuration_sampler<LinesT: LazyLines>(lines_iter: &mut LinesT) -> DevConfSampler
+{
+	{
+		let &(_, ref conf_head) = lines_iter.pop().unwrap();
+		assert!(conf_head.starts_with("Sampler"));
+	}
+	
+	let (mut mag_filter, mut min_filter) = (interlude::Filter::Linear, interlude::Filter::Linear);
+	while let Some(&(paramline, ref param)) =
+	{
+		let pop_next = if let Some(&(_, ref param)) = lines_iter.next() { if param.starts_with("-") { true } else { false } } else { false };
+		if pop_next { lines_iter.pop() } else { None }
+	}
+	{
+		let param_line = param.chars().skip(1).skip_while(is_ignored).collect::<Vec<_>>();
+		let (param_name, rest) = take_while(&param_line, |c| not_ignored(c) && *c != ':');
+		let param_value = skip_spaces(&skip_spaces(rest)[1..]);
+		match param_name.into_iter().cloned().collect::<String>().as_ref()
+		{
+			"Filter" =>
+			{
+				let (magf, minf) = parse_filter_type(param_value).unwrap_on_line(paramline);
+				mag_filter = magf; min_filter = minf;
+			},
+			_ => DevConfParsingResult::UnsupportedParameter("Sampler".to_owned()).unwrap_on_line(paramline)
+		}
+	}
+
+	DevConfSampler
+	{
+		mag_filter: mag_filter, min_filter: min_filter
 	}
 }
 
@@ -298,7 +425,7 @@ mod test
 	}
 	#[test] fn parse_image_conf()
 	{
-		let testcase = "Image 2D\n- Format: R8G8B8A8 UNORM\n- Extent: $ScreenWidth $ScreenHeight\n- Usage: AsColorTexture\n".to_owned();
+		let testcase = "Image 2D\n- Format: R8G8B8A8 UNORM\n- Extent: $ScreenWidth $ScreenHeight\n- Usage: AsColorTexture\nImage 2D".to_owned();
 		let mut testcase_wrap = LazyLinesStr::new(&testcase);
 		let img = parse_configuration_image(&mut testcase_wrap, VkExtent2D(640, 480), VkFormat::R8G8B8A8_UNORM);
 		match img
@@ -312,24 +439,147 @@ mod test
 			},
 			_ => unreachable!()
 		}
+		assert_eq!(testcase_wrap.next(), Some(&(5, "Image 2D".to_owned())));
+	}
+	#[test] fn parse_sampler_conf()
+	{
+		let testcase = "Sampler\n- Filter: Linear".to_owned();
+		let mut testcase_wrap = LazyLinesStr::new(&testcase);
+		let smp = parse_configuration_sampler(&mut testcase_wrap);
+		assert_eq!(smp.filter, VkFilter::Linear);
 	}
 }
 
+enum NextInstruction
+{
+	Comment, Empty, Image, Sampler
+}
+
+#[derive(Debug)]
 pub enum DevConfImage
 {
-	Dim1 { format: VkFormat, extent: u32, usage: VkImageUsageFlags, device_local: bool },
-	Dim2 { format: VkFormat, extent: VkExtent2D, usage: VkImageUsageFlags, device_local: bool },
-	Dim3 { format: VkFormat, extent: VkExtent3D, usage: VkImageUsageFlags, device_local: bool }
+	Dim1 { format: VkFormat, extent: u32, usage: VkImageUsageFlags, device_local: bool, component_map: interlude::ComponentMapping },
+	Dim2 { format: VkFormat, extent: VkExtent2D, usage: VkImageUsageFlags, device_local: bool, component_map: interlude::ComponentMapping },
+	Dim3 { format: VkFormat, extent: VkExtent3D, usage: VkImageUsageFlags, device_local: bool, component_map: interlude::ComponentMapping }
 }
-pub struct ImageViewPair(pub Rc<interlude::traits::ImageResource>, pub Box<interlude::traits::ImageView>);
+#[derive(Debug)]
+pub struct DevConfSampler { mag_filter: interlude::Filter, min_filter: interlude::Filter }
 pub struct DevConfImages
 {
-	image_views: Vec<ImageViewPair>, samplers: Vec<interlude::SamplerState>
+	image_views_1d: Vec<(Rc<interlude::Image1D>, interlude::ImageView1D)>,
+	image_views_2d: Vec<(Rc<interlude::Image2D>, interlude::ImageView2D)>,
+	image_views_3d: Vec<(Rc<interlude::Image3D>, interlude::ImageView3D)>,
+	samplers: Vec<interlude::Sampler>,
+	device_images: interlude::DeviceImage, staging_images: Option<interlude::StagingImage>
 }
 impl DevConfImages
 {
-	pub fn from_file<PathT: AsRef<Path>>(path: PathT) -> Self
+	pub fn from_file<PathT: AsRef<Path> + Clone>(engine: &interlude::Engine, path: PathT, screen_size: VkExtent2D, screen_format: VkFormat) -> Self
 	{
-		DevConfImages { image_views: Vec::new(), samplers: Vec::new() }
+		info!(target: "Postludium", "Parsing Device Configuration {:?}...", path.clone().as_ref());
+		let mut flines = LazyLinesBR::new(BufReader::new(File::open(path).unwrap()));
+
+		let (mut images, mut samplers) = (Vec::new(), Vec::new());
+		while let Some(next) = flines.next().map(|&(headline, ref line)|
+			if line.is_empty() { NextInstruction::Empty } else if line.starts_with("#") { NextInstruction::Comment }
+			else if line.starts_with("Image") { NextInstruction::Image } else if line.starts_with("Sampler") { NextInstruction::Sampler }
+			else { panic!("Unknown Configuration at line {}", headline) })
+		{
+			match next
+			{
+				NextInstruction::Empty | NextInstruction::Comment => { flines.pop(); },
+				NextInstruction::Image =>
+				{
+					let obj = parse_configuration_image(&mut flines, screen_size, screen_format);
+					println!("Found {:?}", obj);
+					images.push(obj);
+				},
+				NextInstruction::Sampler =>
+				{
+					let obj = parse_configuration_sampler(&mut flines);
+					println!("Found {:?}", obj);
+					samplers.push(obj);
+				}
+			}
+		}
+
+		// FIXME: Device Local flags for Image 3D
+		let mut image_descriptors1 = HashMap::new();
+		let mut image_descriptors2 = HashMap::new();
+		let mut image_descriptors3 = HashMap::new();
+		for img in &images
+		{
+			match img
+			{
+				&DevConfImage::Dim1 { format, extent, usage, device_local: true, .. } => { image_descriptors1.entry((format, extent, usage, true))
+					.or_insert(interlude::ImageDescriptor1::new(format, extent, usage).device_resource()); },
+				&DevConfImage::Dim2 { format, extent, usage, device_local: true, .. } => { image_descriptors2.entry((format, extent, usage, true))
+					.or_insert(interlude::ImageDescriptor2::new(format, extent, usage).device_resource()); },
+				&DevConfImage::Dim1 { format, extent, usage, device_local: false, .. } => { image_descriptors1.entry((format, extent, usage, false))
+					.or_insert(interlude::ImageDescriptor1::new(format, extent, usage)); },
+				&DevConfImage::Dim2 { format, extent, usage, device_local: false, .. } => { image_descriptors2.entry((format, extent, usage, false))
+					.or_insert(interlude::ImageDescriptor2::new(format, extent, usage)); },
+				&DevConfImage::Dim3 { format, extent, usage, .. } => { image_descriptors3.entry((format, extent, usage, false))
+					.or_insert(interlude::ImageDescriptor3::new(format, extent, usage)); }
+			}
+		}
+
+		let images_1d = images.iter().filter_map(|img| match img
+		{
+			&DevConfImage::Dim1 { format, extent, usage, device_local, component_map } => Some((format, extent, usage, device_local, component_map)),
+			_ => None	
+		}).collect_vec();
+		let images_2d = images.iter().filter_map(|img| match img
+		{
+			&DevConfImage::Dim2 { format, extent, usage, device_local, component_map } => Some((format, extent, usage, device_local, component_map)),
+			_ => None	
+		}).collect_vec();
+		let images_3d = images.iter().filter_map(|img| match img
+		{
+			&DevConfImage::Dim3 { format, extent, usage, device_local, component_map } => Some((format, extent, usage, device_local, component_map)),
+			_ => None	
+		}).collect_vec();
+
+		let image_descriptor_refs_1d = images_1d.iter().map(|&(format, extent, usage, device_local, _)| image_descriptors1.get(&(format, extent, usage, device_local)).unwrap()).collect_vec();
+		let image_descriptor_refs_2d = images_2d.iter().map(|&(format, extent, usage, device_local, _)| image_descriptors2.get(&(format, extent, usage, device_local)).unwrap()).collect_vec();
+		let image_descriptor_refs_3d = images_3d.iter().map(|&(format, extent, usage, _, _)| image_descriptors3.get(&(format, extent, usage, false)).unwrap()).collect_vec();
+		let image_prealloc_with_moving = interlude::ImagePreallocator::new().image_1d(image_descriptor_refs_1d).image_2d(image_descriptor_refs_2d).image_3d(image_descriptor_refs_3d);
+		let (backbuffers, staging_images) = Unrecoverable!(engine.create_double_image(&image_prealloc_with_moving));
+		let image_views_1d = images_1d.iter().enumerate().map(|(nr, &(format, _, _, _, component_map))| 
+			(backbuffers.dim1vec()[nr].clone(), Unrecoverable!(engine.create_image_view_1d(&backbuffers.dim1vec()[nr], format, component_map, interlude::ImageSubresourceRange::base_color())))).collect_vec();
+		let image_views_2d = images_2d.iter().enumerate().map(|(nr, &(format, _, _, _, component_map))|
+			(backbuffers.dim2vec()[nr].clone(), Unrecoverable!(engine.create_image_view_2d(&backbuffers.dim2vec()[nr], format, component_map, interlude::ImageSubresourceRange::base_color())))).collect_vec();
+		let image_views_3d = images_3d.iter().enumerate().map(|(nr, &(format, _, _, _, component_map))|
+			(backbuffers.dim3vec()[nr].clone(), Unrecoverable!(engine.create_image_view_3d(&backbuffers.dim3vec()[nr], format, component_map, interlude::ImageSubresourceRange::base_color())))).collect_vec();
+
+		let sampler_objects = samplers.iter().map(|dcs|
+		{
+			let sampler_state = interlude::SamplerState::new().filters(dcs.mag_filter, dcs.min_filter);
+			Unrecoverable!(engine.create_sampler(&sampler_state))
+		}).collect_vec();
+
+		DevConfImages
+		{
+			image_views_1d: image_views_1d, image_views_2d: image_views_2d, image_views_3d: image_views_3d,
+			samplers: sampler_objects,
+			device_images: backbuffers, staging_images: staging_images
+		}
+	}
+
+	pub fn images_1d(&self) -> &Vec<(Rc<interlude::Image1D>, interlude::ImageView1D)> { &self.image_views_1d }
+	pub fn images_2d(&self) -> &Vec<(Rc<interlude::Image2D>, interlude::ImageView2D)> { &self.image_views_2d }
+	pub fn images_3d(&self) -> &Vec<(Rc<interlude::Image3D>, interlude::ImageView3D)> { &self.image_views_3d }
+	pub fn samplers(&self) -> &Vec<interlude::Sampler> { &self.samplers }
+	pub fn staging_images(&self) -> Option<&Vec<interlude::LinearImage2D>>
+	{
+		if let Some(ref v) = self.staging_images { Some(v.dim2vec()) } else { None }
+	}
+	pub fn map_staging_images_memory(&self) -> Option<interlude::MemoryMappedRange>
+	{
+		if let Some(ref v) = self.staging_images { Some(Unrecoverable!(v.map())) } else { None }
+	}
+	pub fn staging_offsets(&self) -> Option<&Vec<VkDeviceSize>>
+	{
+		if let Some(ref v) = self.staging_images { Some(v.image2d_offsets()) } else { None }
 	}
 }

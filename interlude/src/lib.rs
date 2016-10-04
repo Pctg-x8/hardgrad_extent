@@ -68,7 +68,11 @@ pub use self::engine::Engine;
 pub use self::synchronize::{QueueFence, Fence, FenceRef};
 pub use self::framebuffer::{RenderPass, Framebuffer};
 pub use self::command::{GraphicsCommandBuffers, BundledCommandBuffers, TransferCommandBuffers, TransientTransferCommandBuffers, TransientGraphicsCommandBuffers};
-pub use self::resource::{Buffer, Image1D, Image2D, Image3D, LinearImage2D, DeviceBuffer, StagingBuffer, DeviceImage, StagingImage, ImageView2D, MemoryMappedRange};
+pub use self::resource::{
+	Buffer, Image1D, Image2D, Image3D, LinearImage2D, DeviceBuffer, StagingBuffer,
+	DeviceImage, StagingImage, MemoryMappedRange, ImageView1D, ImageView2D, ImageView3D,
+	Sampler
+};
 pub use self::shading::{ShaderProgram, PipelineLayout, GraphicsPipeline};
 pub use self::descriptor::{DescriptorSetLayout, DescriptorSets};
 pub use self::debug_info::DebugInfo;
