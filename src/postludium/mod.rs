@@ -477,9 +477,10 @@ pub struct DevConfImagesWithStaging
 }
 impl DevConfImages
 {
-	pub fn from_file<PathT: AsRef<Path> + Clone>(engine: &interlude::Engine, path: PathT, screen_size: VkExtent2D, screen_format: VkFormat) -> Self
+	pub fn from_file(engine: &interlude::Engine, asset_path: &str, screen_size: VkExtent2D, screen_format: VkFormat) -> Self
 	{
-		info!(target: "Postludium", "Parsing Device Configuration {:?}...", path.clone().as_ref());
+		let path = engine.parse_asset(asset_path, "pdc");
+		info!(target: "Postludium", "Parsing Device Configuration {:?}...", path);
 		let mut flines = LazyLinesBR::new(BufReader::new(File::open(path).unwrap()));
 
 		let (mut images, mut samplers) = (Vec::new(), Vec::new());

@@ -388,7 +388,7 @@ fn app_main() -> Result<(), interlude::EngineError>
 	let VkExtent2D(frame_width, frame_height) = main_frame.get_extent();
 
 	// Resources //
-	let images = DevConfImages::from_file(&engine, engine.parse_asset("devconf.images", "pdc"), main_frame.get_extent(), VkFormat::R8G8B8A8_UNORM).ensure_has_staging();
+	let images = DevConfImages::from_file(&engine, "devconf.images", main_frame.get_extent(), VkFormat::R8G8B8A8_UNORM).ensure_has_staging();
 	// Reference Bindings //
 	let ref gbuffer_set = images.images_2d()[0];
 	let ref edgebuffer_set = images.images_2d()[1];
