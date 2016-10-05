@@ -408,9 +408,9 @@ fn app_main() -> Result<(), interlude::EngineError>
 		let mapped = images.map_staging_images_memory();
 		let offsets = images.staging_offsets();
 		let areatex_compressed = BC5::compress(&AREATEX_BYTES, (AREATEX_WIDTH as usize, AREATEX_HEIGHT as usize));
-		mapped.map_mut::<[u8; AREATEX_SIZE as usize / 2]>(offsets[0] as usize).copy_from_slice(&areatex_compressed);
+		mapped.map_mut::<[u8; AREATEX_SIZE as usize / 2]>(offsets[1] as usize).copy_from_slice(&areatex_compressed);
 		let searchtex_compressed = BC4::compress(&SEARCHTEX_BYTES, (SEARCHTEX_WIDTH as usize, SEARCHTEX_HEIGHT as usize));
-		mapped.map_mut::<[u8; SEARCHTEX_SIZE as usize / 2]>(offsets[1] as usize).copy_from_slice(&searchtex_compressed);
+		mapped.map_mut::<[u8; SEARCHTEX_SIZE as usize / 2]>(offsets[2] as usize).copy_from_slice(&searchtex_compressed);
 
 		let playerbullet_pixels = pack_color(
 			VkExtent2D(playerbullet_image.width as u32, playerbullet_image.height as u32),
@@ -419,7 +419,7 @@ fn app_main() -> Result<(), interlude::EngineError>
 			playerbullet_image.layer_raw_channel_image_data(0, PSDChannelIndices::Blue),
 			playerbullet_image.layer_raw_channel_image_data(0, PSDChannelIndices::Alpha)
 		);
-		mapped.range_mut::<u8>(offsets[2] as usize, 16 * 16 * 4).copy_from_slice(&playerbullet_pixels);
+		mapped.range_mut::<u8>(offsets[3] as usize, 16 * 16 * 4).copy_from_slice(&playerbullet_pixels);
 	}
 	let application_buffer_prealloc = engine.buffer_preallocate(&[
 		(std::mem::size_of::<[interlude::PosUV; 4]>(), interlude::BufferDataType::Vertex),
@@ -607,9 +607,9 @@ fn app_main() -> Result<(), interlude::EngineError>
 					.draw(4, 1)
 				.end()
 			));
-			/*try!(combine_commands.begin(1 + 2 * n, enabled_pass, 3, f).and_then(|recorder|
+			try!(combine_commands.begin(1 + 2 * n, enabled_pass, 3, f).and_then(|recorder|
 				recorder.inject_commands(|r| debug_info.inject_render_commands(r)).end()
-			));*/
+			));
 		}
 		Some(combine_commands)
 	}
@@ -678,7 +678,7 @@ fn app_main() -> Result<(), interlude::EngineError>
 				// .pipeline_barrier(VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, false, &[], &[], &[ibar_blendweight_end])
 				.next_subpass(true)
 				// Pass 3 : SMAA Combine and Debug Print //
-				.execute_commands(&combine_commands.as_ref().unwrap()[i * 2 .. i * 2 + 1])
+				.execute_commands(&combine_commands.as_ref().unwrap()[i * 2 .. i * 2 + 2])
 				.end_render_pass()
 			.end().unwrap()
 		}
