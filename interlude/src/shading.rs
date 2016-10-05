@@ -137,7 +137,7 @@ impl InternalExports<vk::PipelineLayout> for PipelineLayout
 #[derive(Clone, Copy)]
 pub enum PrimitiveTopology
 {
-	LineList(bool), LineStrip(bool), TriangleList(bool), TriangleStrip(bool)
+	Point, LineList(bool), LineStrip(bool), TriangleList(bool), TriangleStrip(bool)
 }
 impl std::convert::Into<VkPrimitiveTopology> for PrimitiveTopology
 {
@@ -145,6 +145,7 @@ impl std::convert::Into<VkPrimitiveTopology> for PrimitiveTopology
 	{
 		match self
 		{
+			PrimitiveTopology::Point                => VkPrimitiveTopology::PointList,
 			PrimitiveTopology::LineList(false)		=> VkPrimitiveTopology::LineList,
 			PrimitiveTopology::LineList(true)		=> VkPrimitiveTopology::LineListWithAdjacency,
 			PrimitiveTopology::LineStrip(false)		=> VkPrimitiveTopology::LineStrip,
