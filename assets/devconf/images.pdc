@@ -9,7 +9,6 @@ Image 2D
 - Format: R8G8 UNORM
 - Extent: $ScreenWidth $ScreenHeight
 - Usage: Sampled / ColorAttachment / DeviceLocal
-- ComponentMap: RGBA
 Image 2D
 - Format: R8G8B8A8 UNORM
 - Extent: $ScreenWidth $ScreenHeight
