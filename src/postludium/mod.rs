@@ -3,6 +3,7 @@
 use std;
 use interlude;
 use interlude::ffi::*;
+use interlude::traits::*;
 use std::rc::Rc;
 use std::path::Path;
 use std::fs::File;
@@ -14,55 +15,53 @@ use std::collections::HashMap;
 pub trait LazyLines
 {
 	fn next(&mut self) -> Option<&(usize, String)>;
-	fn pop(&mut self) -> Option<&(usize, String)>;
+	fn pop(&mut self) -> Option<(usize, String)>;
 }
 #[allow(dead_code)]
 pub struct LazyLinesStr<'a>
 {
-	iter: std::iter::Enumerate<std::str::Lines<'a>>, cache: Option<(usize, String)>, acquire_next: bool
+	iter: std::iter::Enumerate<std::str::Lines<'a>>, cache: Option<(usize, String)>
 }
 impl<'a> LazyLinesStr<'a>
 {
 	#[allow(dead_code)]
 	pub fn new(source: &'a String) -> Self
 	{
-		LazyLinesStr { iter: source.lines().enumerate(), cache: None, acquire_next: true }
+		LazyLinesStr { iter: source.lines().enumerate(), cache: None }
 	}
 }
 impl<'a> LazyLines for LazyLinesStr<'a>
 {
 	fn next(&mut self) -> Option<&(usize, String)>
 	{
-		if self.acquire_next { self.cache = self.iter.next().map(|(u, s)| (u + 1, s.to_owned())); self.acquire_next = false; }
+		if self.cache.is_none() { self.cache = self.iter.next().map(|(u, s)| (u + 1, s.to_owned())); }
 		self.cache.as_ref()
 	}
-	fn pop(&mut self) -> Option<&(usize, String)>
+	fn pop(&mut self) -> Option<(usize, String)>
 	{
-		if self.acquire_next { self.cache = self.iter.next().map(|(u, s)| (u + 1, s.to_owned())); self.acquire_next = false; }
-		self.acquire_next = true;
-		self.cache.as_ref()
+		if self.cache.is_none() { self.iter.next().map(|(u, s)| (u + 1, s.to_owned())) }
+		else { std::mem::replace(&mut self.cache, None) }
 	}
 }
 pub struct LazyLinesBR
 {
-	iter: std::iter::Enumerate<std::io::Lines<BufReader<File>>>, cache: Option<(usize, String)>, acquire_next: bool
+	iter: std::iter::Enumerate<std::io::Lines<BufReader<File>>>, cache: Option<(usize, String)>
 }
 impl LazyLinesBR
 {
-	fn new(reader: BufReader<File>) -> Self { LazyLinesBR { iter: reader.lines().enumerate(), cache: None, acquire_next: true } }
+	fn new(reader: BufReader<File>) -> Self { LazyLinesBR { iter: reader.lines().enumerate(), cache: None } }
 }
 impl LazyLines for LazyLinesBR
 {
 	fn next(&mut self) -> Option<&(usize, String)>
 	{
-		if self.acquire_next { self.cache = self.iter.next().map(|(u, s)| (u + 1, s.unwrap())); self.acquire_next = false; }
+		if self.cache.is_none() { self.cache = self.iter.next().map(|(u, s)| (u + 1, s.unwrap())); }
 		self.cache.as_ref()
 	}
-	fn pop(&mut self) -> Option<&(usize, String)>
+	fn pop(&mut self) -> Option<(usize, String)>
 	{
-		if self.acquire_next { self.cache = self.iter.next().map(|(u, s)| (u + 1, s.unwrap())); self.acquire_next = false; }
-		self.acquire_next = true;
-		self.cache.as_ref()
+		if self.cache.is_none() { self.iter.next().map(|(u, s)| (u + 1, s.unwrap())) }
+		else { std::mem::replace(&mut self.cache, None) }
 	}
 }
 
@@ -298,7 +297,7 @@ pub fn parse_configuration_image<LinesT: LazyLines>(lines_iter: &mut LinesT, scr
 {
 	let (headline, dim) =
 	{
-		let &(headline, ref conf_head) = lines_iter.pop().unwrap();
+		let (headline, ref conf_head) = lines_iter.pop().unwrap();
 		assert!(conf_head.starts_with("Image"));
 		let dim_str = conf_head.chars().skip(5).skip_while(is_ignored).take_while(not_ignored).collect::<String>();
 		let dim = match dim_str.as_ref()
@@ -310,7 +309,7 @@ pub fn parse_configuration_image<LinesT: LazyLines>(lines_iter: &mut LinesT, scr
 	};
 	
 	let (mut format, mut extent, mut usage, mut component_map) = (None, None, None, interlude::ComponentMapping::straight());
-	while let Some(&(paramline, ref param)) =
+	while let Some((paramline, ref param)) =
 	{
 		let pop_next = if let Some(&(_, ref param)) = lines_iter.next() { if param.starts_with("-") { true } else { false } } else { false };
 		if pop_next { lines_iter.pop() } else { None }
@@ -354,12 +353,12 @@ pub fn parse_configuration_image<LinesT: LazyLines>(lines_iter: &mut LinesT, scr
 pub fn parse_configuration_sampler<LinesT: LazyLines>(lines_iter: &mut LinesT) -> DevConfSampler
 {
 	{
-		let &(_, ref conf_head) = lines_iter.pop().unwrap();
+		let (_, ref conf_head) = lines_iter.pop().unwrap();
 		assert!(conf_head.starts_with("Sampler"));
 	}
 	
 	let (mut mag_filter, mut min_filter) = (interlude::Filter::Linear, interlude::Filter::Linear);
-	while let Some(&(paramline, ref param)) =
+	while let Some((paramline, ref param)) =
 	{
 		let pop_next = if let Some(&(_, ref param)) = lines_iter.next() { if param.starts_with("-") { true } else { false } } else { false };
 		if pop_next { lines_iter.pop() } else { None }
@@ -466,11 +465,15 @@ pub enum DevConfImage
 pub struct DevConfSampler { mag_filter: interlude::Filter, min_filter: interlude::Filter }
 pub struct DevConfImages
 {
-	image_views_1d: Vec<(Rc<interlude::Image1D>, interlude::ImageView1D)>,
-	image_views_2d: Vec<(Rc<interlude::Image2D>, interlude::ImageView2D)>,
-	image_views_3d: Vec<(Rc<interlude::Image3D>, interlude::ImageView3D)>,
+	image_views_1d: Vec<interlude::ImageView1D>, image_views_2d: Vec<interlude::ImageView2D>, image_views_3d: Vec<interlude::ImageView3D>,
 	samplers: Vec<interlude::Sampler>,
 	device_images: interlude::DeviceImage, staging_images: Option<interlude::StagingImage>
+}
+pub struct DevConfImagesWithStaging
+{
+	image_views_1d: Vec<interlude::ImageView1D>, image_views_2d: Vec<interlude::ImageView2D>, image_views_3d: Vec<interlude::ImageView3D>,
+	samplers: Vec<interlude::Sampler>,
+	device_images: interlude::DeviceImage, staging_images: interlude::StagingImage
 }
 impl DevConfImages
 {
@@ -546,11 +549,11 @@ impl DevConfImages
 		let image_prealloc_with_moving = interlude::ImagePreallocator::new().image_1d(image_descriptor_refs_1d).image_2d(image_descriptor_refs_2d).image_3d(image_descriptor_refs_3d);
 		let (backbuffers, staging_images) = Unrecoverable!(engine.create_double_image(&image_prealloc_with_moving));
 		let image_views_1d = images_1d.iter().enumerate().map(|(nr, &(format, _, _, _, component_map))| 
-			(backbuffers.dim1vec()[nr].clone(), Unrecoverable!(engine.create_image_view_1d(&backbuffers.dim1vec()[nr], format, component_map, interlude::ImageSubresourceRange::base_color())))).collect_vec();
+			Unrecoverable!(interlude::ImageView1D::new(engine, &backbuffers.dim1vec()[nr], format, component_map, interlude::ImageSubresourceRange::base_color()))).collect_vec();
 		let image_views_2d = images_2d.iter().enumerate().map(|(nr, &(format, _, _, _, component_map))|
-			(backbuffers.dim2vec()[nr].clone(), Unrecoverable!(engine.create_image_view_2d(&backbuffers.dim2vec()[nr], format, component_map, interlude::ImageSubresourceRange::base_color())))).collect_vec();
+			Unrecoverable!(interlude::ImageView2D::new(engine, &backbuffers.dim2vec()[nr], format, component_map, interlude::ImageSubresourceRange::base_color()))).collect_vec();
 		let image_views_3d = images_3d.iter().enumerate().map(|(nr, &(format, _, _, _, component_map))|
-			(backbuffers.dim3vec()[nr].clone(), Unrecoverable!(engine.create_image_view_3d(&backbuffers.dim3vec()[nr], format, component_map, interlude::ImageSubresourceRange::base_color())))).collect_vec();
+			Unrecoverable!(interlude::ImageView3D::new(engine, &backbuffers.dim3vec()[nr], format, component_map, interlude::ImageSubresourceRange::base_color()))).collect_vec();
 
 		let sampler_objects = samplers.iter().map(|dcs|
 		{
@@ -565,21 +568,28 @@ impl DevConfImages
 			device_images: backbuffers, staging_images: staging_images
 		}
 	}
+	pub fn ensure_has_staging(self) -> DevConfImagesWithStaging
+	{
+		DevConfImagesWithStaging
+		{
+			image_views_1d: self.image_views_1d, image_views_2d: self.image_views_2d, image_views_3d: self.image_views_3d, samplers: self.samplers,
+			device_images: self.device_images, staging_images: self.staging_images.unwrap()
+		}
+	}
 
-	pub fn images_1d(&self) -> &Vec<(Rc<interlude::Image1D>, interlude::ImageView1D)> { &self.image_views_1d }
-	pub fn images_2d(&self) -> &Vec<(Rc<interlude::Image2D>, interlude::ImageView2D)> { &self.image_views_2d }
-	pub fn images_3d(&self) -> &Vec<(Rc<interlude::Image3D>, interlude::ImageView3D)> { &self.image_views_3d }
+	pub fn images_1d(&self) -> &Vec<interlude::ImageView1D> { &self.image_views_1d }
+	pub fn images_2d(&self) -> &Vec<interlude::ImageView2D> { &self.image_views_2d }
+	pub fn images_3d(&self) -> &Vec<interlude::ImageView3D> { &self.image_views_3d }
 	pub fn samplers(&self) -> &Vec<interlude::Sampler> { &self.samplers }
-	pub fn staging_images(&self) -> Option<&Vec<interlude::LinearImage2D>>
-	{
-		if let Some(ref v) = self.staging_images { Some(v.dim2vec()) } else { None }
-	}
-	pub fn map_staging_images_memory(&self) -> Option<interlude::MemoryMappedRange>
-	{
-		if let Some(ref v) = self.staging_images { Some(Unrecoverable!(v.map())) } else { None }
-	}
-	pub fn staging_offsets(&self) -> Option<&Vec<VkDeviceSize>>
-	{
-		if let Some(ref v) = self.staging_images { Some(v.image2d_offsets()) } else { None }
-	}
+}
+impl DevConfImagesWithStaging
+{
+	pub fn images_1d(&self) -> &Vec<interlude::ImageView1D> { &self.image_views_1d }
+	pub fn images_2d(&self) -> &Vec<interlude::ImageView2D> { &self.image_views_2d }
+	pub fn images_3d(&self) -> &Vec<interlude::ImageView3D> { &self.image_views_3d }
+	pub fn samplers(&self) -> &Vec<interlude::Sampler> { &self.samplers }
+
+	pub fn staging_images(&self) -> &Vec<interlude::LinearImage2D> { self.staging_images.dim2vec() }
+	pub fn map_staging_images_memory(&self) -> interlude::MemoryMappedRange { Unrecoverable!(self.staging_images.map()) }
+	pub fn staging_offsets(&self) -> &Vec<VkDeviceSize> { self.staging_images.image2d_offsets() }
 }

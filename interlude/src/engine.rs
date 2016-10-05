@@ -319,14 +319,16 @@ impl Engine
 		let image1 = try!(prealloc.dim1_images().iter().map(|desc| Image1D::new(self, desc.get_internal())).collect::<Result<Vec<_>, EngineError>>());
 		let image2 = try!(prealloc.dim2_images().iter().map(|desc| Image2D::new(self, desc.get_internal())).collect::<Result<Vec<_>, EngineError>>());
 		let image3 = try!(prealloc.dim3_images().iter().map(|desc| Image3D::new(self, desc.get_internal())).collect::<Result<Vec<_>, EngineError>>());
+		let linear_image1 = try!(prealloc.dim1_images().iter().filter(|desc| !desc.is_device_resource()).map(|desc| desc.get_internal())
+			.map(|desc| LinearImage2D::new(self, VkExtent2D(desc.extent.0, 1), desc.format)).collect::<Result<Vec<_>, EngineError>>());
 		let linear_image2 = try!(prealloc.dim2_images().iter().filter(|desc| !desc.is_device_resource()).map(|desc| desc.get_internal())
-			.filter(|desc| desc.mipLevels == 1 && desc.arrayLayers == 1 && desc.samples == VK_SAMPLE_COUNT_1_BIT)
 			.map(|desc| LinearImage2D::new(self, VkExtent2D(desc.extent.0, desc.extent.1), desc.format)).collect::<Result<Vec<_>, EngineError>>());
+		let linear_images = linear_image1.into_iter().chain(linear_image2.into_iter()).collect::<Vec<_>>();
 
 		DeviceImage::new(self, image1, image2, image3).and_then(|dev|
-		if !linear_image2.is_empty()
+		if !linear_images.is_empty()
 		{
-			StagingImage::new(self, linear_image2).map(move |stg| (dev, Some(stg)))
+			StagingImage::new(self, linear_images).map(move |stg| (dev, Some(stg)))
 		}
 		else
 		{

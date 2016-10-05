@@ -129,6 +129,7 @@ impl ImageDescriptor1
 		}
 	}
 	pub fn device_resource(mut self) -> Self { self.device_resource = true; self }
+	pub fn is_device_resource(&self) -> bool { self.device_resource }
 }
 impl ImageDescriptor2
 {
@@ -153,6 +154,7 @@ impl ImageDescriptor2
 		self.device_resource = true;
 		self
 	}
+	pub fn is_device_resource(&self) -> bool { self.device_resource }
 }
 impl ImageDescriptor3
 {
@@ -210,11 +212,6 @@ macro_rules! ImplImageDescriptor
 ImplImageDescriptor!(for ImageDescriptor1);
 ImplImageDescriptor!(for ImageDescriptor2);
 ImplImageDescriptor!(for ImageDescriptor3);
-pub trait ImageDescriptor2Internals { fn is_device_resource(&self) -> bool; }
-impl ImageDescriptor2Internals for ImageDescriptor2
-{
-	fn is_device_resource(&self) -> bool { self.device_resource }
-}
 
 #[derive(Clone, Copy)]
 pub struct ImageSubresourceRange(VkImageAspectFlags, u32, u32, u32, u32);
@@ -770,7 +767,41 @@ impl ImageViewFactory<Image3D> for ImageView3D
 		}).map(|v| ImageView3D { parent: res.clone(), internal: v }).map_err(EngineError::from)
 	}
 }
-pub trait ImageView { fn get_native(&self) -> VkImageView; }
-impl ImageView for ImageView1D { fn get_native(&self) -> VkImageView { self.internal.get() } }
-impl ImageView for ImageView2D { fn get_native(&self) -> VkImageView { self.internal.get() } }
-impl ImageView for ImageView3D { fn get_native(&self) -> VkImageView { self.internal.get() } }
+impl std::ops::Deref for ImageView1D { type Target = Image1D; fn deref(&self) -> &Image1D { self.parent.deref() } }
+impl std::ops::Deref for ImageView2D { type Target = Image2D; fn deref(&self) -> &Image2D { self.parent.deref() } }
+impl std::ops::Deref for ImageView3D { type Target = Image3D; fn deref(&self) -> &Image3D { self.parent.deref() } }
+impl ImageResource for ImageView1D { fn get_resource(&self) -> VkImage { self.parent.get_resource() } }
+impl ImageResource for ImageView2D { fn get_resource(&self) -> VkImage { self.parent.get_resource() } }
+impl ImageResource for ImageView3D { fn get_resource(&self) -> VkImage { self.parent.get_resource() } }
+pub trait ImageView
+{
+	fn get_native(&self) -> VkImageView;
+}
+pub trait UserImageView<ResourceT: ImageResource>: ImageView
+{
+	fn get_resource(&self) -> &Rc<ResourceT>;
+}
+impl ImageView for ImageView1D
+{
+	fn get_native(&self) -> VkImageView { self.internal.get() }
+}
+impl ImageView for ImageView2D
+{
+	fn get_native(&self) -> VkImageView { self.internal.get() }
+}
+impl ImageView for ImageView3D
+{
+	fn get_native(&self) -> VkImageView { self.internal.get() }
+}
+impl UserImageView<Image1D> for ImageView1D
+{
+	fn get_resource(&self) -> &Rc<Image1D> { &self.parent }
+}
+impl UserImageView<Image2D> for ImageView2D
+{
+	fn get_resource(&self) -> &Rc<Image2D> { &self.parent }
+}
+impl UserImageView<Image3D> for ImageView3D
+{
+	fn get_resource(&self) -> &Rc<Image3D> { &self.parent }
+}

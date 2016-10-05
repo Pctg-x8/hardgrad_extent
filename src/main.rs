@@ -388,24 +388,25 @@ fn app_main() -> Result<(), interlude::EngineError>
 	let VkExtent2D(frame_width, frame_height) = main_frame.get_extent();
 
 	// Resources //
-	let images = DevConfImages::from_file(&engine, engine.parse_asset("devconf.images", "pdc"), main_frame.get_extent(), VkFormat::R8G8B8A8_UNORM);
+	let images = DevConfImages::from_file(&engine, engine.parse_asset("devconf.images", "pdc"), main_frame.get_extent(), VkFormat::R8G8B8A8_UNORM).ensure_has_staging();
 	// Reference Bindings //
-	let (ref gbuffer, ref gbuffer_view) = images.images_2d()[0];
-	let (ref edgebuffer, ref edgebuffer_view) = images.images_2d()[1];
-	let (ref blend_weight, ref blend_weight_view) = images.images_2d()[2];
-	let (ref smaa_areatex, ref smaa_areatex_view) = images.images_2d()[3];
-	let (ref smaa_searchtex, ref smaa_searchtex_view) = images.images_2d()[4];
-	let (ref playerbullet_tex, ref playerbullet_view) = images.images_2d()[5];
-	let (_, ref lineburst_particle_gradient_view) = images.images_1d()[0];
+	let ref gbuffer_set = images.images_2d()[0];
+	let ref edgebuffer_set = images.images_2d()[1];
+	let ref blend_weight_set = images.images_2d()[2];
+	let ref smaa_areatex_set = images.images_2d()[3];
+	let ref smaa_searchtex_set = images.images_2d()[4];
+	let ref playerbullet_tex_set = images.images_2d()[5];
+	let ref lineburst_particle_gradient_tex_set = images.images_1d()[0];
 	let ref gbuffer_sampler = images.samplers()[0];
-	let ref smaa_areatex_stg = images.staging_images().unwrap()[0];
-	let ref smaa_searchtex_stg = images.staging_images().unwrap()[1];
-	let ref playerbullet_tex_stg = images.staging_images().unwrap()[2];
+	let ref lineburst_particle_gradient_tex_stg = images.staging_images()[0];
+	let ref smaa_areatex_stg = images.staging_images()[1];
+	let ref smaa_searchtex_stg = images.staging_images()[2];
+	let ref playerbullet_tex_stg = images.staging_images()[3];
 
 	let playerbullet_image = PhotoshopDocument::open(engine.parse_asset("graphs.playerbullet", "psd")).unwrap();
-	if let Some(mapped) = images.map_staging_images_memory()
 	{
-		let offsets = images.staging_offsets().unwrap();
+		let mapped = images.map_staging_images_memory();
+		let offsets = images.staging_offsets();
 		let areatex_compressed = BC5::compress(&AREATEX_BYTES, (AREATEX_WIDTH as usize, AREATEX_HEIGHT as usize));
 		mapped.map_mut::<[u8; AREATEX_SIZE as usize / 2]>(offsets[0] as usize).copy_from_slice(&areatex_compressed);
 		let searchtex_compressed = BC4::compress(&SEARCHTEX_BYTES, (SEARCHTEX_WIDTH as usize, SEARCHTEX_HEIGHT as usize));
@@ -419,7 +420,7 @@ fn app_main() -> Result<(), interlude::EngineError>
 			playerbullet_image.layer_raw_channel_image_data(0, PSDChannelIndices::Alpha)
 		);
 		mapped.range_mut::<u8>(offsets[2] as usize, 16 * 16 * 4).copy_from_slice(&playerbullet_pixels);
-	};
+	}
 	let application_buffer_prealloc = engine.buffer_preallocate(&[
 		(std::mem::size_of::<[interlude::PosUV; 4]>(), interlude::BufferDataType::Vertex),
 		(std::mem::size_of::<structures::VertexMemoryForWireRender>(), interlude::BufferDataType::Vertex),
@@ -436,7 +437,7 @@ fn app_main() -> Result<(), interlude::EngineError>
 	let enabled_pass = if use_post_smaa { &render_passes.fullset } else { &render_passes.noaa };
 	let framebuffers = main_frame.get_back_images().iter().map(|&x| if use_post_smaa
 	{
-		Unrecoverable!(engine.create_framebuffer(&render_passes.fullset, &[gbuffer_view, edgebuffer_view, blend_weight_view, x], VkExtent3D(frame_width, frame_height, 1)))
+		Unrecoverable!(engine.create_framebuffer(&render_passes.fullset, &[gbuffer_set, edgebuffer_set, blend_weight_set, x], VkExtent3D(frame_width, frame_height, 1)))
 	}
 	else
 	{
@@ -494,12 +495,12 @@ fn app_main() -> Result<(), interlude::EngineError>
 
 	// Descriptor Set //
 	let uniform_memory_info = interlude::BufferInfo(&application_data, application_buffer_prealloc.offset(4) .. application_buffer_prealloc.total_size());
-	let gbuffer_info = interlude::ImageInfo(gbuffer_sampler, gbuffer_view, VkImageLayout::ShaderReadOnlyOptimal);
-	let edgebuffer_info = interlude::ImageInfo(gbuffer_sampler, edgebuffer_view, VkImageLayout::ShaderReadOnlyOptimal);
-	let blendweight_info = interlude::ImageInfo(gbuffer_sampler, blend_weight_view, VkImageLayout::ShaderReadOnlyOptimal);
-	let areatex_info = interlude::ImageInfo(gbuffer_sampler, smaa_areatex_view, VkImageLayout::ShaderReadOnlyOptimal);
-	let searchtex_info = interlude::ImageInfo(gbuffer_sampler, smaa_searchtex_view, VkImageLayout::ShaderReadOnlyOptimal);
-	let playerbullet_info = interlude::ImageInfo(gbuffer_sampler, playerbullet_view, VkImageLayout::ShaderReadOnlyOptimal);
+	let gbuffer_info = interlude::ImageInfo(gbuffer_sampler, gbuffer_set, VkImageLayout::ShaderReadOnlyOptimal);
+	let edgebuffer_info = interlude::ImageInfo(gbuffer_sampler, edgebuffer_set, VkImageLayout::ShaderReadOnlyOptimal);
+	let blendweight_info = interlude::ImageInfo(gbuffer_sampler, blend_weight_set, VkImageLayout::ShaderReadOnlyOptimal);
+	let areatex_info = interlude::ImageInfo(gbuffer_sampler, smaa_areatex_set, VkImageLayout::ShaderReadOnlyOptimal);
+	let searchtex_info = interlude::ImageInfo(gbuffer_sampler, smaa_searchtex_set, VkImageLayout::ShaderReadOnlyOptimal);
+	let playerbullet_info = interlude::ImageInfo(gbuffer_sampler, playerbullet_tex_set, VkImageLayout::ShaderReadOnlyOptimal);
 	if use_post_smaa
 	{
 		engine.update_descriptors(&[
@@ -535,9 +536,9 @@ fn app_main() -> Result<(), interlude::EngineError>
 		];
 		let blitted_image_templates =
 		[
-			interlude::ImageMemoryBarrier::template(&**smaa_areatex, interlude::ImageSubresourceRange::base_color()),
-			interlude::ImageMemoryBarrier::template(&**smaa_searchtex, interlude::ImageSubresourceRange::base_color()),
-			interlude::ImageMemoryBarrier::template(&**playerbullet_tex, interlude::ImageSubresourceRange::base_color()),
+			interlude::ImageMemoryBarrier::template(smaa_areatex_set, interlude::ImageSubresourceRange::base_color()),
+			interlude::ImageMemoryBarrier::template(smaa_searchtex_set, interlude::ImageSubresourceRange::base_color()),
+			interlude::ImageMemoryBarrier::template(playerbullet_tex_set, interlude::ImageSubresourceRange::base_color()),
 			interlude::ImageMemoryBarrier::template(smaa_areatex_stg, interlude::ImageSubresourceRange::base_color()),
 			interlude::ImageMemoryBarrier::template(smaa_searchtex_stg, interlude::ImageSubresourceRange::base_color()),
 			interlude::ImageMemoryBarrier::template(playerbullet_tex_stg, interlude::ImageSubresourceRange::base_color())
@@ -545,9 +546,9 @@ fn app_main() -> Result<(), interlude::EngineError>
 		let image_memory_barriers = main_frame.get_back_images().iter()
 			.map(|x| interlude::ImageMemoryBarrier::hold_ownership(*x, interlude::ImageSubresourceRange::base_color(),
 			0, VK_ACCESS_MEMORY_READ_BIT, VkImageLayout::Undefined, VkImageLayout::PresentSrcKHR)).chain([
-				interlude::ImageMemoryBarrier::hold_ownership(&**gbuffer, interlude::ImageSubresourceRange::base_color(), VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VkImageLayout::Preinitialized, VkImageLayout::ColorAttachmentOptimal),
-				interlude::ImageMemoryBarrier::hold_ownership(&**edgebuffer, interlude::ImageSubresourceRange::base_color(), VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VkImageLayout::Preinitialized, VkImageLayout::ColorAttachmentOptimal),
-				interlude::ImageMemoryBarrier::hold_ownership(&**blend_weight, interlude::ImageSubresourceRange::base_color(), VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VkImageLayout::Preinitialized, VkImageLayout::ColorAttachmentOptimal),
+				interlude::ImageMemoryBarrier::hold_ownership(gbuffer_set, interlude::ImageSubresourceRange::base_color(), VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VkImageLayout::Preinitialized, VkImageLayout::ColorAttachmentOptimal),
+				interlude::ImageMemoryBarrier::hold_ownership(edgebuffer_set, interlude::ImageSubresourceRange::base_color(), VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VkImageLayout::Preinitialized, VkImageLayout::ColorAttachmentOptimal),
+				interlude::ImageMemoryBarrier::hold_ownership(blend_weight_set, interlude::ImageSubresourceRange::base_color(), VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VkImageLayout::Preinitialized, VkImageLayout::ColorAttachmentOptimal),
 				blitted_image_templates[0].into_transfer_dst(VK_ACCESS_HOST_WRITE_BIT, VkImageLayout::Preinitialized),
 				blitted_image_templates[1].into_transfer_dst(VK_ACCESS_HOST_WRITE_BIT, VkImageLayout::Preinitialized),
 				blitted_image_templates[2].into_transfer_dst(VK_ACCESS_HOST_WRITE_BIT, VkImageLayout::Preinitialized),
@@ -566,11 +567,11 @@ fn app_main() -> Result<(), interlude::EngineError>
 			recorder.pipeline_barrier(VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, false,
 				&[], &buffer_memory_barriers, &image_memory_barriers)
 			.copy_buffer(&appdata_stage, &application_data, &[interlude::BufferCopyRegion(0, 0, application_buffer_prealloc.total_size() as usize)])
-			.copy_image(smaa_areatex_stg, &**smaa_areatex, VkImageLayout::TransferSrcOptimal, VkImageLayout::TransferDestOptimal,
+			.copy_image(smaa_areatex_stg, smaa_areatex_set, VkImageLayout::TransferSrcOptimal, VkImageLayout::TransferDestOptimal,
 				&[interlude::ImageCopyRegion(interlude::ImageSubresourceLayers::base_color(), VkOffset3D(0, 0, 0), interlude::ImageSubresourceLayers::base_color(), VkOffset3D(0, 0, 0), VkExtent3D(AREATEX_WIDTH, AREATEX_HEIGHT, 1))])
-			.copy_image(smaa_searchtex_stg, &**smaa_searchtex, VkImageLayout::TransferSrcOptimal, VkImageLayout::TransferDestOptimal,
+			.copy_image(smaa_searchtex_stg, smaa_searchtex_set, VkImageLayout::TransferSrcOptimal, VkImageLayout::TransferDestOptimal,
 				&[interlude::ImageCopyRegion(interlude::ImageSubresourceLayers::base_color(), VkOffset3D(0, 0, 0), interlude::ImageSubresourceLayers::base_color(), VkOffset3D(0, 0, 0), VkExtent3D(SEARCHTEX_WIDTH, SEARCHTEX_HEIGHT, 1))])
-			.copy_image(playerbullet_tex_stg, &**playerbullet_tex, VkImageLayout::TransferSrcOptimal, VkImageLayout::TransferDestOptimal,
+			.copy_image(playerbullet_tex_stg, playerbullet_tex_set, VkImageLayout::TransferSrcOptimal, VkImageLayout::TransferDestOptimal,
 				&[interlude::ImageCopyRegion(interlude::ImageSubresourceLayers::base_color(), VkOffset3D(0, 0, 0), interlude::ImageSubresourceLayers::base_color(), VkOffset3D(0, 0, 0), VkExtent3D(playerbullet_image.width as u32, playerbullet_image.height as u32, 1))])
 			.pipeline_barrier(VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, false, &[], &buffer_memory_barriers_ret, &image_memory_barriers_ret)
 			.end()
@@ -606,9 +607,9 @@ fn app_main() -> Result<(), interlude::EngineError>
 					.draw(4, 1)
 				.end()
 			));
-			try!(combine_commands.begin(1 + 2 * n, enabled_pass, 3, f).and_then(|recorder|
+			/*try!(combine_commands.begin(1 + 2 * n, enabled_pass, 3, f).and_then(|recorder|
 				recorder.inject_commands(|r| debug_info.inject_render_commands(r)).end()
-			));
+			));*/
 		}
 		Some(combine_commands)
 	}
@@ -677,7 +678,7 @@ fn app_main() -> Result<(), interlude::EngineError>
 				// .pipeline_barrier(VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, false, &[], &[], &[ibar_blendweight_end])
 				.next_subpass(true)
 				// Pass 3 : SMAA Combine and Debug Print //
-				.execute_commands(&combine_commands.as_ref().unwrap()[i * 2 .. i * 2 + 2])
+				.execute_commands(&combine_commands.as_ref().unwrap()[i * 2 .. i * 2 + 1])
 				.end_render_pass()
 			.end().unwrap()
 		}
