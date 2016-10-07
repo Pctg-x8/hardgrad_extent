@@ -1,0 +1,125 @@
+# GPU Command Assembly
+
+.define	MAX_BK_COUNT				32
+.define MAX_ENEMY_COUNT				128
+.define MAX_PLAYER_BULLET_COUNT		64
+.define MAX_LBPARTICLE_GROUPS		64
+
+# Arguments of Pipeline States
+.define PS_RENDER_BACKGROUND		0
+.define PS_RENDER_ENEMY_BODIES		1
+.define PS_RENDER_PLAYER			2
+.define PS_RENDER_ERZ				3
+.define PS_RENDER_PLAYER_BULLETS	4
+.define PS_LBPARTICLES				5
+.define PS_SMAA_EDGEDETECT			6
+.define PS_SMAA_BLENDWEIGHT_CALC	7
+.define PS_SMAA_COMBINE				8
+# Arguments of Vertex Buffers
+.define	POSITION_VERTICES			0
+.define BACKGROUND_INSTANCE_DATA	1
+.define ENEMY_INSTANCE_DATA			2
+.define PLAYER_INSTANCE_DATA		3
+.define ERZ_VERTICES				4
+.define ERZ_INSTANCE_DATA			5
+.define SPRITE_PLANE_VERTICES		6
+.define PLAYERBULLET_INSTANCE_DATA	7
+.define LBPARTICLE_GROUPS_DATA		8
+.define POSTPROCESS_VERTICES		9
+# Arguments of Descriptor Sets
+.define GLOBAL_UNIFORM_DS			0
+.define PLAYER_BULLET_TEXTURE_DS	1
+.define SMAA_EDGEDETECT_INPUTS_DS	2
+.define SMAA_BLENDWEIGHT_INPUTS_DS	3
+.define SMAA_COMBINE_INPUTS_DS		4
+# Arguments of Buffer
+.define APPLICATION_BUFFER			0
+.define APPSTAGE_BUFFER				1
+# Arguments of Custom U32
+.define GLOBAL_UNIFORM_OFFSET		0
+
+.define DEFAULT_USE_BITS			INDEX_READ | VERTEX_ATTRIBUTE_READ | UNIFORM_READ
+
+.type injected
+.args 4
+push_wire_colors:
+	Push	0, 0, @0
+	Push	0, 1, @1
+	Push	0, 2, @2
+	Push	0, 3, @3
+
+.type primary
+.fb_renderpass PRE
+prepare_for_render:
+	# ImgBarrier	SrcPipelineStg, DstPipelineStg, ImageResource, ImageSubresource, SrcMemoryUsage, DstMemoryUsage, SrcImageLayout, DstImageLayout
+	ImgBarrier	TOP, COLOR_ATTACHMENT_OUTPUT, FRAMEBUFFER_IMAGE, IMAGE_SUBRESOURCE_COLOR, MEMORY_READ, COLOR_ATTACHMENT_WRITE, PRESENT_SRC, COLOR_ATTACHMENT_OPT
+
+.type primary
+.fb_renderpass 0
+render_to_buffer:
+	BindVB	0, 0				# Bind Vertex Buffer No.0 at Slot 0
+	BindDS	0, 0, GLOBAL_UNIFORM_DS
+	# Drawing Background
+	BindPS	PS_RENDER_BACKGROUND
+	Inject	push_wire_colors, 0.125, 0.5, 0.1875, 0.625
+	BindVB	1, BACKGROUND_INSTANCE_DATA
+	Draw	4, MAX_BK_COUNT		# Draw 4 vertices MAX_BK_COUNT times
+	# Drawing Enemy Bodies
+	BindPS	PS_RENDER_ENEMY_BODIES
+	Inject	push_wire_colors, 0.25, 0.9875, 1.5, 1.0
+	BindVB	1, ENEMY_INSTANCE_DATA
+	Draw	4, MAX_ENEMY_COUNT
+	# Drawing Player
+	BindPS	PS_RENDER_PLAYER
+	Inject	push_wire_colors, 1.5, 1.25, 0.375, 1.0
+	BindVB	1, PLAYER_INSTANCE_DATA
+	BindIB	0
+	DrawIndexed 24, 2		# Draw 24 vertices at twice
+	# Drawing Enemy Rezonators
+	BindPS	PS_RENDER_ERZ
+	Inject	push_wire_colors, 1.25, 0.5, 0.625, 1.0
+	BindVB	0, ERZ_VERTICES
+	BindVB	1, ERZ_INSTANCE_DATA
+	Draw	3, MAX_ENEMY_COUNT
+	# Drawing Player Bullets
+	BindPS	PS_RENDER_PLAYER_BULLETS
+	BindDS	1, PLAYER_BULLET_TEXTURE_DS
+	BindVB	0, SPRITE_PLANE_VERTICES
+	BindVB	1, PLAYERBULLET_INSTANCE_DATA
+	Draw	4, MAX_PLAYER_BULLET_COUNT
+	# Drawing LineBurst Particles
+	BindPS	PS_LBPARTICLES
+	BindVB	0, LBPARTICLE_GROUPS_DATA
+	Draw	MAX_LBPARTICLE_GROUPS, 1
+
+.type primary
+.fb_renderpass 1
+smaa_edge_detection:
+	BindPS	PS_SMAA_EDGEDETECT
+	BindDS	1, 1, SMAA_EDGEDETECT_INPUTS_DS
+	BindVB	0, POSTPROCESS_VERTICES
+	Draw	4, 1
+
+.type primary
+.fb_renderpass 2
+smaa_blend_weight_calc:
+	BindPS	PS_SMAA_BLENDWEIGHT_CALC
+	BindDS	2, 1, SMAA_BLENDWEIGHT_INPUTS_DS
+	Draw	4, 1
+
+.type primary
+.fb_renderpass 3
+smaa_combine:
+	BindPS	PS_SMAA_COMBINE
+	BindDS	3, 1, SMAA_COMBINE_INPUTS_DS
+	Draw	4, 1
+
+.type primary
+.transfer
+datasync:
+	# BufBarrier	SrcPipelineStg, DstPipelineStg, Offset, Size, SrcMemoryUsage, DstMemoryUsage
+	BufBarrier	TOP, TRANSFER, APPLICATION_BUFFER, GLOBAL_UNIFORM_OFFSET, -1, DEFAULT_USE_BITS, TRANSFER_WRITE
+	BufBarrier	TOP, TRANSFER, APPSTAGE_BUFFER, GLOBAL_UNIFORM_OFFSET, -1, MEMORY_READ, TRANSFER_READ
+	CopyBuf		APPSTAGE_BUFFER, APPLICATION_BUFFER, GLOBAL_UNIFORM_OFFSET, -1, GLOBAL_UNIFORM_OFFSET
+	BufBarrier	TRANSFER, BOTTOM, APPLICATION_BUFFER, GLOBAL_UNIFORM_OFFSET, -1, TRANSFER_WRITE, DEFAULT_USE_BITS
+	BufBarrier	TRANSFER, BOTTOM, APPSTAGE_BUFFER, GLOBAL_UNIFORM_OFFSET, -1, TRANSFER_READ, MEMORY_READ
