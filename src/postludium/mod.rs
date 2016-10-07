@@ -12,6 +12,9 @@ use std::io::BufReader;
 use itertools::Itertools;
 use std::collections::HashMap;
 
+pub mod asm;
+pub use self::asm::*;
+
 pub trait LazyLines
 {
 	fn next(&mut self) -> Option<&(usize, String)>;

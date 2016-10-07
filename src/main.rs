@@ -607,9 +607,9 @@ fn app_main() -> Result<(), interlude::EngineError>
 					.draw(4, 1)
 				.end()
 			));
-			try!(combine_commands.begin(1 + 2 * n, enabled_pass, 3, f).and_then(|recorder|
+			/*try!(combine_commands.begin(1 + 2 * n, enabled_pass, 3, f).and_then(|recorder|
 				recorder.inject_commands(|r| debug_info.inject_render_commands(r)).end()
-			));
+			));*/
 		}
 		Some(combine_commands)
 	}
@@ -678,7 +678,7 @@ fn app_main() -> Result<(), interlude::EngineError>
 				// .pipeline_barrier(VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, false, &[], &[], &[ibar_blendweight_end])
 				.next_subpass(true)
 				// Pass 3 : SMAA Combine and Debug Print //
-				.execute_commands(&combine_commands.as_ref().unwrap()[i * 2 .. i * 2 + 2])
+				.execute_commands(&combine_commands.as_ref().unwrap()[i * 2 .. i * 2 + 1])
 				.end_render_pass()
 			.end().unwrap()
 		}
