@@ -14,6 +14,8 @@ use std::collections::HashMap;
 
 pub mod asm;
 pub use self::asm::*;
+mod parsetools;
+use self::parsetools::ParseTools;
 
 pub trait LazyLines
 {
@@ -138,50 +140,67 @@ impl<T: Clone> std::convert::From<Result<T, std::num::ParseIntError>> for DevCon
 #[derive(Clone, Copy)]
 pub enum ImageDimensions { Single, Double, Triple }
 
-fn is_ignored(c: &char) -> bool { *c == ' ' || *c == '\t' }
-fn not_ignored(c: &char) -> bool { !is_ignored(c) }
-pub fn skip_spaces(p: &[char]) -> &[char] { if !p.is_empty() && is_ignored(&p[0]) { skip_spaces(&p[1..]) } else { p } }
-pub fn take_while<F: Fn(&char) -> bool>(p: &[char], pred: F) -> (&[char], &[char]) { let ptr = take_while_impl(p, 0, pred); (&p[..ptr], &p[ptr..]) }
-fn take_while_impl<F: Fn(&char) -> bool>(data: &[char], ptr: usize, pred: F) -> usize
+fn is_ignored(c: char) -> bool { c == ' ' || c == '\t' }
+fn not_ignored(c: char) -> bool { !is_ignored(c) }
+
+enum BitArrangement
 {
-	if data.len() > ptr && pred(&data[ptr]) { take_while_impl(data, ptr + 1, pred) } else { ptr }
+	RG_8, RGBA_8, RGBA_16, BlockCompression(u8)
+}
+enum ElementType
+{
+	UNORM, SNORM, SRGB, SFLOAT
 }
 
 pub fn parse_image_format(args: &[char], screen_format: VkFormat) -> DevConfParsingResult<VkFormat>
 {
-	let (bit_arrange, rest) = take_while(args, not_ignored);
-	let bit_arrange = bit_arrange.into_iter().cloned().collect::<String>();
-	if bit_arrange == "$ScreenFormat" { DevConfParsingResult::Ok(screen_format) }
+	let (bit_arrange, rest) = args.take_while(not_ignored);
+	if bit_arrange == ['$', 'S', 'c', 'r', 'e', 'e', 'n', 'F', 'o', 'r', 'm', 'a', 't']
+	{
+		DevConfParsingResult::Ok(screen_format)
+	}
 	else
 	{
-		let (element_type, _) = take_while(skip_spaces(rest), not_ignored);
-		let element_type = element_type.into_iter().cloned().collect::<String>();
-		match bit_arrange.as_ref()
+		let (element_type, _) = rest.skip_while(is_ignored).take_while(not_ignored);
+		let bit_arrange = if bit_arrange[..16] == ['B', 'l', 'o', 'c', 'k', 'C', 'o', 'm', 'p', 'r', 'e', 's', 's', 'i', 'o', 'n'] && ('0'..'7').contains(bit_arrange[16]) { BitArrangement::BlockCompression(bit_arrange[16] - '0') }
+			else if bit_arrange == ['R', '8', 'G', '8'] { BitArrangement::RG_8 }
+			else if bit_arrange == ['R', '8', 'G', '8', 'B', '8', 'A', '8'] { BitArrangement::RGBA_8 }
+			else if bit_arrange == ['R', '1', '6', 'G', '1', '6', 'B', '1', '6', 'A', '1', '6'] { BitArrangement::RGBA_16 }
+			else { DevConfParsingResult::InvalidFormatError };
+		let element_type = if element_type == ['U', 'N', 'O', 'R', 'M'] { ElementType::UNORM }
+			else if element_type == ['S', 'N', 'O', 'R', 'M'] { ElementType::SNORM }
+			else if element_type == ['S', 'R', 'G', 'B'] { ElementType::SRGB }
+			else if element_type == ['S', 'F', 'L', 'O', 'A', 'T'] { ElementType::SFLOAT }
+			else { DevConfParsingResult::InvalidFormatError };
+		match bit_arrange
 		{
-			"R8G8" => match element_type.as_ref()
+			BitArrangement::RG_8 => match element_type
 			{
-				"UNORM" => DevConfParsingResult::Ok(VkFormat::R8G8_UNORM),
+				ElementType::UNORM => DevConfParsingResult::Ok(VkFormat::R8G8_UNORM),
 				_ => DevConfParsingResult::InvalidFormatError
 			},
-			"R8G8B8A8" => match element_type.as_ref()
+			BitArrangement::RGBA_8 => match element_type
 			{
-				"UNORM" => DevConfParsingResult::Ok(VkFormat::R8G8B8A8_UNORM),
-				"SRGB" => DevConfParsingResult::Ok(VkFormat::R8G8B8A8_SRGB),
+				ElementType::UNORM => DevConfParsingResult::Ok(VkFormat::R8G8B8A8_UNORM),
+				ElementType::SNORM => DevConfParsingResult::Ok(VkFormat::R8G8B8A8_SNORM),
+				ElementType::SRGB => DevConfParsingResult::Ok(VkFormat::R8G8B8A8_SRGB),
+				ElementType::SFLOAT => DevConfParsingResult::Ok(VkFormat::R8G8B8A8_SFLOAT)
+			},
+			BitArrangement::RGBA_16 => match element_type
+			{
+				ElementType::SFLOAT => DevConfParsingResult::Ok(VkFormat::R16G16B16A16_SFLOAT),
 				_ => DevConfParsingResult::InvalidFormatError
 			},
-			"R16G16B16A16" => match element_type.as_ref()
+			BitArrangement::BlockCompression(4) => match element_type
 			{
-				"SFLOAT" => DevConfParsingResult::Ok(VkFormat::R16G16B16A16_SFLOAT),
+				ElementType::UNORM => DevConfParsingResult::Ok(VkFormat::BC4_UNORM_BLOCK),
+				ElementType::SNORM => DevConfParsingResult::Ok(VkFormat::BC4_SNORM_BLOCK),
 				_ => DevConfParsingResult::InvalidFormatError
 			},
-			"BlockCompression4" => match element_type.as_ref()
+			BitArrangement::BlockCompression(5) => match element_type
 			{
-				"UNORM" => DevConfParsingResult::Ok(VkFormat::BC4_UNORM_BLOCK),
-				_ => DevConfParsingResult::InvalidFormatError
-			},
-			"BlockCompression5" => match element_type.as_ref()
-			{
-				"UNORM" => DevConfParsingResult::Ok(VkFormat::BC5_UNORM_BLOCK),
+				ElementType::UNORM => DevConfParsingResult::Ok(VkFormat::BC5_UNORM_BLOCK),
+				ElementType::SNORM => DevConfParsingResult::Ok(VkFormat::BC5_SNORM_BLOCK),
 				_ => DevConfParsingResult::InvalidFormatError
 			},
 			_ => DevConfParsingResult::InvalidFormatError
@@ -193,26 +212,20 @@ pub fn parse_image_usage_flags(args: &[char], agg_usage: VkImageUsageFlags, devi
 	if args.is_empty() { DevConfParsingResult::InvalidUsageFlagError("".to_owned()) }
 	else
 	{
-		let (usage_str, rest) = take_while(args, |c| not_ignored(c) && *c != '/');
-		let usage_str = usage_str.into_iter().cloned().collect::<String>();
-		let processing_rest = skip_spaces(rest);
-		let has_next = !processing_rest.is_empty() && processing_rest[0] == '/';
-		let current_parsed = match usage_str.as_ref()
-		{
-			"Sampled" => Ok((VK_IMAGE_USAGE_SAMPLED_BIT, false)),
-			"ColorAttachment" => Ok((VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT, false)),
-			"DeviceLocal" => Ok((0, true)),
-			_ => Err(())
-		};
+		let (usage_str, rest) = args.take_while(|c| not_ignored(c) && c != '/');
+		let rest = rest.skip_while(is_ignored);
+		let has_next = !rest.is_empty() && rest[0] == '/';
+		let current_parsed = if usage_str == ['S', 'a', 'm', 'p', 'l', 'e', 'd'] { Ok((VK_IMAGE_USAGE_SAMPLED_BIT, false)) }
+			else if usage_str == ['C', 'o', 'l', 'o', 'r', 'A', 't', 't', 'a', 'c', 'h', 'm', 'e', 'n', 't'] { Ok((VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT, false)) }
+			else if usage_str == ['D', 'e', 'v', 'i', 'c', 'e', 'L', 'o', 'c', 'a', 'l'] { Ok((0, true)) }
+			else { Err(()) };
+		
 		if let Ok((usage_bits, devlocal)) = current_parsed
 		{
-			if has_next
-			{
-				parse_image_usage_flags(skip_spaces(&processing_rest[1..]), agg_usage | usage_bits, device_local_flag | devlocal)
-			}
+			if has_next { parse_image_usage_flags(rest.drop(1).skip_while(is_ignored), agg_usage | usage_bits, device_local_flag | devlocal) }
 			else { DevConfParsingResult::Ok((agg_usage | usage_bits, device_local_flag | devlocal)) }
 		}
-		else { DevConfParsingResult::InvalidUsageFlagError(usage_str) }
+		else { DevConfParsingResult::InvalidUsageFlagError(usage_str.clone_as_string()) }
 	}
 }
 pub fn parse_image_extent(args: &[char], dims: ImageDimensions, screen_size: VkExtent2D) -> DevConfParsingResult<VkExtent3D>
@@ -223,55 +236,48 @@ pub fn parse_image_extent(args: &[char], dims: ImageDimensions, screen_size: VkE
 	};
 	DevConfParsingResult::from(match dims
 	{
-		ImageDimensions::Single => parse_arg(&take_while(args, not_ignored).0.into_iter().cloned().collect::<String>()).map(|val| VkExtent3D(val, 1, 1)),
+		ImageDimensions::Single => parse_arg(&args.take_while(not_ignored).0.clone_as_string()).map(|val| VkExtent3D(val, 1, 1)),
 		ImageDimensions::Double =>
 		{
-			let (wstr, rest) = take_while(args, not_ignored);
-			let (hstr, _) = take_while(skip_spaces(rest), not_ignored);
+			let (wstr, rest) = args.take_while(not_ignored);
+			let (hstr, _) = rest.skip_while(is_ignored).take_while(not_ignored);
 
-			parse_arg(&wstr.into_iter().cloned().collect::<String>()).and_then(|w| parse_arg(&hstr.into_iter().cloned().collect::<String>()).map(move |h| VkExtent3D(w, h, 1)))
+			parse_arg(&wstr.clone_as_string()).and_then(|w| parse_arg(&hstr.clone_as_string()).map(move |h| VkExtent3D(w, h, 1)))
 		},
 		ImageDimensions::Triple =>
 		{
-			let (wstr, rest) = take_while(args, not_ignored);
-			let (hstr, rest) = take_while(skip_spaces(rest), not_ignored);
-			let (dstr, _) = take_while(skip_spaces(rest), not_ignored);
+			let (wstr, rest) = args.take_while(not_ignored);
+			let (hstr, rest) = rest.skip_while(is_ignored).take_while(not_ignored);
+			let (dstr, _) = rest.skip_while(is_ignored).take_while(not_ignored);
 
-			parse_arg(&wstr.into_iter().cloned().collect::<String>()).and_then(|w| parse_arg(&hstr.into_iter().cloned().collect::<String>()).and_then(move |h|
-				parse_arg(&dstr.into_iter().cloned().collect::<String>()).map(move |d| VkExtent3D(w, h, d))))
+			parse_arg(&wstr.clone_as_string()).and_then(|w| parse_arg(&hstr.clone_as_string()).and_then(move |h|
+				parse_arg(&dstr.clone_as_string()).map(move |d| VkExtent3D(w, h, d))))
 		}
 	})
 }
 pub fn parse_filter_type(args: &[char]) -> DevConfParsingResult<(interlude::Filter, interlude::Filter)>
 {
-	let (str, rest) = take_while(args, not_ignored);
-	let str = str.into_iter().cloned().collect::<String>();
-	let min_str = take_while(skip_spaces(rest), not_ignored).0.into_iter().cloned().collect::<String>();
-	let mag_filter = match str.as_ref()
+	fn filter_type(slice: &[char]) -> Result<interlude::Filter, ()>
 	{
-		"Nearest" => DevConfParsingResult::Ok(interlude::Filter::Nearest),
-		"Linear" => DevConfParsingResult::Ok(interlude::Filter::Linear),
-		_ => DevConfParsingResult::InvalidFilterError(str)
-	};
-	let min_filter = if min_str.is_empty() { mag_filter.clone() } else
+		if slice == ['N', 'e', 'a', 'r', 'e', 's', 't'] { Ok(interlude::Filter::Nearest) }
+		else if slice == ['L', 'i', 'n', 'e', 'a', 'r'] { Ok(interlude::Filter::Linear) }
+		else { Err(()) }
+	}
+
+	let (magf_str, rest) = args.take_while(not_ignored);
+	let rest = rest.skip_while(is_ignored);
+	let magfilter = filter_type(magf_str);
+	let minf_str = if rest.is_empty() { magf_str } else { rest.take_while(not_ignored) };
+	let minfilter = filter_type(minf_str);
+
+	match magfilter
 	{
-		match min_str.as_ref()
+		Ok(mag) => match minfilter
 		{
-			"Nearest" => DevConfParsingResult::Ok(interlude::Filter::Nearest),
-			"Linear" => DevConfParsingResult::Ok(interlude::Filter::Linear),
-			_ => DevConfParsingResult::InvalidFilterError(min_str)
-		}
-	};
-	match mag_filter
-	{
-		DevConfParsingResult::Ok(mag) => match min_filter
-		{
-			DevConfParsingResult::Ok(min) => DevConfParsingResult::Ok((mag, min)),
-			DevConfParsingResult::InvalidFilterError(e) => DevConfParsingResult::InvalidFilterError(e),
-			_ => unreachable!()
+			Ok(min) => DevConfParsingResult::Ok((mag, min)),
+			_ => DevConfParsingResult::InvalidFilterError(minf_str.clone_as_string())
 		},
-		DevConfParsingResult::InvalidFilterError(e) => DevConfParsingResult::InvalidFilterError(e),
-		_ => unreachable!()
+		_ => DevConfParsingResult::InvalidFilterError(magf_str.clone_as_string())
 	}
 }
 pub fn parse_component_map(args: &[char]) -> DevConfParsingResult<interlude::ComponentMapping>

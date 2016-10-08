@@ -1,37 +1,13 @@
+// GPU Command Assembly Parser
 
 use std::string::String;
 use std::iter::FromIterator;
 use itertools::Itertools;
+use super::parsetools::ParseTools;
 
 #[derive(Debug)]
 pub enum LineParseError { SyntaxError }
 pub type LineParseResult<T> = Result<T, LineParseError>;
-
-pub trait ParseTools
-{
-	type Item;
-	fn skip_while<F>(self, pred: F) -> Self where F: Fn(Self::Item) -> bool;
-	fn take_while<F>(self, pred: F) -> (Self, Self) where F: Fn(Self::Item) -> bool;
-	fn clone_as_string(self) -> String;
-}
-impl<'a> ParseTools for &'a [char]
-{
-	type Item = char;
-	fn skip_while<F>(self, pred: F) -> Self where F: Fn(char) -> bool
-	{
-		if !self.is_empty() && pred(self[0]) { Self::skip_while(&self[1..], pred) } else { self }
-	}
-	fn take_while<F>(self, pred: F) -> (Self, Self) where F: Fn(char) -> bool
-	{
-		fn _impl<F>(input: &[char], counter: usize, pred: F) -> usize where F: Fn(char) -> bool
-		{
-			if !input.is_empty() && pred(input[0]) { _impl(&input[1..], counter + 1, pred) } else { counter }
-		}
-		let len = _impl(self, 0, pred);
-		(&self[..len], &self[len..])
-	}
-	fn clone_as_string(self) -> String { self.into_iter().cloned().collect() }
-}
 
 fn is_space(chr: char) -> bool { chr == ' ' || chr == '\t' }
 fn not_space(chr: char) -> bool { !is_space(chr) }
