@@ -244,8 +244,9 @@ pub fn parse_image_extent(args: &[char], dims: ImageDimensions, screen_size: VkE
 }
 pub fn parse_filter_type(args: &[char]) -> DevConfParsingResult<(interlude::Filter, interlude::Filter)>
 {
-	let str = take_while(args, not_ignored).0.into_iter().cloned().collect::<String>();
-	let min_str = take_while(skip_spaces(args), not_ignored).0.into_iter().cloned().collect::<String>();
+	let (str, rest) = take_while(args, not_ignored);
+	let str = str.into_iter().cloned().collect::<String>();
+	let min_str = take_while(skip_spaces(rest), not_ignored).0.into_iter().cloned().collect::<String>();
 	let mag_filter = match str.as_ref()
 	{
 		"Nearest" => DevConfParsingResult::Ok(interlude::Filter::Nearest),
@@ -404,9 +405,9 @@ mod test
 	}
 	#[test] fn parse_image_usage()
 	{
-		assert_eq!(parse_image_usage_flags(&"AsColorTexture / DeviceLocal".chars().collect::<Vec<_>>(), 0, false).unwrap(), (interlude::ImageUsagePresets::AsColorTexture, true));
-		assert_eq!(parse_image_usage_flags(&"AsColorTexture/DeviceLocal".chars().collect::<Vec<_>>(), 0, false).unwrap(), (interlude::ImageUsagePresets::AsColorTexture, true));
-		assert_eq!(parse_image_usage_flags(&"AsColorTexture".chars().collect::<Vec<_>>(), 0, false).unwrap(), (interlude::ImageUsagePresets::AsColorTexture, false));
+		assert_eq!(parse_image_usage_flags(&"Sampled / DeviceLocal".chars().collect::<Vec<_>>(), 0, false).unwrap(), (VK_IMAGE_USAGE_SAMPLED_BIT, true));
+		assert_eq!(parse_image_usage_flags(&"Sampled /DeviceLocal".chars().collect::<Vec<_>>(), 0, false).unwrap(), (VK_IMAGE_USAGE_SAMPLED_BIT, true));
+		assert_eq!(parse_image_usage_flags(&"Sampled".chars().collect::<Vec<_>>(), 0, false).unwrap(), (VK_IMAGE_USAGE_SAMPLED_BIT, false));
 		assert!(parse_image_usage_flags(&"AsColorTexture/".chars().collect::<Vec<_>>(), 0, false).is_invalid_usage_flag_err());
 	}
 	#[test] fn parse_image_extents()
@@ -421,22 +422,23 @@ mod test
 	}
 	#[test] fn parse_filter_types()
 	{
-		assert_eq!(parse_filter_type(&"Nearest ".chars().collect::<Vec<_>>()).unwrap(), VkFilter::Nearest);
-		assert_eq!(parse_filter_type(&"Linear".chars().collect::<Vec<_>>()).unwrap(), VkFilter::Linear);
+		assert_eq!(parse_filter_type(&"Nearest ".chars().collect::<Vec<_>>()).unwrap(), (interlude::Filter::Nearest, interlude::Filter::Nearest));
+		assert_eq!(parse_filter_type(&"Linear".chars().collect::<Vec<_>>()).unwrap(), (interlude::Filter::Linear, interlude::Filter::Linear));
+		assert_eq!(parse_filter_type(&"Linear Nearest".chars().collect::<Vec<_>>()).unwrap(), (interlude::Filter::Linear, interlude::Filter::Nearest));
 		assert!(parse_filter_type(&"Bilinear".chars().collect::<Vec<_>>()).is_invalid_filter_type_err());
 	}
 	#[test] fn parse_image_conf()
 	{
-		let testcase = "Image 2D\n- Format: R8G8B8A8 UNORM\n- Extent: $ScreenWidth $ScreenHeight\n- Usage: AsColorTexture\nImage 2D".to_owned();
+		let testcase = "Image 2D\n- Format: R8G8B8A8 UNORM\n- Extent: $ScreenWidth $ScreenHeight\n- Usage: Sampled / ColorAttachment\nImage 2D".to_owned();
 		let mut testcase_wrap = LazyLinesStr::new(&testcase);
 		let img = parse_configuration_image(&mut testcase_wrap, VkExtent2D(640, 480), VkFormat::R8G8B8A8_UNORM);
 		match img
 		{
-			DevConfImage::Dim2 { format, extent, usage, device_local } =>
+			DevConfImage::Dim2 { format, extent, usage, device_local, .. } =>
 			{
 				assert_eq!(format, VkFormat::R8G8B8A8_UNORM);
 				assert_eq!(extent, VkExtent2D(640, 480));
-				assert_eq!(usage, interlude::ImageUsagePresets::AsColorTexture);
+				assert_eq!(usage, VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT);
 				assert_eq!(device_local, false);
 			},
 			_ => unreachable!()
@@ -448,7 +450,7 @@ mod test
 		let testcase = "Sampler\n- Filter: Linear".to_owned();
 		let mut testcase_wrap = LazyLinesStr::new(&testcase);
 		let smp = parse_configuration_sampler(&mut testcase_wrap);
-		assert_eq!(smp.filter, VkFilter::Linear);
+		assert_eq!(smp.mag_filter, interlude::Filter::Linear);
 	}
 }
 
