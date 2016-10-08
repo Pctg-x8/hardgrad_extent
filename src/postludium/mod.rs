@@ -162,45 +162,48 @@ pub fn parse_image_format(args: &[char], screen_format: VkFormat) -> DevConfPars
 	else
 	{
 		let (element_type, _) = rest.skip_while(is_ignored).take_while(not_ignored);
-		let bit_arrange = if bit_arrange[..16] == ['B', 'l', 'o', 'c', 'k', 'C', 'o', 'm', 'p', 'r', 'e', 's', 's', 'i', 'o', 'n'] && ('0'..'7').contains(bit_arrange[16]) { BitArrangement::BlockCompression(bit_arrange[16] - '0') }
-			else if bit_arrange == ['R', '8', 'G', '8'] { BitArrangement::RG_8 }
-			else if bit_arrange == ['R', '8', 'G', '8', 'B', '8', 'A', '8'] { BitArrangement::RGBA_8 }
-			else if bit_arrange == ['R', '1', '6', 'G', '1', '6', 'B', '1', '6', 'A', '1', '6'] { BitArrangement::RGBA_16 }
-			else { DevConfParsingResult::InvalidFormatError };
-		let element_type = if element_type == ['U', 'N', 'O', 'R', 'M'] { ElementType::UNORM }
-			else if element_type == ['S', 'N', 'O', 'R', 'M'] { ElementType::SNORM }
-			else if element_type == ['S', 'R', 'G', 'B'] { ElementType::SRGB }
-			else if element_type == ['S', 'F', 'L', 'O', 'A', 'T'] { ElementType::SFLOAT }
-			else { DevConfParsingResult::InvalidFormatError };
+		let is_bc = bit_arrange.len() == 17
+			&& bit_arrange[..16] == ['B', 'l', 'o', 'c', 'k', 'C', 'o', 'm', 'p', 'r', 'e', 's', 's', 'i', 'o', 'n']
+			&& '0' <= bit_arrange[16] && bit_arrange[16] <= '7';
+		let bit_arrange = if is_bc { Ok(BitArrangement::BlockCompression((bit_arrange[16] as u32 - '0' as u32) as u8)) }
+			else if bit_arrange == ['R', '8', 'G', '8'] { Ok(BitArrangement::RG_8) }
+			else if bit_arrange == ['R', '8', 'G', '8', 'B', '8', 'A', '8'] { Ok(BitArrangement::RGBA_8) }
+			else if bit_arrange == ['R', '1', '6', 'G', '1', '6', 'B', '1', '6', 'A', '1', '6'] { Ok(BitArrangement::RGBA_16) }
+			else { Err(()) };
+		let element_type = if element_type == ['U', 'N', 'O', 'R', 'M'] { Ok(ElementType::UNORM) }
+			else if element_type == ['S', 'N', 'O', 'R', 'M'] { Ok(ElementType::SNORM) }
+			else if element_type == ['S', 'R', 'G', 'B'] { Ok(ElementType::SRGB) }
+			else if element_type == ['S', 'F', 'L', 'O', 'A', 'T'] { Ok(ElementType::SFLOAT) }
+			else { Err(()) };
 		match bit_arrange
 		{
-			BitArrangement::RG_8 => match element_type
+			Ok(BitArrangement::RG_8) => match element_type
 			{
-				ElementType::UNORM => DevConfParsingResult::Ok(VkFormat::R8G8_UNORM),
+				Ok(ElementType::UNORM) => DevConfParsingResult::Ok(VkFormat::R8G8_UNORM),
 				_ => DevConfParsingResult::InvalidFormatError
 			},
-			BitArrangement::RGBA_8 => match element_type
+			Ok(BitArrangement::RGBA_8) => match element_type
 			{
-				ElementType::UNORM => DevConfParsingResult::Ok(VkFormat::R8G8B8A8_UNORM),
-				ElementType::SNORM => DevConfParsingResult::Ok(VkFormat::R8G8B8A8_SNORM),
-				ElementType::SRGB => DevConfParsingResult::Ok(VkFormat::R8G8B8A8_SRGB),
-				ElementType::SFLOAT => DevConfParsingResult::Ok(VkFormat::R8G8B8A8_SFLOAT)
-			},
-			BitArrangement::RGBA_16 => match element_type
-			{
-				ElementType::SFLOAT => DevConfParsingResult::Ok(VkFormat::R16G16B16A16_SFLOAT),
+				Ok(ElementType::UNORM) => DevConfParsingResult::Ok(VkFormat::R8G8B8A8_UNORM),
+				Ok(ElementType::SNORM) => DevConfParsingResult::Ok(VkFormat::R8G8B8A8_SNORM),
+				Ok(ElementType::SRGB) => DevConfParsingResult::Ok(VkFormat::R8G8B8A8_SRGB),
 				_ => DevConfParsingResult::InvalidFormatError
 			},
-			BitArrangement::BlockCompression(4) => match element_type
+			Ok(BitArrangement::RGBA_16) => match element_type
 			{
-				ElementType::UNORM => DevConfParsingResult::Ok(VkFormat::BC4_UNORM_BLOCK),
-				ElementType::SNORM => DevConfParsingResult::Ok(VkFormat::BC4_SNORM_BLOCK),
+				Ok(ElementType::SFLOAT) => DevConfParsingResult::Ok(VkFormat::R16G16B16A16_SFLOAT),
 				_ => DevConfParsingResult::InvalidFormatError
 			},
-			BitArrangement::BlockCompression(5) => match element_type
+			Ok(BitArrangement::BlockCompression(4)) => match element_type
 			{
-				ElementType::UNORM => DevConfParsingResult::Ok(VkFormat::BC5_UNORM_BLOCK),
-				ElementType::SNORM => DevConfParsingResult::Ok(VkFormat::BC5_SNORM_BLOCK),
+				Ok(ElementType::UNORM) => DevConfParsingResult::Ok(VkFormat::BC4_UNORM_BLOCK),
+				Ok(ElementType::SNORM) => DevConfParsingResult::Ok(VkFormat::BC4_SNORM_BLOCK),
+				_ => DevConfParsingResult::InvalidFormatError
+			},
+			Ok(BitArrangement::BlockCompression(5)) => match element_type
+			{
+				Ok(ElementType::UNORM) => DevConfParsingResult::Ok(VkFormat::BC5_UNORM_BLOCK),
+				Ok(ElementType::SNORM) => DevConfParsingResult::Ok(VkFormat::BC5_SNORM_BLOCK),
 				_ => DevConfParsingResult::InvalidFormatError
 			},
 			_ => DevConfParsingResult::InvalidFormatError
@@ -267,7 +270,7 @@ pub fn parse_filter_type(args: &[char]) -> DevConfParsingResult<(interlude::Filt
 	let (magf_str, rest) = args.take_while(not_ignored);
 	let rest = rest.skip_while(is_ignored);
 	let magfilter = filter_type(magf_str);
-	let minf_str = if rest.is_empty() { magf_str } else { rest.take_while(not_ignored) };
+	let minf_str = if rest.is_empty() { magf_str } else { rest.take_while(not_ignored).0 };
 	let minfilter = filter_type(minf_str);
 
 	match magfilter
@@ -309,7 +312,7 @@ pub fn parse_configuration_image<LinesT: LazyLines>(lines_iter: &mut LinesT, scr
 	{
 		let (headline, ref conf_head) = lines_iter.pop().unwrap();
 		assert!(conf_head.starts_with("Image"));
-		let dim_str = conf_head.chars().skip(5).skip_while(is_ignored).take_while(not_ignored).collect::<String>();
+		let dim_str = conf_head.chars().skip(5).skip_while(|c| is_ignored(*c)).take_while(|c| not_ignored(*c)).collect::<String>();
 		let dim = match dim_str.as_ref()
 		{
 			"1D" => ImageDimensions::Single, "2D" => ImageDimensions::Double, "3D" => ImageDimensions::Triple, _ => DevConfParsingResult::UnsupportedDimension.unwrap_on_line(headline)
@@ -325,10 +328,11 @@ pub fn parse_configuration_image<LinesT: LazyLines>(lines_iter: &mut LinesT, scr
 		if pop_next { lines_iter.pop() } else { None }
 	}
 	{
-		let param_line = param.chars().skip(1).skip_while(is_ignored).collect::<Vec<_>>();
-		let (param_name, rest) = take_while(&param_line, |c| not_ignored(c) && *c != ':');
-		let param_value = skip_spaces(&skip_spaces(rest)[1..]);
-		match param_name.into_iter().cloned().collect::<String>().as_ref()
+		let param_line = param.chars().skip(1).skip_while(|&c| is_ignored(c)).collect::<Vec<_>>();
+		let (param_name, rest) = (&param_line).take_while(|c| not_ignored(c) && c != ':');
+		let param_value = rest.skip_while(is_ignored).drop(1).skip_while(is_ignored);
+		let param_name = param_name.clone_as_string();
+		match param_name.as_ref()
 		{
 			"Format" => format = Some(parse_image_format(param_value, screen_format).unwrap_on_line(paramline)),
 			"Extent" => extent = Some(parse_image_extent(param_value, dim, screen_size).unwrap_on_line(paramline)),
@@ -374,10 +378,11 @@ pub fn parse_configuration_sampler<LinesT: LazyLines>(lines_iter: &mut LinesT) -
 		if pop_next { lines_iter.pop() } else { None }
 	}
 	{
-		let param_line = param.chars().skip(1).skip_while(is_ignored).collect::<Vec<_>>();
-		let (param_name, rest) = take_while(&param_line, |c| not_ignored(c) && *c != ':');
-		let param_value = skip_spaces(&skip_spaces(rest)[1..]);
-		match param_name.into_iter().cloned().collect::<String>().as_ref()
+		let param_line = param.chars().skip(1).skip_while(|&c| is_ignored(c)).collect::<Vec<_>>();
+		let (param_name, rest) = (&param_line).take_while(|c| not_ignored(c) && c != ':');
+		let param_value = rest.skip_while(is_ignored).drop(1).skip_while(is_ignored);
+		let param_name = param_name.clone_as_string();
+		match param_name.as_ref()
 		{
 			"Filter" =>
 			{
