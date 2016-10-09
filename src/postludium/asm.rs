@@ -41,15 +41,15 @@ fn split_of_ident(ch: char) -> bool
 {
 	is_space(ch) || ch == '\n' || ch == '#' || ch == ',' || ch == '.'
 }
-pub fn parse_define(line: &[char]) -> ParseResult<(String, String)>
+pub fn parse_define(line: &[char]) -> ParseResult<(String, ExpressionNode)>
 {
 	if line[..7] != ['.', 'd', 'e', 'f', 'i', 'n', 'e'] { Err(ParseError::SyntaxError) }
 	else if line[7] != ' ' && line[7] != '\t' { Err(ParseError::SyntaxError) }
 	else
 	{
 		let (name, rest) = (&line[7..]).skip_while(is_space).take_until(is_space);
-		let value = rest.skip_while(is_space);
-		Ok((name.clone_as_string(), value.clone_as_string()))
+		let (value, _) = parse_expression(rest.skip_while(is_space));
+		value.map(|v| (name.clone_as_string(), v))
 	}
 }
 pub fn parse_primary_terms(input: &[char]) -> (ParseResult<ExpressionNode>, &[char])
@@ -173,12 +173,10 @@ pub fn parse_expression(input: &[char]) -> (ParseResult<ExpressionNode>, &[char]
 {
 	parse_bit_expr(input)
 }
-/*
-pub fn parse_command(input: &[char]) -> (ParseResult<CommandNode>, &[char])
+/*pub fn parse_command(input: &[char]) -> (ParseResult<CommandNode>, &[char])
 {
 
-}
-*/
+}*/
 
 #[cfg(test)]
 mod test
@@ -188,7 +186,7 @@ mod test
 	#[test] fn parse_define()
 	{
 		let testcase = ".define DEFAULT_BITS	2";
-		assert_eq!(super::parse_define(&testcase.chars().collect_vec()).unwrap(), ("DEFAULT_BITS".to_owned(), "2".to_owned()));
+		assert_eq!(super::parse_define(&testcase.chars().collect_vec()).unwrap(), ("DEFAULT_BITS".to_owned(), super::ExpressionNode::Number(2)));
 	}
 	#[test] fn parse_primary_terms()
 	{
