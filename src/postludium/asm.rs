@@ -94,54 +94,48 @@ pub fn parse_primary_terms(input: &[char]) -> (ParseResult<ExpressionNode>, &[ch
 		else { Ok(ExpressionNode::ConstantRef(cref_name)) }, rest)
 	}
 }
-pub fn parse_muldiv_expr(input: &[char]) -> (ParseResult<ExpressionNode>, &[char])
+macro_rules!CombinateBinaryExpressionParser
 {
-	let (lhs, rest) = parse_primary_terms(input);
-	match lhs
+	($name: ident = $parent_term: path { $($op: expr: $node_variant: path),* }) =>
 	{
-		Err(_) => (lhs, rest),
-		Ok(e) =>
+		pub fn $name(input: &[char]) -> (ParseResult<ExpressionNode>, &[char])
 		{
-			fn recursive<'a>(current_expr: ExpressionNode<'a>, rest: &'a [char])
-				-> (ParseResult<ExpressionNode<'a>>, &'a [char])
+			let (lhs, rest) = $parent_term(input);
+			match lhs
 			{
-				let rest = rest.skip_while(is_space);
-				if rest.is_front_of('*')
+				Err(_) => (lhs, rest),
+				Ok(e) =>
 				{
-					let rest = rest.drop(1).skip_while(is_space);
-					let (rhs, rest_r) = parse_primary_terms(rest);
-					match rhs
+					fn recursive<'a>(current_expr: ExpressionNode<'a>, rest: &'a [char])
+						-> (ParseResult<ExpressionNode<'a>>, &'a [char])
 					{
-						Err(_) => (rhs, rest_r),
-						Ok(er) => recursive(ExpressionNode::Mul(Box::new(current_expr), Box::new(er)), rest_r)
+						let rest = rest.skip_while(is_space);
+						$(
+							if rest.is_front_of($op)
+							{
+								let rest = rest.drop(1).skip_while(is_space);
+								let (rhs, rest_r) = $parent_term(rest);
+								match rhs
+								{
+									Err(_) => (rhs, rest_r),
+									Ok(er) => recursive($node_variant(Box::new(current_expr), Box::new(er)), rest_r)
+								}
+							}
+						)else*
+						else { (Ok(current_expr), rest) }
 					}
+					recursive(e, rest)
 				}
-				else if rest.is_front_of('/')
-				{
-					let rest = rest.drop(1).skip_while(is_space);
-					let (rhs, rest_r) = parse_primary_terms(rest);
-					match rhs
-					{
-						Err(_) => (rhs, rest_r),
-						Ok(er) => recursive(ExpressionNode::Div(Box::new(current_expr), Box::new(er)), rest_r)
-					}
-				}
-				else if rest.is_front_of('%')
-				{
-					let rest = rest.drop(1).skip_while(is_space);
-					let (rhs, rest_r) = parse_primary_terms(rest);
-					match rhs
-					{
-						Err(_) => (rhs, rest_r),
-						Ok(er) => recursive(ExpressionNode::Mod(Box::new(current_expr), Box::new(er)), rest_r)
-					}
-				}
-				else { (Ok(current_expr), rest) }
 			}
-			recursive(e, rest)
 		}
 	}
 }
+CombinateBinaryExpressionParser!(parse_muldiv_expr = parse_primary_terms
+{
+	'*': ExpressionNode::Mul,
+	'/': ExpressionNode::Div,
+	'%': ExpressionNode::Mod
+})
 pub fn parse_addsub_expr(input: &[char]) -> (ParseResult<ExpressionNode>, &[char])
 {
 	let (lhs, rest) = parse_muldiv_expr(input);
