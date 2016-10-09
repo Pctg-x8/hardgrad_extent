@@ -9,7 +9,7 @@ pub type ParseResult<T> = Result<T, ParseError>;
 #[derive(Debug, PartialEq)]
 pub enum ExpressionNode<'a>
 {
-	Number(u64), Floating(f64), ConstantRef(&'a [char]),
+	Number(u64), Floating(f64), ConstantRef(&'a [char]), InjectionArgRef(u64),
 	Negated(Box<ExpressionNode<'a>>),
 	Add(Box<ExpressionNode<'a>>, Box<ExpressionNode<'a>>),
 	Sub(Box<ExpressionNode<'a>>, Box<ExpressionNode<'a>>),
@@ -19,6 +19,21 @@ pub enum ExpressionNode<'a>
 	And(Box<ExpressionNode<'a>>, Box<ExpressionNode<'a>>),
 	Or(Box<ExpressionNode<'a>>, Box<ExpressionNode<'a>>),
 	Xor(Box<ExpressionNode<'a>>, Box<ExpressionNode<'a>>)
+}
+pub enum CommandNode<'a>
+{
+	// Graphics Binders //
+	BindPipelineState(ExpressionNode<'a>),
+	BindDescriptorSet(ExpressionNode<'a>, ExpressionNode<'a>, ExpressionNode<'a>),
+	BindVertexBuffer(ExpressionNode<'a>, ExpressionNode<'a>),
+	BindIndexBuffer(ExpressionNode<'a>),
+	PushConstant(ExpressionNode<'a>, ExpressionNode<'a>, ExpressionNode<'a>),
+	// Graphics Drawers //
+	Draw(ExpressionNode<'a>, ExpressionNode<'a>),
+	DrawIndexed(ExpressionNode<'a>, ExpressionNode<'a>),
+	// Memory Barriers //
+	BufferBarrier(ExpressionNode<'a>, ExpressionNode<'a>, ExpressionNode<'a>, ExpressionNode<'a>, ExpressionNode<'a>, ExpressionNode<'a>),
+	ImageBarrier(ExpressionNode<'a>, ExpressionNode<'a>, ExpressionNode<'a>, ExpressionNode<'a>, ExpressionNode<'a>, ExpressionNode<'a>, ExpressionNode<'a>, ExpressionNode<'a>)
 }
 
 fn is_space(chr: char) -> bool { chr == ' ' || chr == '\t' }
@@ -60,6 +75,18 @@ pub fn parse_primary_terms(input: &[char]) -> (ParseResult<ExpressionNode>, &[ch
 		let (inner, rest) = parse_primary_terms(input.drop(1).skip_while(is_space));
 		(inner.map(|ner| ExpressionNode::Negated(Box::new(ner))), rest)
 	}
+	else if input.is_front_of('@')
+	{
+		// Injection Argument Ref
+		let mut num_ipart = 0;
+		let mut rest = &input[1..];
+		while rest.is_front(|&c| '0' <= c && c <= '9')
+		{
+			num_ipart = num_ipart * 10 + rest[0].to_digit(10).unwrap() as u64;
+			rest = &rest[1..];
+		}
+		(Ok(ExpressionNode::InjectionArgRef(num_ipart)), rest)
+	}
 	else if input.is_front(|&c| '0' <= c && c <= '9')
 	{
 		// Numeric
@@ -67,7 +94,7 @@ pub fn parse_primary_terms(input: &[char]) -> (ParseResult<ExpressionNode>, &[ch
 		let mut rest = &input[1..];
 		while rest.is_front(|&c| '0' <= c && c <= '9')
 		{
-			num_ipart = num_ipart * 10 + (rest[0] as u64 - '0' as u64);
+			num_ipart = num_ipart * 10 + rest[0].to_digit(10).unwrap() as u64;
 			rest = &rest[1..];
 		}
 		(if rest.is_front_of('.')
@@ -146,6 +173,12 @@ pub fn parse_expression(input: &[char]) -> (ParseResult<ExpressionNode>, &[char]
 {
 	parse_bit_expr(input)
 }
+/*
+pub fn parse_command(input: &[char]) -> (ParseResult<CommandNode>, &[char])
+{
+
+}
+*/
 
 #[cfg(test)]
 mod test
@@ -172,6 +205,10 @@ mod test
 		let testcase_collect = testcase.chars().collect_vec();
 		let res = super::parse_primary_terms(&testcase_collect);
 		assert_eq!(res.0.unwrap(), super::ExpressionNode::Negated(Box::new(super::ExpressionNode::Number(6))));
+		let testcase = "@30";
+		let testcase_collect = testcase.chars().collect_vec();
+		let res = super::parse_primary_terms(&testcase_collect);
+		assert_eq!(res.0.unwrap(), super::ExpressionNode::InjectionArgRef(30));
 	}
 	#[test] fn parse_expression()
 	{
