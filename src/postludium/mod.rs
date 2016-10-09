@@ -4,8 +4,6 @@ use std;
 use interlude;
 use interlude::ffi::*;
 use interlude::traits::*;
-use std::rc::Rc;
-use std::path::Path;
 use std::fs::File;
 use std::io::prelude::*;
 use std::io::BufReader;
@@ -128,6 +126,14 @@ impl<T: Clone> DevConfParsingResult<T>
 	{
 		match self { &DevConfParsingResult::InvalidFilterError(_) => true, _ => false }
 	}
+	pub fn wrap(res: Result<T, ()>, errmap: Self) -> Self
+	{
+		match res
+		{
+			Ok(e) => DevConfParsingResult::Ok(e),
+			_ => errmap
+		}
+	}
 }
 impl<T: Clone> std::convert::From<Result<T, std::num::ParseIntError>> for DevConfParsingResult<T>
 {
@@ -143,72 +149,87 @@ pub enum ImageDimensions { Single, Double, Triple }
 fn is_ignored(c: char) -> bool { c == ' ' || c == '\t' }
 fn not_ignored(c: char) -> bool { !is_ignored(c) }
 
-enum BitArrangement
+lazy_static!
 {
-	RG_8, RGBA_8, RGBA_16, BlockCompression(u8)
+	static ref VAR_SCREEN_FORMAT: Vec<char>			= "$ScreenFormat".chars().collect();
+	static ref CSTR_BLOCKCOMPRESSION_4: Vec<char>	= "BlockCompression4".chars().collect();
+	static ref CSTR_BLOCKCOMPRESSION_5: Vec<char>	= "BlockCompression5".chars().collect();
+	static ref CSTR_R8G8: Vec<char>					= "R8G8".chars().collect();
+	static ref CSTR_R8G8B8A8: Vec<char>				= "R8G8B8A8".chars().collect();
+	static ref CSTR_R16G16B16A16: Vec<char>			= "R16G16B16A16".chars().collect();
+	static ref CSTR_UNORM: Vec<char>				= "UNORM".chars().collect();
+	static ref CSTR_SNORM: Vec<char>				= "SNORM".chars().collect();
+	static ref CSTR_SRGB: Vec<char>					= "SRGB".chars().collect();
+	static ref CSTR_SFLOAT: Vec<char>				= "SFLOAT".chars().collect();
 }
-enum ElementType
+macro_rules!PartialEqualityMatchMap
 {
-	UNORM, SNORM, SRGB, SFLOAT
+	($src: expr; { $target: expr => $st: expr }) =>
+	{
+		if $src == $target { Ok($st) } else { Err(()) }
+	};
+	($src: expr; { $ftarget: expr => $fst: expr, $($target: expr => $st: expr),* }) =>
+	{
+		if $src == $ftarget { Ok($fst) } $(else if $src == $target { Ok($st) })* else { Err(()) }
+	};
+	($src: expr; { $ftarget: expr => $fst: expr, $($target: expr => $st: expr),*; _ => $est: expr }) =>
+	{
+		if $src == $ftarget { $fst } $(else if $src == $target { $st })* else { $est }
+	}
 }
-
+macro_rules!PartialEqualityMatch
+{
+	($src: expr; { $ftarget: expr => $fst: stmt; _ => $est: stmt }) =>
+	{
+		if $src == $ftarget { $fst } else { $est }
+	};
+	($src: expr; { $ftarget: expr => $fst: stmt, $($target: expr => $st: stmt),*; _ => $est: stmt }) =>
+	{
+		if $src == $ftarget { $fst } $(else if $src == $target { $st })* else { $est }
+	}
+}
 pub fn parse_image_format(args: &[char], screen_format: VkFormat) -> DevConfParsingResult<VkFormat>
 {
 	let (bit_arrange, rest) = args.take_while(not_ignored);
-	if bit_arrange == ['$', 'S', 'c', 'r', 'e', 'e', 'n', 'F', 'o', 'r', 'm', 'a', 't']
-	{
-		DevConfParsingResult::Ok(screen_format)
-	}
+	if bit_arrange == &**VAR_SCREEN_FORMAT { DevConfParsingResult::Ok(screen_format) }
 	else
 	{
 		let (element_type, _) = rest.skip_while(is_ignored).take_while(not_ignored);
-		let is_bc = bit_arrange.len() == 17
-			&& bit_arrange[..16] == ['B', 'l', 'o', 'c', 'k', 'C', 'o', 'm', 'p', 'r', 'e', 's', 's', 'i', 'o', 'n']
-			&& '0' <= bit_arrange[16] && bit_arrange[16] <= '7';
-		let bit_arrange = if is_bc { Ok(BitArrangement::BlockCompression((bit_arrange[16] as u32 - '0' as u32) as u8)) }
-			else if bit_arrange == ['R', '8', 'G', '8'] { Ok(BitArrangement::RG_8) }
-			else if bit_arrange == ['R', '8', 'G', '8', 'B', '8', 'A', '8'] { Ok(BitArrangement::RGBA_8) }
-			else if bit_arrange == ['R', '1', '6', 'G', '1', '6', 'B', '1', '6', 'A', '1', '6'] { Ok(BitArrangement::RGBA_16) }
-			else { Err(()) };
-		let element_type = if element_type == ['U', 'N', 'O', 'R', 'M'] { Ok(ElementType::UNORM) }
-			else if element_type == ['S', 'N', 'O', 'R', 'M'] { Ok(ElementType::SNORM) }
-			else if element_type == ['S', 'R', 'G', 'B'] { Ok(ElementType::SRGB) }
-			else if element_type == ['S', 'F', 'L', 'O', 'A', 'T'] { Ok(ElementType::SFLOAT) }
-			else { Err(()) };
-		match bit_arrange
+		DevConfParsingResult::wrap(PartialEqualityMatchMap!(bit_arrange;
 		{
-			Ok(BitArrangement::RG_8) => match element_type
+			&**CSTR_R8G8 => PartialEqualityMatchMap!(element_type;
 			{
-				Ok(ElementType::UNORM) => DevConfParsingResult::Ok(VkFormat::R8G8_UNORM),
-				_ => DevConfParsingResult::InvalidFormatError
-			},
-			Ok(BitArrangement::RGBA_8) => match element_type
+				&**CSTR_UNORM => VkFormat::R8G8B8A8_UNORM
+			}),
+			&**CSTR_R8G8B8A8 => PartialEqualityMatchMap!(element_type;
 			{
-				Ok(ElementType::UNORM) => DevConfParsingResult::Ok(VkFormat::R8G8B8A8_UNORM),
-				Ok(ElementType::SNORM) => DevConfParsingResult::Ok(VkFormat::R8G8B8A8_SNORM),
-				Ok(ElementType::SRGB) => DevConfParsingResult::Ok(VkFormat::R8G8B8A8_SRGB),
-				_ => DevConfParsingResult::InvalidFormatError
-			},
-			Ok(BitArrangement::RGBA_16) => match element_type
+				&**CSTR_UNORM => VkFormat::R8G8B8A8_UNORM,
+				&**CSTR_SNORM => VkFormat::R8G8B8A8_SNORM,
+				&**CSTR_SRGB => VkFormat::R8G8B8A8_SRGB
+			}),
+			&**CSTR_R16G16B16A16 => PartialEqualityMatchMap!(element_type;
 			{
-				Ok(ElementType::SFLOAT) => DevConfParsingResult::Ok(VkFormat::R16G16B16A16_SFLOAT),
-				_ => DevConfParsingResult::InvalidFormatError
-			},
-			Ok(BitArrangement::BlockCompression(4)) => match element_type
+				&**CSTR_SFLOAT => VkFormat::R16G16B16A16_SFLOAT
+			}),
+			&**CSTR_BLOCKCOMPRESSION_4 => PartialEqualityMatchMap!(element_type;
 			{
-				Ok(ElementType::UNORM) => DevConfParsingResult::Ok(VkFormat::BC4_UNORM_BLOCK),
-				Ok(ElementType::SNORM) => DevConfParsingResult::Ok(VkFormat::BC4_SNORM_BLOCK),
-				_ => DevConfParsingResult::InvalidFormatError
-			},
-			Ok(BitArrangement::BlockCompression(5)) => match element_type
+				&**CSTR_UNORM => VkFormat::BC4_UNORM_BLOCK,
+				&**CSTR_SNORM => VkFormat::BC4_SNORM_BLOCK
+			}),
+			&**CSTR_BLOCKCOMPRESSION_5 => PartialEqualityMatchMap!(element_type;
 			{
-				Ok(ElementType::UNORM) => DevConfParsingResult::Ok(VkFormat::BC5_UNORM_BLOCK),
-				Ok(ElementType::SNORM) => DevConfParsingResult::Ok(VkFormat::BC5_SNORM_BLOCK),
-				_ => DevConfParsingResult::InvalidFormatError
-			},
-			_ => DevConfParsingResult::InvalidFormatError
-		}
+				&**CSTR_UNORM => VkFormat::BC5_UNORM_BLOCK,
+				&**CSTR_SNORM => VkFormat::BC5_SNORM_BLOCK
+			});
+			_ => Err(())
+		}), DevConfParsingResult::InvalidFormatError)
 	}
+}
+lazy_static!
+{
+	static ref CSTR_SAMPLED: Vec<char> = "Sampled".chars().collect();
+	static ref CSTR_COLORATTACHMENT: Vec<char> = "ColorAttachment".chars().collect();
+	static ref CSTR_DEVICELOCAL: Vec<char> = "DeviceLocal".chars().collect();
 }
 pub fn parse_image_usage_flags(args: &[char], agg_usage: VkImageUsageFlags, device_local_flag: bool) -> DevConfParsingResult<(VkImageUsageFlags, bool)>
 {
@@ -218,10 +239,12 @@ pub fn parse_image_usage_flags(args: &[char], agg_usage: VkImageUsageFlags, devi
 		let (usage_str, rest) = args.take_while(|c| not_ignored(c) && c != '/');
 		let rest = rest.skip_while(is_ignored);
 		let has_next = !rest.is_empty() && rest[0] == '/';
-		let current_parsed = if usage_str == ['S', 'a', 'm', 'p', 'l', 'e', 'd'] { Ok((VK_IMAGE_USAGE_SAMPLED_BIT, false)) }
-			else if usage_str == ['C', 'o', 'l', 'o', 'r', 'A', 't', 't', 'a', 'c', 'h', 'm', 'e', 'n', 't'] { Ok((VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT, false)) }
-			else if usage_str == ['D', 'e', 'v', 'i', 'c', 'e', 'L', 'o', 'c', 'a', 'l'] { Ok((0, true)) }
-			else { Err(()) };
+		let current_parsed = PartialEqualityMatchMap!(usage_str;
+		{
+			&**CSTR_SAMPLED => (VK_IMAGE_USAGE_SAMPLED_BIT, false),
+			&**CSTR_COLORATTACHMENT => (VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT, false),
+			&**CSTR_DEVICELOCAL => (0, true)
+		});
 		
 		if let Ok((usage_bits, devlocal)) = current_parsed
 		{
@@ -231,21 +254,27 @@ pub fn parse_image_usage_flags(args: &[char], agg_usage: VkImageUsageFlags, devi
 		else { DevConfParsingResult::InvalidUsageFlagError(usage_str.clone_as_string()) }
 	}
 }
+lazy_static!
+{
+	static ref VAR_SCREEN_WIDTH: Vec<char> = "$ScreenWidth".chars().collect();
+	static ref VAR_SCREEN_HEIGHT: Vec<char> = "$ScreenHeight".chars().collect();
+}
 pub fn parse_image_extent(args: &[char], dims: ImageDimensions, screen_size: VkExtent2D) -> DevConfParsingResult<VkExtent3D>
 {
-	let parse_arg = |input: &str| match input
+	let parse_arg = |input: &[char]| PartialEqualityMatchMap!(input;
 	{
-		"$ScreenWidth" => Ok(screen_size.0), "$ScreenHeight" => Ok(screen_size.1), _ => input.parse()
-	};
+		&**VAR_SCREEN_WIDTH => Ok(screen_size.0), &**VAR_SCREEN_HEIGHT => Ok(screen_size.1);
+		_ => input.clone_as_string().parse()
+	});
 	DevConfParsingResult::from(match dims
 	{
-		ImageDimensions::Single => parse_arg(&args.take_while(not_ignored).0.clone_as_string()).map(|val| VkExtent3D(val, 1, 1)),
+		ImageDimensions::Single => parse_arg(args.take_while(not_ignored).0).map(|val| VkExtent3D(val, 1, 1)),
 		ImageDimensions::Double =>
 		{
 			let (wstr, rest) = args.take_while(not_ignored);
 			let (hstr, _) = rest.skip_while(is_ignored).take_while(not_ignored);
 
-			parse_arg(&wstr.clone_as_string()).and_then(|w| parse_arg(&hstr.clone_as_string()).map(move |h| VkExtent3D(w, h, 1)))
+			parse_arg(wstr).and_then(|w| parse_arg(hstr).map(move |h| VkExtent3D(w, h, 1)))
 		},
 		ImageDimensions::Triple =>
 		{
@@ -253,18 +282,23 @@ pub fn parse_image_extent(args: &[char], dims: ImageDimensions, screen_size: VkE
 			let (hstr, rest) = rest.skip_while(is_ignored).take_while(not_ignored);
 			let (dstr, _) = rest.skip_while(is_ignored).take_while(not_ignored);
 
-			parse_arg(&wstr.clone_as_string()).and_then(|w| parse_arg(&hstr.clone_as_string()).and_then(move |h|
-				parse_arg(&dstr.clone_as_string()).map(move |d| VkExtent3D(w, h, d))))
+			parse_arg(wstr).and_then(|w| parse_arg(hstr).and_then(move |h| parse_arg(dstr).map(move |d| VkExtent3D(w, h, d))))
 		}
 	})
+}
+lazy_static!
+{
+	static ref CSTR_NEAREST: Vec<char> = "Nearest".chars().collect();
+	static ref CSTR_LINEAR: Vec<char> = "Linear".chars().collect();
 }
 pub fn parse_filter_type(args: &[char]) -> DevConfParsingResult<(interlude::Filter, interlude::Filter)>
 {
 	fn filter_type(slice: &[char]) -> Result<interlude::Filter, ()>
 	{
-		if slice == ['N', 'e', 'a', 'r', 'e', 's', 't'] { Ok(interlude::Filter::Nearest) }
-		else if slice == ['L', 'i', 'n', 'e', 'a', 'r'] { Ok(interlude::Filter::Linear) }
-		else { Err(()) }
+		PartialEqualityMatchMap!(slice;
+		{
+			&**CSTR_NEAREST => interlude::Filter::Nearest, &**CSTR_LINEAR => interlude::Filter::Linear
+		})
 	}
 
 	let (magf_str, rest) = args.take_while(not_ignored);
@@ -306,6 +340,13 @@ pub fn parse_component_map(args: &[char]) -> DevConfParsingResult<interlude::Com
 		_ => DevConfParsingResult::InvalidSwizzle
 	}
 }
+lazy_static!
+{
+	static ref CSTR_FORMAT: Vec<char> = "Format".chars().collect();
+	static ref CSTR_EXTENT: Vec<char> = "Extent".chars().collect();
+	static ref CSTR_USAGE: Vec<char> = "Usage".chars().collect();
+	static ref CSTR_COMPONENTMAP: Vec<char> = "ComponentMap".chars().collect();
+}
 pub fn parse_configuration_image<LinesT: LazyLines>(lines_iter: &mut LinesT, screen_size: VkExtent2D, screen_format: VkFormat) -> DevConfImage
 {
 	let (headline, dim) =
@@ -331,15 +372,14 @@ pub fn parse_configuration_image<LinesT: LazyLines>(lines_iter: &mut LinesT, scr
 		let param_line = param.chars().skip(1).skip_while(|&c| is_ignored(c)).collect::<Vec<_>>();
 		let (param_name, rest) = (&param_line).take_while(|c| not_ignored(c) && c != ':');
 		let param_value = rest.skip_while(is_ignored).drop(1).skip_while(is_ignored);
-		let param_name = param_name.clone_as_string();
-		match param_name.as_ref()
+		PartialEqualityMatch!(param_name;
 		{
-			"Format" => format = Some(parse_image_format(param_value, screen_format).unwrap_on_line(paramline)),
-			"Extent" => extent = Some(parse_image_extent(param_value, dim, screen_size).unwrap_on_line(paramline)),
-			"Usage" => usage = Some(parse_image_usage_flags(param_value, 0, false).unwrap_on_line(paramline)),
-			"ComponentMap" => component_map = parse_component_map(param_value).unwrap_on_line(paramline),
+			&**CSTR_FORMAT => format = Some(parse_image_format(param_value, screen_format).unwrap_on_line(paramline)),
+			&**CSTR_EXTENT => extent = Some(parse_image_extent(param_value, dim, screen_size).unwrap_on_line(paramline)),
+			&**CSTR_USAGE => usage = Some(parse_image_usage_flags(param_value, 0, false).unwrap_on_line(paramline)),
+			&**CSTR_COMPONENTMAP => component_map = parse_component_map(param_value).unwrap_on_line(paramline);
 			_ => DevConfParsingResult::UnsupportedParameter("Image".to_owned()).unwrap_on_line(paramline)
-		}
+		});
 	}
 	let (usage, devlocal) = usage.expect(&format!("Usage parameter is not presented at line {}", headline));
 	match dim
@@ -364,6 +404,10 @@ pub fn parse_configuration_image<LinesT: LazyLines>(lines_iter: &mut LinesT, scr
 		}
 	}
 }
+lazy_static!
+{
+	static ref CSTR_FILTER: Vec<char> = "Filter".chars().collect();
+}
 pub fn parse_configuration_sampler<LinesT: LazyLines>(lines_iter: &mut LinesT) -> DevConfSampler
 {
 	{
@@ -381,16 +425,11 @@ pub fn parse_configuration_sampler<LinesT: LazyLines>(lines_iter: &mut LinesT) -
 		let param_line = param.chars().skip(1).skip_while(|&c| is_ignored(c)).collect::<Vec<_>>();
 		let (param_name, rest) = (&param_line).take_while(|c| not_ignored(c) && c != ':');
 		let param_value = rest.skip_while(is_ignored).drop(1).skip_while(is_ignored);
-		let param_name = param_name.clone_as_string();
-		match param_name.as_ref()
+		PartialEqualityMatch!(param_name;
 		{
-			"Filter" =>
-			{
-				let (magf, minf) = parse_filter_type(param_value).unwrap_on_line(paramline);
-				mag_filter = magf; min_filter = minf;
-			},
+			&**CSTR_FILTER => { let (magf, minf) = parse_filter_type(param_value).unwrap_on_line(paramline); mag_filter = magf; min_filter = minf; };
 			_ => DevConfParsingResult::UnsupportedParameter("Sampler".to_owned()).unwrap_on_line(paramline)
-		}
+		});
 	}
 
 	DevConfSampler

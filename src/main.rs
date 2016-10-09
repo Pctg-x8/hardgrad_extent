@@ -7,6 +7,7 @@ extern crate glob;
 extern crate rayon;
 #[macro_use] extern crate log;
 extern crate itertools;
+#[macro_use] extern crate lazy_static;
 
 #[macro_use] extern crate interlude;
 extern crate texture_compression;

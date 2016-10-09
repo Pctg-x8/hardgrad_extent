@@ -13,6 +13,7 @@ thread-scoped = "1.0.1"
 glob = "*"
 rayon = "0.4.0"
 itertools = "0.5.1"
+lazy_static = "0.2.1"
 
 interlude = { path = "./interlude" }
 texture_compression = { path = "./texture_compression" }

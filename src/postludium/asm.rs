@@ -1,8 +1,6 @@
 // GPU Command Assembly Parser
 
 use std::string::String;
-use std::iter::FromIterator;
-use itertools::Itertools;
 use super::parsetools::ParseTools;
 
 #[derive(Debug)]

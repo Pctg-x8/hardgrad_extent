@@ -1,5 +1,7 @@
 // ParseTools for reference to slice of char
 
+#![allow(unsized_in_tuple)]
+
 pub trait ParseTools
 {
 	type Item;
