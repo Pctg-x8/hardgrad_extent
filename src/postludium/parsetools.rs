@@ -7,8 +7,13 @@ pub trait ParseTools
 	type Item;
 	fn skip_while<F>(self, pred: F) -> Self where F: Fn(Self::Item) -> bool;
 	fn take_while<F>(self, pred: F) -> (Self, Self) where F: Fn(Self::Item) -> bool;
+	fn is_front_of(&self, t: Self::Item) -> bool;
+	fn is_front<F>(&self, pred: F) -> bool where F: FnOnce(&Self::Item) -> bool;
 	fn drop(self, count: usize) -> Self;
 	fn clone_as_string(self) -> String;
+
+	fn take_until<F>(self, pred: F) -> (Self, Self) where F: Fn(Self::Item) -> bool;
+	fn skip_until<F>(self, pred: F) -> Self where F: Fn(Self::Item) -> bool;
 }
 impl<'a> ParseTools for &'a [char]
 {
@@ -27,5 +32,10 @@ impl<'a> ParseTools for &'a [char]
 		(&self[..len], &self[len..])
 	}
 	fn drop(self, count: usize) -> Self { &self[count..] }
+	fn is_front_of(&self, t: char) -> bool { !self.is_empty() && self[0] == t }
+	fn is_front<F>(&self, pred: F) -> bool where F: FnOnce(&Self::Item) -> bool { !self.is_empty() && pred(&self[0]) }
 	fn clone_as_string(self) -> String { self.into_iter().cloned().collect() }
+
+	fn take_until<F>(self, pred: F) -> (Self, Self) where F: Fn(Self::Item) -> bool { self.take_while(|x| !pred(x)) }
+	fn skip_until<F>(self, pred: F) -> Self where F: Fn(Self::Item) -> bool { self.skip_while(|x| !pred(x)) }
 }
