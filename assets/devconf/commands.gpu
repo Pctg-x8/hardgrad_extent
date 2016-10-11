@@ -49,13 +49,13 @@ push_wire_colors:
 	Push	0, 3, @3
 
 .type primary
-.fb_renderpass PRE
+.sc_renderpass PRE
 prepare_for_render:
 	# ImgBarrier	SrcPipelineStg, DstPipelineStg, ImageResource, ImageSubresource, SrcMemoryUsage, DstMemoryUsage, SrcImageLayout, DstImageLayout
 	ImgBarrier	TOP, COLOR_ATTACHMENT_OUTPUT, FRAMEBUFFER_IMAGE, IMAGE_SUBRESOURCE_COLOR, MEMORY_READ, COLOR_ATTACHMENT_WRITE, PRESENT_SRC, COLOR_ATTACHMENT_OPT
 
 .type primary
-.fb_renderpass 0
+.sc_renderpass 0
 render_to_buffer:
 	BindVB	0, 0				# Bind Vertex Buffer No.0 at Slot 0
 	BindDS	0, 0, GLOBAL_UNIFORM_DS
@@ -93,7 +93,7 @@ render_to_buffer:
 	Draw	MAX_LBPARTICLE_GROUPS, 1
 
 .type primary
-.fb_renderpass 1
+.sc_renderpass 1
 smaa_edge_detection:
 	BindPS	PS_SMAA_EDGEDETECT
 	BindDS	1, 1, SMAA_EDGEDETECT_INPUTS_DS
@@ -101,14 +101,14 @@ smaa_edge_detection:
 	Draw	4, 1
 
 .type primary
-.fb_renderpass 2
+.sc_renderpass 2
 smaa_blend_weight_calc:
 	BindPS	PS_SMAA_BLENDWEIGHT_CALC
 	BindDS	2, 1, SMAA_BLENDWEIGHT_INPUTS_DS
 	Draw	4, 1
 
 .type primary
-.fb_renderpass 3
+.sc_renderpass 3
 smaa_combine:
 	BindPS	PS_SMAA_COMBINE
 	BindDS	3, 1, SMAA_COMBINE_INPUTS_DS

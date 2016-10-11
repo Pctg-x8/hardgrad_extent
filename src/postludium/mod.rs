@@ -14,59 +14,8 @@ pub mod asm;
 pub use self::asm::*;
 mod parsetools;
 use self::parsetools::ParseTools;
-
-pub trait LazyLines
-{
-	fn next(&mut self) -> Option<&(usize, String)>;
-	fn pop(&mut self) -> Option<(usize, String)>;
-}
-#[allow(dead_code)]
-pub struct LazyLinesStr<'a>
-{
-	iter: std::iter::Enumerate<std::str::Lines<'a>>, cache: Option<(usize, String)>
-}
-impl<'a> LazyLinesStr<'a>
-{
-	#[allow(dead_code)]
-	pub fn new(source: &'a String) -> Self
-	{
-		LazyLinesStr { iter: source.lines().enumerate(), cache: None }
-	}
-}
-impl<'a> LazyLines for LazyLinesStr<'a>
-{
-	fn next(&mut self) -> Option<&(usize, String)>
-	{
-		if self.cache.is_none() { self.cache = self.iter.next().map(|(u, s)| (u + 1, s.to_owned())); }
-		self.cache.as_ref()
-	}
-	fn pop(&mut self) -> Option<(usize, String)>
-	{
-		if self.cache.is_none() { self.iter.next().map(|(u, s)| (u + 1, s.to_owned())) }
-		else { std::mem::replace(&mut self.cache, None) }
-	}
-}
-pub struct LazyLinesBR
-{
-	iter: std::iter::Enumerate<std::io::Lines<BufReader<File>>>, cache: Option<(usize, String)>
-}
-impl LazyLinesBR
-{
-	fn new(reader: BufReader<File>) -> Self { LazyLinesBR { iter: reader.lines().enumerate(), cache: None } }
-}
-impl LazyLines for LazyLinesBR
-{
-	fn next(&mut self) -> Option<&(usize, String)>
-	{
-		if self.cache.is_none() { self.cache = self.iter.next().map(|(u, s)| (u + 1, s.unwrap())); }
-		self.cache.as_ref()
-	}
-	fn pop(&mut self) -> Option<(usize, String)>
-	{
-		if self.cache.is_none() { self.iter.next().map(|(u, s)| (u + 1, s.unwrap())) }
-		else { std::mem::replace(&mut self.cache, None) }
-	}
-}
+mod lazylines;
+use self::lazylines::*;
 
 #[derive(Clone)]
 pub enum DevConfParsingResult<T: Clone>
@@ -444,6 +393,7 @@ mod test
 	use interlude;
 	use interlude::ffi::*;
 	use super::*;
+	use super::lazylines::*;
 
 	#[test] fn parse_image_formats()
 	{
