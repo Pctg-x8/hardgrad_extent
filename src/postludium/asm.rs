@@ -10,7 +10,7 @@ use itertools::Itertools;
 pub enum ParseError
 {
 	SyntaxError, UnclosedDelimiter, UnknownCommand, MissingArgument,
-	UnknownCommandType, UnknownLabelAttribute
+	UnknownCommandType, UnknownLabelAttribute, InternalValidationFailed
 }
 pub type ParseResult<T> = Result<T, ParseError>;
 trait WithLine<T>
@@ -123,7 +123,13 @@ pub enum CommandNode<'a>
 	InjectCommands(&'a [char], Vec<ExpressionNode<'a>>)
 }
 #[derive(Debug, PartialEq)]
-pub enum LabelType { Primary, Secondary, Injected }
+pub enum InternalLabelType { Primary, Secondary, Injected }
+#[derive(Debug, PartialEq)]
+pub enum LabelType<'a> { Primary, Secondary, Injected(ExpressionNode<'a>) }
+impl<'a> LabelType<'a>
+{
+	fn is_injected(&self) -> bool { match self { &LabelType::Injected(_) => true, _ => false } }
+}
 #[derive(PartialEq, Debug)]
 pub enum RenderedSubpass<'a> { Pre, Post, Sub(ExpressionNode<'a>) }
 #[derive(PartialEq, Debug)]
@@ -135,7 +141,12 @@ pub enum LabelRenderedFB<'a>
 #[derive(Debug, PartialEq)]
 pub struct LabelAttribute<'a>
 {
-	cmdtype: LabelType, rendered_framebuffer: LabelRenderedFB<'a>, is_transfer: bool
+	cmdtype: LabelType<'a>, rendered_framebuffer: LabelRenderedFB<'a>, is_transfer: bool
+}
+#[derive(Debug, PartialEq)]
+pub enum LabelAttributes<'a>
+{
+	CommandType(InternalLabelType), InjectedArgs(ExpressionNode<'a>), RenderDesc(LabelRenderedFB<'a>), TransferMark
 }
 
 fn is_space(chr: char) -> bool { chr == ' ' || chr == '\t' }
@@ -351,47 +362,88 @@ pub fn parse_command(input: &[char]) -> ParserChainData<CommandNode>
 		_ => ParserChainData(Err(ParseError::UnknownCommand), rest)
 	}
 }
-pub fn parse_label<'a, LinesT: LazyLines + 'a>(mut lines: LinesT) -> LabelAttribute<'a>
+pub fn parse_label_attributes(input: &[char]) -> ParseResult<LabelAttributes>
 {
-	let (mut cmd_type, mut rendered_fb, mut is_transfer) = (LabelType::Primary, None, false);
-	while if let Some(&(_, ref l)) = lines.next() { l.starts_with(".") } else { false }
+	let (attr, rest) = input.take_until(is_space);
+	let rest = rest.skip_while(is_space);
+	match attr.clone_as_string().to_uppercase().as_ref()
 	{
-		let (n, l) = lines.pop().unwrap();
-		let chars = l.chars().skip(1).collect_vec();
-		let (attr_name, rest) = (&chars).take_until(is_space);
-		let rest = rest.skip_while(is_space);
-		match attr_name.clone_as_string().to_uppercase().as_ref()
+		".TYPE" => match rest.take_until(is_space).0.clone_as_string().to_uppercase().as_ref()
 		{
-			"TYPE" => cmd_type = match rest.take_until(is_space).0.clone_as_string().to_uppercase().as_ref()
+			"PRIMARY" | "PRI" | "A" => Ok(InternalLabelType::Primary),
+			"SECONDARY" | "SEC" | "B" => Ok(InternalLabelType::Secondary),
+			"INJECTED" | "INJ" | "I" => Ok(InternalLabelType::Injected),
+			_ => Err(ParseError::UnknownCommandType)
+		}.map(LabelAttributes::CommandType),
+		".SC_RENDERPASS" => match parse_expression(rest).0
+		{
+			Ok(ExpressionNode::ConstantRef(e)) if e.clone_as_string().to_uppercase() == "PRE" => Ok(RenderedSubpass::Pre),
+			Ok(ExpressionNode::ConstantRef(e)) if e.clone_as_string().to_uppercase() == "POST" => Ok(RenderedSubpass::Post),
+			Ok(e) => Ok(RenderedSubpass::Sub(e)),
+			Err(e) => Err(e)
+		}.map(LabelRenderedFB::Swapchain).map(LabelAttributes::RenderDesc),
+		".RENDERPASS" => match parse_expression(rest)
+			.action(|fbi, rest| parse_expression(rest).reduce(move |si| (fbi, si)))
+		{
+			ParserChainData(Ok((fb_index, subpass_index)), _) => Ok(LabelRenderedFB::Backbuffer(fb_index, match subpass_index
 			{
-				"PRIMARY" | "PRI" | "A" => Ok(LabelType::Primary),
-				"SECONDARY" | "SEC" | "B" => Ok(LabelType::Secondary),
-				"INJECTED" | "INJ" | "I" => Ok(LabelType::Injected),
-				_ => Err(ParseError::UnknownCommandType)
-			}.unwrap_on_line(n),
-			"SC_RENDERPASS" => rendered_fb = Some(LabelRenderedFB::Swapchain(match parse_expression(rest).0
-			{
-				Ok(ExpressionNode::ConstantRef(e)) if e.clone_as_string().to_uppercase() == "PRE" => Ok(RenderedSubpass::Pre),
-				Ok(ExpressionNode::ConstantRef(e)) if e.clone_as_string().to_uppercase() == "POST" => Ok(RenderedSubpass::Post),
-				Ok(e) => Ok(RenderedSubpass::Sub(e)),
-				Err(e) => Err(e)
-			}.unwrap_on_line(n))),
-			"RENDERPASS" => rendered_fb = Some(match parse_expression(rest)
-				.action(|fbi, rest| parse_expression(rest).reduce(move |si| (fbi, si)))
-			{
-				ParserChainData(Ok((fb_index, subpass_index)), _) => Ok(LabelRenderedFB::Backbuffer(fb_index, match subpass_index
-				{
-					ExpressionNode::ConstantRef(e) if e.clone_as_string().to_uppercase() == "PRE" => RenderedSubpass::Pre,
-					ExpressionNode::ConstantRef(e) if e.clone_as_string().to_uppercase() == "POST" => RenderedSubpass::Post,
-					e => RenderedSubpass::Sub(e),
-				})),
-				ParserChainData(Err(e), _) => Err(e)
-			}.unwrap_on_line(n)),
-			"TRANSFER" => is_transfer = true,
-			_ => Err(ParseError::UnknownLabelAttribute).unwrap_on_line(n)
-		}
+				ExpressionNode::ConstantRef(e) if e.clone_as_string().to_uppercase() == "PRE" => RenderedSubpass::Pre,
+				ExpressionNode::ConstantRef(e) if e.clone_as_string().to_uppercase() == "POST" => RenderedSubpass::Post,
+				e => RenderedSubpass::Sub(e),
+			})),
+			ParserChainData(Err(e), _) => Err(e)
+		}.map(LabelAttributes::RenderDesc),
+		".TRANSFER" => Ok(LabelAttributes::TransferMark),
+		".ARGS" => parse_expression(rest).reduce(LabelAttributes::InjectedArgs).0,
+		_ => Err(ParseError::UnknownLabelAttribute)
 	}
-	unimplemented!();
+}
+#[repr(u8)] #[derive(PartialEq)]
+enum NextInstructionParsingLabel { Attribute, Ignored }
+pub fn parse_lines<'a>(mut lines: LazyLinesChars<'a>)
+{
+	let (mut cmd_type, mut rendered_fb, mut is_transfer, mut injection_args)
+		= (InternalLabelType::Primary, None, false, ExpressionNode::Number(0));
+	while let Some(next) = if let Some(&(_, l)) = lines.next()
+	{
+		if l.is_front_of('.') { Some(NextInstructionParsingLabel::Attribute) }
+		else if l.skip_while(is_space).is_front_of('#') { Some(NextInstructionParsingLabel::Ignored) }
+		else if l.skip_while(is_space).is_empty() { Some(NextInstructionParsingLabel::Ignored) }
+		else { None }
+	} else { None }
+	{
+		if next == NextInstructionParsingLabel::Attribute
+		{
+			let (n, chars) = lines.pop().unwrap();
+			match parse_label_attributes(chars).unwrap_on_line(n)
+			{
+				LabelAttributes::CommandType(t) => cmd_type = t,
+				LabelAttributes::InjectedArgs(e) => injection_args = e,
+				LabelAttributes::RenderDesc(rd) => rendered_fb = Some(rd),
+				LabelAttributes::TransferMark => is_transfer = true
+			}
+		}
+		else { lines.pop().unwrap(); }
+	}
+
+	if let Some((labeline, labelchars)) = lines.pop()
+	{
+		// validation attributes
+		let command_type = match cmd_type
+		{
+			InternalLabelType::Primary => LabelType::Primary,
+			InternalLabelType::Secondary => LabelType::Secondary,
+			InternalLabelType::Injected => LabelType::Injected(injection_args)
+		};
+		// one of following attributes have to specified
+		if command_type.is_injected() == rendered_fb.is_some() && rendered_fb.is_some() == is_transfer
+		{
+			panic!("{:?} at line {}", ParseError::InternalValidationFailed, labeline);
+		}
+		println!("attributes for label: {:?} {:?} {:?}", command_type, rendered_fb, is_transfer);
+
+		unimplemented!();
+	}
 }
 
 #[cfg(test)]
@@ -471,16 +523,18 @@ mod test
 			]
 		));
 	}
-	#[test] fn parse_label()
+	#[test] fn parse_lines()
 	{
-		let testcase = ".type injected
+		let testcase = "# PushConstant Macros for Wired Renderer
+.type injected
 .args 4
 push_wire_colors:
 	push	0, 0, @0
 	push	0, 1, @1
 	push	0, 2, @2
-	push	0, 3, @3".to_owned();
-		let testcase_lines = LazyLinesStr::new(&testcase);
-		let res = super::parse_label(testcase_lines);
+	push	0, 3, @3";
+		let testcase_chars = testcase.chars().collect_vec();
+		let testcase_lines = LazyLinesChars::new(&testcase_chars);
+		let res = super::parse_lines(testcase_lines);
 	}
 }
