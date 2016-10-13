@@ -5,6 +5,7 @@ use std::string::String;
 use super::parsetools::ParseTools;
 use super::lazylines::*;
 use itertools::Itertools;
+use std::collections::{HashMap, LinkedList};
 
 #[derive(Debug)]
 pub enum ParseError
@@ -90,7 +91,7 @@ impl<'a, T> std::convert::From<(ParseResult<T>, &'a [char])> for ParserChainData
 	}
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum ExpressionNode<'a>
 {
 	Number(u64), Floating(f64), ConstantRef(&'a [char]), InjectionArgRef(u64),
@@ -104,7 +105,7 @@ pub enum ExpressionNode<'a>
 	Or(Box<ExpressionNode<'a>>, Box<ExpressionNode<'a>>),
 	Xor(Box<ExpressionNode<'a>>, Box<ExpressionNode<'a>>)
 }
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum CommandNode<'a>
 {
 	// Graphics Binders //
@@ -124,35 +125,45 @@ pub enum CommandNode<'a>
 }
 #[derive(Debug, PartialEq)]
 pub enum InternalLabelType { Primary, Secondary, Injected }
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum LabelType<'a> { Primary, Secondary, Injected(ExpressionNode<'a>) }
 impl<'a> LabelType<'a>
 {
 	fn is_injected(&self) -> bool { match self { &LabelType::Injected(_) => true, _ => false } }
 }
-#[derive(PartialEq, Debug)]
+#[derive(PartialEq, Debug, Clone)]
 pub enum RenderedSubpass<'a> { Pre, Post, Sub(ExpressionNode<'a>) }
-#[derive(PartialEq, Debug)]
+#[derive(PartialEq, Debug, Clone)]
 pub enum LabelRenderedFB<'a>
 {
 	Swapchain(RenderedSubpass<'a>),
 	Backbuffer(ExpressionNode<'a>, RenderedSubpass<'a>)
 }
-#[derive(Debug, PartialEq)]
-pub struct LabelAttribute<'a>
+#[derive(Debug, PartialEq, Clone)]
+pub enum LabelAttribute<'a>
 {
-	cmdtype: LabelType<'a>, rendered_framebuffer: LabelRenderedFB<'a>, is_transfer: bool
+	Graphics(LabelType<'a>, LabelRenderedFB<'a>), Transfer(LabelType<'a>), Injected(ExpressionNode<'a>)
 }
 #[derive(Debug, PartialEq)]
 pub enum LabelAttributes<'a>
 {
 	CommandType(InternalLabelType), InjectedArgs(ExpressionNode<'a>), RenderDesc(LabelRenderedFB<'a>), TransferMark
 }
+#[derive(Debug, PartialEq)]
+pub struct LabelBlock<'a> { attributes: LabelAttribute<'a>, name: &'a [char], commands: std::collections::LinkedList<CommandNode<'a>> }
+impl<'a> LabelBlock<'a>
+{
+	fn new(attributes: LabelAttribute<'a>, name: &'a [char]) -> Self
+	{
+		LabelBlock { attributes: attributes, name: name, commands: std::collections::LinkedList::new() }
+	}
+	fn add_command(&mut self, cmd: CommandNode<'a>) { self.commands.push_back(cmd); }
+}
 
 fn is_space(chr: char) -> bool { chr == ' ' || chr == '\t' }
 fn split_of_ident(ch: char) -> bool
 {
-	is_space(ch) || ch == '\n' || ch == '#' || ch == ',' || ch == '.'
+	is_space(ch) || ch == '\n' || ch == '#' || ch == ',' || ch == '.' || ch == ':'
 }
 pub fn parse_define(line: &[char]) -> ParserChainData<(&[char], ExpressionNode)>
 {
@@ -399,51 +410,88 @@ pub fn parse_label_attributes(input: &[char]) -> ParseResult<LabelAttributes>
 	}
 }
 #[repr(u8)] #[derive(PartialEq)]
-enum NextInstructionParsingLabel { Attribute, Ignored }
-pub fn parse_lines<'a>(mut lines: LazyLinesChars<'a>)
+enum NextInstruction { Attribute, LabelOrCommand, Ignored }
+pub fn parse_lines(mut lines: LazyLinesChars) -> (LinkedList<LabelBlock>, HashMap<&[char], ExpressionNode>)
 {
+	let mut deflist = HashMap::new();
+	let mut labels = LinkedList::new();
+	let mut current_label = None;
 	let (mut cmd_type, mut rendered_fb, mut is_transfer, mut injection_args)
 		= (InternalLabelType::Primary, None, false, ExpressionNode::Number(0));
+	
 	while let Some(next) = if let Some(&(_, l)) = lines.next()
 	{
-		if l.is_front_of('.') { Some(NextInstructionParsingLabel::Attribute) }
-		else if l.skip_while(is_space).is_front_of('#') { Some(NextInstructionParsingLabel::Ignored) }
-		else if l.skip_while(is_space).is_empty() { Some(NextInstructionParsingLabel::Ignored) }
-		else { None }
+		if l.is_front_of('.') { Some(NextInstruction::Attribute) }
+		else if l.skip_while(is_space).is_front_of('#') { Some(NextInstruction::Ignored) }
+		else if l.skip_while(is_space).is_empty() { Some(NextInstruction::Ignored) }
+		else { Some(NextInstruction::LabelOrCommand) }
 	} else { None }
 	{
-		if next == NextInstructionParsingLabel::Attribute
+		match next
 		{
-			let (n, chars) = lines.pop().unwrap();
-			match parse_label_attributes(chars).unwrap_on_line(n)
+			NextInstruction::Attribute =>
 			{
-				LabelAttributes::CommandType(t) => cmd_type = t,
-				LabelAttributes::InjectedArgs(e) => injection_args = e,
-				LabelAttributes::RenderDesc(rd) => rendered_fb = Some(rd),
-				LabelAttributes::TransferMark => is_transfer = true
-			}
+				let (n, chars) = lines.pop().unwrap();
+				if chars[..7] == ['.', 'd', 'e', 'f', 'i', 'n', 'e']
+				{
+					let ParserChainData(defres, _) = parse_define(chars);
+					let (name, value) = defres.unwrap_on_line(n);
+					if deflist.contains_key(&name) { panic!("Definitions are conflicted at line {}", n); }
+					else { deflist.insert(name, value); }
+				}
+				else
+				{
+					match parse_label_attributes(chars).unwrap_on_line(n)
+					{
+						LabelAttributes::CommandType(t) => cmd_type = t,
+						LabelAttributes::InjectedArgs(e) => injection_args = e,
+						LabelAttributes::RenderDesc(rd) => { rendered_fb = Some(rd); is_transfer = false; },
+						LabelAttributes::TransferMark => is_transfer = true
+					}
+				}
+			},
+			NextInstruction::LabelOrCommand =>
+			{
+				let (n, chars) = lines.pop().unwrap();
+				let (label_name, rest) = chars.take_until(split_of_ident);
+				let rest = rest.skip_while(is_space);
+				if rest.is_front_of(':')
+				{
+					// label
+					// validation attributes
+					let command_type = match cmd_type
+					{
+						InternalLabelType::Primary => LabelType::Primary,
+						InternalLabelType::Secondary => LabelType::Secondary,
+						InternalLabelType::Injected => LabelType::Injected(injection_args.clone())
+					};
+
+					// create new label block
+					if let Some(lb) = std::mem::replace(&mut current_label, None) { labels.push_back(lb); }
+					let attribute = if let LabelType::Injected(args) = command_type
+					{
+						LabelAttribute::Injected(args)
+					}
+					else if is_transfer { LabelAttribute::Transfer(command_type) } else
+					{
+						LabelAttribute::Graphics(command_type, rendered_fb.clone().ok_or(ParseError::InternalValidationFailed).unwrap_on_line(n))
+					};
+					current_label = Some(LabelBlock::new(attribute, label_name));
+				}
+				else
+				{
+					// command
+					let ParserChainData(cmdres, _) = parse_command(chars.skip_while(is_space));
+					if let Some(ref mut lb) = current_label { lb.add_command(cmdres.unwrap_on_line(n)); }
+					else { panic!("Required label before commands at line {}", n); }
+				}
+			},
+			_ => { lines.pop().unwrap(); }
 		}
-		else { lines.pop().unwrap(); }
 	}
 
-	if let Some((labeline, labelchars)) = lines.pop()
-	{
-		// validation attributes
-		let command_type = match cmd_type
-		{
-			InternalLabelType::Primary => LabelType::Primary,
-			InternalLabelType::Secondary => LabelType::Secondary,
-			InternalLabelType::Injected => LabelType::Injected(injection_args)
-		};
-		// one of following attributes have to specified
-		if command_type.is_injected() == rendered_fb.is_some() && rendered_fb.is_some() == is_transfer
-		{
-			panic!("{:?} at line {}", ParseError::InternalValidationFailed, labeline);
-		}
-		println!("attributes for label: {:?} {:?} {:?}", command_type, rendered_fb, is_transfer);
-
-		unimplemented!();
-	}
+	if let Some(lb) = current_label { labels.push_back(lb); }
+	(labels, deflist)
 }
 
 #[cfg(test)]
@@ -535,6 +583,8 @@ push_wire_colors:
 	push	0, 3, @3";
 		let testcase_chars = testcase.chars().collect_vec();
 		let testcase_lines = LazyLinesChars::new(&testcase_chars);
-		let res = super::parse_lines(testcase_lines);
+		let (labels, deflist) = super::parse_lines(testcase_lines);
+		println!("{:?}\n\n{:?}", labels, deflist);
+		unimplemented!();
 	}
 }

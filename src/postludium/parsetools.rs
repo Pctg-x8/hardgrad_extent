@@ -1,6 +1,7 @@
 // ParseTools for reference to slice of char
 
 #![allow(unsized_in_tuple)]
+use std;
 
 pub trait ParseTools
 {
@@ -31,7 +32,7 @@ impl<'a> ParseTools for &'a [char]
 		let len = _impl(self, 0, pred);
 		(&self[..len], &self[len..])
 	}
-	fn drop(self, count: usize) -> Self { &self[count..] }
+	fn drop(self, count: usize) -> Self { &self[std::cmp::min(count, self.len())..] }
 	fn is_front_of(&self, t: char) -> bool { !self.is_empty() && self[0] == t }
 	fn is_front<F>(&self, pred: F) -> bool where F: FnOnce(&Self::Item) -> bool { !self.is_empty() && pred(&self[0]) }
 	fn clone_as_string(self) -> String { self.into_iter().cloned().collect() }
