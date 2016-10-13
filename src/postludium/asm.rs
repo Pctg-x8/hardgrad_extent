@@ -342,7 +342,7 @@ pub fn parse_command(input: &[char]) -> ParserChainData<CommandNode>
 		// draw [vertex_count], [instance_count]
 		"DRAW" => take_2_args(args, CommandNode::Draw),
 		// drawindexed [vertex_count], [instance_count]
-		"DRAWINSTANCED" | "IDXDRAW" | "DIX" => take_2_args(args, CommandNode::DrawIndexed),
+		"DRAWINDEXED" | "IDXDRAW" | "DIX" => take_2_args(args, CommandNode::DrawIndexed),
 		// bufferbarrier [srcstagemask], [dststagemask], [offs], [size], [srcusage], [dstusage]
 		"BUFFERBARRIER" | "BUFBARRIER" | "BUFB" => take_6_args(args, CommandNode::BufferBarrier),
 		// imagebarrier [srcstagemask], [dststagemask], [imgres], [imgsubres], [srcusage], [dstusage], [srclayout], [dstlayout]
@@ -499,6 +499,8 @@ mod test
 {
 	use itertools::Itertools;
 	use super::super::lazylines::*;
+	use std;
+	use std::io::prelude::*;
 
 	#[test] fn parse_define()
 	{
@@ -585,6 +587,14 @@ push_wire_colors:
 		let testcase_lines = LazyLinesChars::new(&testcase_chars);
 		let (labels, deflist) = super::parse_lines(testcase_lines);
 		println!("{:?}\n\n{:?}", labels, deflist);
+
+		let mut testcase = String::new();
+		std::fs::File::open("assets/devconf/commands.gpu").unwrap().read_to_string(&mut testcase).unwrap();
+		let testcase_chars = testcase.chars().collect_vec();
+		let testcase_lines = LazyLinesChars::new(&testcase_chars);
+		let (labels, deflist) = super::parse_lines(testcase_lines);
+		println!("{:?}\n\n{:?}", labels, deflist);
+
 		unimplemented!();
 	}
 }
