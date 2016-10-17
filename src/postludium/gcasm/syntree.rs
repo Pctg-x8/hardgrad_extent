@@ -65,7 +65,7 @@ pub enum LabelAttributes<'a>
 	CommandType(InternalLabelType), InjectedArgs(ExpressionNode<'a>), RenderDesc(LabelRenderedFB<'a>), TransferMark
 }
 #[derive(Debug, PartialEq)]
-pub struct LabelBlock<'a> { attributes: LabelAttribute<'a>, name: &'a [char], commands: LinkedList<CommandNode<'a>> }
+pub struct LabelBlock<'a> { attributes: LabelAttribute<'a>, name: &'a [char], pub commands: LinkedList<CommandNode<'a>> }
 impl<'a> LabelBlock<'a>
 {
 	pub fn new(attributes: LabelAttribute<'a>, name: &'a [char]) -> Self

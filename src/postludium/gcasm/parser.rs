@@ -374,11 +374,12 @@ pub fn parse_label_attributes(input: &[char]) -> ParseResult<LabelAttributes>
 }
 #[repr(u8)] #[derive(PartialEq)]
 enum NextInstruction { Attribute, LabelOrCommand, Ignored }
-pub fn parse_lines(mut lines: LazyLinesChars) -> (LinkedList<LabelBlock>, HashMap<&[char], ExpressionNode>)
+pub fn parse_lines(mut lines: LazyLinesChars) -> (HashMap<&[char], LabelBlock>, HashMap<&[char], ExpressionNode>)
 {
 	let mut deflist = HashMap::new();
-	let mut labels = LinkedList::new();
+	let mut labels = HashMap::new();
 	let mut current_label = None;
+	let mut labelname = None;
 	let (mut cmd_type, mut rendered_fb, mut is_transfer, mut injection_args)
 		= (InternalLabelType::Primary, None, false, ExpressionNode::Number(0));
 	
@@ -430,7 +431,7 @@ pub fn parse_lines(mut lines: LazyLinesChars) -> (LinkedList<LabelBlock>, HashMa
 					};
 
 					// create new label block
-					if let Some(lb) = std::mem::replace(&mut current_label, None) { labels.push_back(lb); }
+					if let Some(lb) = std::mem::replace(&mut current_label, None) { labels.insert(labelname.unwrap(), lb); }
 					let attribute = if let LabelType::Injected(args) = command_type
 					{
 						LabelAttribute::Injected(args)
@@ -439,6 +440,7 @@ pub fn parse_lines(mut lines: LazyLinesChars) -> (LinkedList<LabelBlock>, HashMa
 					{
 						LabelAttribute::Graphics(command_type, rendered_fb.clone().ok_or(ParseError::InternalValidationFailed).unwrap_on_line(n))
 					};
+					labelname = Some(label_name);
 					current_label = Some(LabelBlock::new(attribute, label_name));
 				}
 				else
@@ -453,7 +455,7 @@ pub fn parse_lines(mut lines: LazyLinesChars) -> (LinkedList<LabelBlock>, HashMa
 		}
 	}
 
-	if let Some(lb) = current_label { labels.push_back(lb); }
+	if let Some(lb) = current_label { labels.insert(labelname.unwrap(), lb); }
 	(labels, deflist)
 }
 
