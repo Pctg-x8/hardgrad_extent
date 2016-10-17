@@ -6,6 +6,7 @@ use super::parsetools::ParseTools;
 use super::lazylines::*;
 use itertools::Itertools;
 use std::collections::{HashMap, LinkedList};
+use interlude::ffi::*;
 
 #[derive(Debug)]
 pub enum ParseError
@@ -99,7 +100,7 @@ impl<'a> std::convert::From<&'a [char]> for ParserChainData<'a, ()>
 #[derive(Debug, PartialEq, Clone)]
 pub enum ExpressionNode<'a>
 {
-	Number(u64), Floating(f64), ConstantRef(&'a [char]), InjectionArgRef(u64),
+	Number(u32), Floating(f64), ConstantRef(&'a [char]), InjectionArgRef(u64),
 	Negated(Box<ExpressionNode<'a>>), ExternalU32(Box<ExpressionNode<'a>>),
 	Add(Box<ExpressionNode<'a>>, Box<ExpressionNode<'a>>),
 	Sub(Box<ExpressionNode<'a>>, Box<ExpressionNode<'a>>),
@@ -525,6 +526,66 @@ pub fn parse_lines(mut lines: LazyLinesChars) -> (LinkedList<LabelBlock>, HashMa
 	(labels, deflist)
 }
 
+pub struct BuilderArguments
+{
+	external_u32s: Vec<u32>
+}
+pub enum DefinitionResolver { }
+impl DefinitionResolver
+{
+	pub fn resolve<'a>(args: &'a BuilderArguments, src: HashMap<&'a [char], ExpressionNode<'a>>) -> HashMap<&'a [char], f64>
+	{
+		let mut dst = HashMap::new();
+
+		for (n, x) in src.iter()
+		{
+			if !dst.contains_key(n)
+			{
+				let new_expr = Self::resolve_expression(args, &src, &mut dst, x);
+				dst.entry(n).or_insert(new_expr);
+			}
+		}
+
+		dst
+	}
+
+	fn builtin_defs<'a>(name: &'a [char]) -> Option<u32>
+	{
+		if name == ['I', 'N', 'D', 'E', 'X', '_', 'R', 'E', 'A', 'D'] { Some(VK_ACCESS_INDEX_READ_BIT) }
+		else if name == ['V', 'E', 'R', 'T', 'E', 'X', '_', 'A', 'T', 'T', 'R', 'I', 'B', 'U', 'T', 'E', '_', 'R', 'E', 'A', 'D'] { Some(VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT) }
+		else if name == ['U', 'N', 'I', 'F', 'O', 'R', 'M', '_', 'R', 'E', 'A', 'D'] { Some(VK_ACCESS_UNIFORM_READ_BIT) }
+		else { None }
+	}
+	
+	fn resolve_expression<'a>(args: &'a BuilderArguments, src: &HashMap<&'a [char], ExpressionNode<'a>>,
+		dst: &mut HashMap<&'a [char], f64>, current: &ExpressionNode<'a>) -> f64
+	{
+		match current
+		{
+			&ExpressionNode::ConstantRef(refn) => if let Some(v) = Self::builtin_defs(refn) { v as f64 } else
+			if let Some(&v) = dst.get(&refn) { v } else
+			{
+				let xv = Self::resolve_expression(args, src, dst, src.get(&refn).expect(&format!("Definition {} is not found", refn.clone_as_string())));
+				dst.insert(refn, xv);
+				xv
+			},
+			&ExpressionNode::Number(num) => num as f64,
+			&ExpressionNode::Floating(num) => num,
+			&ExpressionNode::ExternalU32(ref idx) => args.external_u32s[Self::resolve_expression(args, src, dst, idx) as usize] as f64,
+			&ExpressionNode::Negated(ref x) => -Self::resolve_expression(args, src, dst, x),
+			&ExpressionNode::Add(ref l, ref r) => Self::resolve_expression(args, src, dst, l) + Self::resolve_expression(args, src, dst, r),
+			&ExpressionNode::Sub(ref l, ref r) => Self::resolve_expression(args, src, dst, l) - Self::resolve_expression(args, src, dst, r),
+			&ExpressionNode::Mul(ref l, ref r) => Self::resolve_expression(args, src, dst, l) * Self::resolve_expression(args, src, dst, r),
+			&ExpressionNode::Div(ref l, ref r) => Self::resolve_expression(args, src, dst, l) / Self::resolve_expression(args, src, dst, r),
+			&ExpressionNode::Mod(ref l, ref r) => Self::resolve_expression(args, src, dst, l) % Self::resolve_expression(args, src, dst, r),
+			&ExpressionNode::And(ref l, ref r) => (Self::resolve_expression(args, src, dst, l) as u64 & Self::resolve_expression(args, src, dst, r) as u64) as f64,
+			&ExpressionNode::Or(ref l, ref r) => (Self::resolve_expression(args, src, dst, l) as u64 | Self::resolve_expression(args, src, dst, r) as u64) as f64,
+			&ExpressionNode::Xor(ref l, ref r) => (Self::resolve_expression(args, src, dst, l) as u64 ^ Self::resolve_expression(args, src, dst, r) as u64) as f64,
+			&ExpressionNode::InjectionArgRef(_) => panic!("InjectionArgRef is not allowed in Definition")
+		}
+	}
+}
+
 #[cfg(test)]
 mod test
 {
@@ -629,6 +690,10 @@ push_wire_colors:
 		let testcase_lines = LazyLinesChars::new(&testcase_chars);
 		let (labels, deflist) = super::parse_lines(testcase_lines);
 		println!("{:?}\n\n{:?}", labels, deflist);
+
+		let dummy_args = super::BuilderArguments { external_u32s: vec![128] };
+		let resolved_defs = super::DefinitionResolver::resolve(&dummy_args, deflist);
+		println!("\n{:?}", resolved_defs);
 
 		unimplemented!();
 	}
