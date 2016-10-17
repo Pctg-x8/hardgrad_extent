@@ -10,8 +10,8 @@ use std::io::BufReader;
 use itertools::Itertools;
 use std::collections::HashMap;
 
-pub mod asm;
-pub use self::asm::*;
+pub mod gcasm;
+pub use self::gcasm::*;
 mod parsetools;
 use self::parsetools::ParseTools;
 mod lazylines;

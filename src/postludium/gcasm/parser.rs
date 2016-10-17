@@ -2,11 +2,13 @@
 
 use std;
 use std::string::String;
-use super::parsetools::ParseTools;
-use super::lazylines::*;
+use postludium::parsetools::ParseTools;
+use postludium::lazylines::*;
 use itertools::Itertools;
 use std::collections::{HashMap, LinkedList};
 use interlude::ffi::*;
+
+use super::syntree::*;
 
 #[derive(Debug)]
 pub enum ParseError
@@ -95,77 +97,6 @@ impl<'a, T> std::convert::From<(ParseResult<T>, &'a [char])> for ParserChainData
 impl<'a> std::convert::From<&'a [char]> for ParserChainData<'a, ()>
 {
 	fn from(slice: &'a [char]) -> Self { ParserChainData(Ok(()), slice) }
-}
-
-#[derive(Debug, PartialEq, Clone)]
-pub enum ExpressionNode<'a>
-{
-	Number(u32), Floating(f64), ConstantRef(&'a [char]), InjectionArgRef(u64),
-	Negated(Box<ExpressionNode<'a>>), ExternalU32(Box<ExpressionNode<'a>>),
-	Add(Box<ExpressionNode<'a>>, Box<ExpressionNode<'a>>),
-	Sub(Box<ExpressionNode<'a>>, Box<ExpressionNode<'a>>),
-	Mul(Box<ExpressionNode<'a>>, Box<ExpressionNode<'a>>),
-	Div(Box<ExpressionNode<'a>>, Box<ExpressionNode<'a>>),
-	Mod(Box<ExpressionNode<'a>>, Box<ExpressionNode<'a>>),
-	And(Box<ExpressionNode<'a>>, Box<ExpressionNode<'a>>),
-	Or(Box<ExpressionNode<'a>>, Box<ExpressionNode<'a>>),
-	Xor(Box<ExpressionNode<'a>>, Box<ExpressionNode<'a>>)
-}
-#[derive(Debug, PartialEq, Clone)]
-pub enum CommandNode<'a>
-{
-	// Graphics Binders //
-	BindPipelineState(ExpressionNode<'a>),
-	BindDescriptorSet(ExpressionNode<'a>, ExpressionNode<'a>, ExpressionNode<'a>),
-	BindVertexBuffer(ExpressionNode<'a>, ExpressionNode<'a>),
-	BindIndexBuffer(ExpressionNode<'a>),
-	PushConstant(ExpressionNode<'a>, ExpressionNode<'a>, ExpressionNode<'a>),
-	// Graphics Drawers //
-	Draw(ExpressionNode<'a>, ExpressionNode<'a>),
-	DrawIndexed(ExpressionNode<'a>, ExpressionNode<'a>),
-	// Memory Barriers //
-	BufferBarrier(ExpressionNode<'a>, ExpressionNode<'a>, ExpressionNode<'a>, ExpressionNode<'a>, ExpressionNode<'a>, ExpressionNode<'a>),
-	ImageBarrier(ExpressionNode<'a>, ExpressionNode<'a>, ExpressionNode<'a>, ExpressionNode<'a>, ExpressionNode<'a>, ExpressionNode<'a>, ExpressionNode<'a>, ExpressionNode<'a>),
-	// Copying Commands //
-	CopyBuffer(ExpressionNode<'a>, ExpressionNode<'a>, ExpressionNode<'a>, ExpressionNode<'a>, ExpressionNode<'a>),
-	// Assembly Intrinsics //
-	InjectCommands(&'a [char], Vec<ExpressionNode<'a>>)
-}
-#[derive(Debug, PartialEq)]
-pub enum InternalLabelType { Primary, Secondary, Injected }
-#[derive(Debug, PartialEq, Clone)]
-pub enum LabelType<'a> { Primary, Secondary, Injected(ExpressionNode<'a>) }
-impl<'a> LabelType<'a>
-{
-	fn is_injected(&self) -> bool { match self { &LabelType::Injected(_) => true, _ => false } }
-}
-#[derive(PartialEq, Debug, Clone)]
-pub enum RenderedSubpass<'a> { Pre, Post, Sub(ExpressionNode<'a>) }
-#[derive(PartialEq, Debug, Clone)]
-pub enum LabelRenderedFB<'a>
-{
-	Swapchain(RenderedSubpass<'a>),
-	Backbuffer(ExpressionNode<'a>, RenderedSubpass<'a>)
-}
-#[derive(Debug, PartialEq, Clone)]
-pub enum LabelAttribute<'a>
-{
-	Graphics(LabelType<'a>, LabelRenderedFB<'a>), Transfer(LabelType<'a>), Injected(ExpressionNode<'a>)
-}
-#[derive(Debug, PartialEq)]
-pub enum LabelAttributes<'a>
-{
-	CommandType(InternalLabelType), InjectedArgs(ExpressionNode<'a>), RenderDesc(LabelRenderedFB<'a>), TransferMark
-}
-#[derive(Debug, PartialEq)]
-pub struct LabelBlock<'a> { attributes: LabelAttribute<'a>, name: &'a [char], commands: std::collections::LinkedList<CommandNode<'a>> }
-impl<'a> LabelBlock<'a>
-{
-	fn new(attributes: LabelAttribute<'a>, name: &'a [char]) -> Self
-	{
-		LabelBlock { attributes: attributes, name: name, commands: std::collections::LinkedList::new() }
-	}
-	fn add_command(&mut self, cmd: CommandNode<'a>) { self.commands.push_back(cmd); }
 }
 
 fn is_space(chr: char) -> bool { chr == ' ' || chr == '\t' }
@@ -526,119 +457,60 @@ pub fn parse_lines(mut lines: LazyLinesChars) -> (LinkedList<LabelBlock>, HashMa
 	(labels, deflist)
 }
 
-pub struct BuilderArguments
-{
-	external_u32s: Vec<u32>
-}
-pub enum DefinitionResolver { }
-impl DefinitionResolver
-{
-	pub fn resolve<'a>(args: &'a BuilderArguments, src: HashMap<&'a [char], ExpressionNode<'a>>) -> HashMap<&'a [char], f64>
-	{
-		let mut dst = HashMap::new();
-
-		for (n, x) in src.iter()
-		{
-			if !dst.contains_key(n)
-			{
-				let new_expr = Self::resolve_expression(args, &src, &mut dst, x);
-				dst.entry(n).or_insert(new_expr);
-			}
-		}
-
-		dst
-	}
-
-	fn builtin_defs<'a>(name: &'a [char]) -> Option<u32>
-	{
-		if name == ['I', 'N', 'D', 'E', 'X', '_', 'R', 'E', 'A', 'D'] { Some(VK_ACCESS_INDEX_READ_BIT) }
-		else if name == ['V', 'E', 'R', 'T', 'E', 'X', '_', 'A', 'T', 'T', 'R', 'I', 'B', 'U', 'T', 'E', '_', 'R', 'E', 'A', 'D'] { Some(VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT) }
-		else if name == ['U', 'N', 'I', 'F', 'O', 'R', 'M', '_', 'R', 'E', 'A', 'D'] { Some(VK_ACCESS_UNIFORM_READ_BIT) }
-		else { None }
-	}
-	
-	fn resolve_expression<'a>(args: &'a BuilderArguments, src: &HashMap<&'a [char], ExpressionNode<'a>>,
-		dst: &mut HashMap<&'a [char], f64>, current: &ExpressionNode<'a>) -> f64
-	{
-		match current
-		{
-			&ExpressionNode::ConstantRef(refn) => if let Some(v) = Self::builtin_defs(refn) { v as f64 } else
-			if let Some(&v) = dst.get(&refn) { v } else
-			{
-				let xv = Self::resolve_expression(args, src, dst, src.get(&refn).expect(&format!("Definition {} is not found", refn.clone_as_string())));
-				dst.insert(refn, xv);
-				xv
-			},
-			&ExpressionNode::Number(num) => num as f64,
-			&ExpressionNode::Floating(num) => num,
-			&ExpressionNode::ExternalU32(ref idx) => args.external_u32s[Self::resolve_expression(args, src, dst, idx) as usize] as f64,
-			&ExpressionNode::Negated(ref x) => -Self::resolve_expression(args, src, dst, x),
-			&ExpressionNode::Add(ref l, ref r) => Self::resolve_expression(args, src, dst, l) + Self::resolve_expression(args, src, dst, r),
-			&ExpressionNode::Sub(ref l, ref r) => Self::resolve_expression(args, src, dst, l) - Self::resolve_expression(args, src, dst, r),
-			&ExpressionNode::Mul(ref l, ref r) => Self::resolve_expression(args, src, dst, l) * Self::resolve_expression(args, src, dst, r),
-			&ExpressionNode::Div(ref l, ref r) => Self::resolve_expression(args, src, dst, l) / Self::resolve_expression(args, src, dst, r),
-			&ExpressionNode::Mod(ref l, ref r) => Self::resolve_expression(args, src, dst, l) % Self::resolve_expression(args, src, dst, r),
-			&ExpressionNode::And(ref l, ref r) => (Self::resolve_expression(args, src, dst, l) as u64 & Self::resolve_expression(args, src, dst, r) as u64) as f64,
-			&ExpressionNode::Or(ref l, ref r) => (Self::resolve_expression(args, src, dst, l) as u64 | Self::resolve_expression(args, src, dst, r) as u64) as f64,
-			&ExpressionNode::Xor(ref l, ref r) => (Self::resolve_expression(args, src, dst, l) as u64 ^ Self::resolve_expression(args, src, dst, r) as u64) as f64,
-			&ExpressionNode::InjectionArgRef(_) => panic!("InjectionArgRef is not allowed in Definition")
-		}
-	}
-}
-
 #[cfg(test)]
 mod test
 {
 	use itertools::Itertools;
-	use super::super::lazylines::*;
+	use postludium::lazylines::*;
 	use std;
 	use std::io::prelude::*;
+	use super::super::syntree::*;
 
 	#[test] fn parse_define()
 	{
 		let testcase = ".define DEFAULT_BITS	2";
 		let testcase_collect = testcase.chars().collect_vec();
 		let res = super::parse_define(&testcase_collect);
-		assert_eq!(res.0.unwrap(), (&testcase_collect[8..20], super::ExpressionNode::Number(2)));
+		assert_eq!(res.0.unwrap(), (&testcase_collect[8..20], ExpressionNode::Number(2)));
 	}
 	#[test] fn parse_primary_terms()
 	{
 		let testcase = "PS_RENDER_BACKGROUND,";
 		let testcase_collect = testcase.chars().collect_vec();
 		let res = super::parse_primary_terms(&testcase_collect);
-		assert_eq!(res.0.unwrap(), super::ExpressionNode::ConstantRef(&testcase_collect[..20]));
+		assert_eq!(res.0.unwrap(), ExpressionNode::ConstantRef(&testcase_collect[..20]));
 		assert_eq!(res.1, &testcase_collect[20..]);
 		let testcase = "2.0";
 		let testcase_collect = testcase.chars().collect_vec();
 		let res = super::parse_primary_terms(&testcase_collect);
-		assert_eq!(res.0.unwrap(), super::ExpressionNode::Floating(2.0));
+		assert_eq!(res.0.unwrap(), ExpressionNode::Floating(2.0));
 		let testcase = "-6";
 		let testcase_collect = testcase.chars().collect_vec();
 		let res = super::parse_primary_terms(&testcase_collect);
-		assert_eq!(res.0.unwrap(), super::ExpressionNode::Negated(Box::new(super::ExpressionNode::Number(6))));
+		assert_eq!(res.0.unwrap(), ExpressionNode::Negated(Box::new(ExpressionNode::Number(6))));
 		let testcase = "@30";
 		let testcase_collect = testcase.chars().collect_vec();
 		let res = super::parse_primary_terms(&testcase_collect);
-		assert_eq!(res.0.unwrap(), super::ExpressionNode::InjectionArgRef(30));
+		assert_eq!(res.0.unwrap(), ExpressionNode::InjectionArgRef(30));
 		let testcase = "u32[30]";
 		let testcase_collect = testcase.chars().collect_vec();
 		let res = super::parse_primary_terms(&testcase_collect);
-		assert_eq!(res.0.unwrap(), super::ExpressionNode::ExternalU32(Box::new(super::ExpressionNode::Number(30))));
+		assert_eq!(res.0.unwrap(), ExpressionNode::ExternalU32(Box::new(ExpressionNode::Number(30))));
 	}
 	#[test] fn parse_expression()
 	{
 		let testcase = "2 + 3";
 		let testcase_collect = testcase.chars().collect_vec();
 		let res = super::parse_expression(&testcase_collect);
-		assert_eq!(res.0.unwrap(), super::ExpressionNode::Add(Box::new(super::ExpressionNode::Number(2)), Box::new(super::ExpressionNode::Number(3))));
+		assert_eq!(res.0.unwrap(), ExpressionNode::Add(Box::new(ExpressionNode::Number(2)), Box::new(ExpressionNode::Number(3))));
 		let testcase = "TOP | TRANSFER + 2, ";
 		let testcase_collect = testcase.chars().collect_vec();
 		let res = super::parse_expression(&testcase_collect);
-		assert_eq!(res.0.unwrap(), super::ExpressionNode::Or(
-			Box::new(super::ExpressionNode::ConstantRef(&testcase_collect[..3])),
-			Box::new(super::ExpressionNode::Add(
-				Box::new(super::ExpressionNode::ConstantRef(&testcase_collect[6..14])),
-				Box::new(super::ExpressionNode::Number(2))
+		assert_eq!(res.0.unwrap(), ExpressionNode::Or(
+			Box::new(ExpressionNode::ConstantRef(&testcase_collect[..3])),
+			Box::new(ExpressionNode::Add(
+				Box::new(ExpressionNode::ConstantRef(&testcase_collect[6..14])),
+				Box::new(ExpressionNode::Number(2))
 			))
 		));
 		assert_eq!(res.1, &testcase_collect[18..]);
@@ -648,24 +520,24 @@ mod test
 		let testcase = "bps 0";
 		let testcase_collect = testcase.chars().collect_vec();
 		let res = super::parse_command(&testcase_collect);
-		assert_eq!(res.0.unwrap(), super::CommandNode::BindPipelineState(super::ExpressionNode::Number(0)));
+		assert_eq!(res.0.unwrap(), CommandNode::BindPipelineState(ExpressionNode::Number(0)));
 		let testcase = "BindDS 0, 0, GLOBAL_UNIFORM_DS";
 		let testcase_collect = testcase.chars().collect_vec();
 		let res = super::parse_command(&testcase_collect);
-		assert_eq!(res.0.unwrap(), super::CommandNode::BindDescriptorSet(
-			super::ExpressionNode::Number(0),
-			super::ExpressionNode::Number(0),
-			super::ExpressionNode::ConstantRef(&testcase_collect[13..30])
+		assert_eq!(res.0.unwrap(), CommandNode::BindDescriptorSet(
+			ExpressionNode::Number(0),
+			ExpressionNode::Number(0),
+			ExpressionNode::ConstantRef(&testcase_collect[13..30])
 		));
 		let testcase = "iNjecT push_wire_colors, 0.25, 0.9875, 1.5, 1.0";
 		let testcase_collect = testcase.chars().collect_vec();
 		let res = super::parse_command(&testcase_collect);
-		assert_eq!(res.0.unwrap(), super::CommandNode::InjectCommands(
+		assert_eq!(res.0.unwrap(), CommandNode::InjectCommands(
 			&testcase_collect[7..23], vec![
-				super::ExpressionNode::Floating(0.25),
-				super::ExpressionNode::Floating(0.9875),
-				super::ExpressionNode::Floating(1.5),
-				super::ExpressionNode::Floating(1.0)
+				ExpressionNode::Floating(0.25),
+				ExpressionNode::Floating(0.9875),
+				ExpressionNode::Floating(1.5),
+				ExpressionNode::Floating(1.0)
 			]
 		));
 	}
@@ -682,19 +554,6 @@ push_wire_colors:
 		let testcase_chars = testcase.chars().collect_vec();
 		let testcase_lines = LazyLinesChars::new(&testcase_chars);
 		let (labels, deflist) = super::parse_lines(testcase_lines);
-		println!("{:?}\n\n{:?}", labels, deflist);
-
-		let mut testcase = String::new();
-		std::fs::File::open("assets/devconf/commands.gpu").unwrap().read_to_string(&mut testcase).unwrap();
-		let testcase_chars = testcase.chars().collect_vec();
-		let testcase_lines = LazyLinesChars::new(&testcase_chars);
-		let (labels, deflist) = super::parse_lines(testcase_lines);
-		println!("{:?}\n\n{:?}", labels, deflist);
-
-		let dummy_args = super::BuilderArguments { external_u32s: vec![128] };
-		let resolved_defs = super::DefinitionResolver::resolve(&dummy_args, deflist);
-		println!("\n{:?}", resolved_defs);
-
-		unimplemented!();
+		assert!(deflist.is_empty());
 	}
 }
