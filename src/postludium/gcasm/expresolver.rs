@@ -189,11 +189,11 @@ impl CommandResolver
 					.and_then(|(sbid, dbid, sof)| resolve_expression(args, defs, size).map(move |size| (sbid, dbid, sof, size)))
 					.and_then(|(sbid, dbid, sof, size)| resolve_expression(args, defs, dof).map(move |dof| (sbid, dbid, sof, size, dof)))
 					.map(|(sbid, dbid, sof, size, dof)| resolved.push_back(ResolvedCommand::CopyBuffer(sbid as u32, dbid as u32, sof as u32, size as i32, dof as u32))),
-				CommandNode::InjectCommands(name, args) => 
+				CommandNode::InjectCommands(name, args) => resolved.append(resolve_for_injection(args, defs, args, labels, labels.get(name)))
 			}
 		}
 	}
-	fn resolve_for_injection<'a>(args: &BuilderArguments, defs: &HashMap<&'a [char], f64>, args: Vec<f64>, lb: LinkedList<CommandNode<'a>>) -> LinkedList<ResolvedCommand<'a>>
+	fn resolve_for_injection<'a>(args: &BuilderArguments, defs: &HashMap<&'a [char], f64>, args: Vec<f64>, labels: &HashMap<&'a [char], LabelBlock<'a>>, lb: &LinkedList<CommandNode<'a>>) -> LinkedList<ResolvedCommand<'a>>
 	{
 		let resolved = LinkedList::new();
 
