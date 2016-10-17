@@ -11,7 +11,8 @@ use std::collections::{HashMap, LinkedList};
 pub enum ParseError
 {
 	SyntaxError, UnclosedDelimiter, UnknownCommand, MissingArgument,
-	UnknownCommandType, UnknownLabelAttribute, InternalValidationFailed
+	UnknownCommandType, UnknownLabelAttribute, InternalValidationFailed,
+	MissingArgumentIndexing
 }
 pub type ParseResult<T> = Result<T, ParseError>;
 trait WithLine<T>
@@ -90,12 +91,16 @@ impl<'a, T> std::convert::From<(ParseResult<T>, &'a [char])> for ParserChainData
 		ParserChainData(tup.0, tup.1)
 	}
 }
+impl<'a> std::convert::From<&'a [char]> for ParserChainData<'a, ()>
+{
+	fn from(slice: &'a [char]) -> Self { ParserChainData(Ok(()), slice) }
+}
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum ExpressionNode<'a>
 {
 	Number(u64), Floating(f64), ConstantRef(&'a [char]), InjectionArgRef(u64),
-	Negated(Box<ExpressionNode<'a>>),
+	Negated(Box<ExpressionNode<'a>>), ExternalU32(Box<ExpressionNode<'a>>),
 	Add(Box<ExpressionNode<'a>>, Box<ExpressionNode<'a>>),
 	Sub(Box<ExpressionNode<'a>>, Box<ExpressionNode<'a>>),
 	Mul(Box<ExpressionNode<'a>>, Box<ExpressionNode<'a>>),
@@ -120,6 +125,8 @@ pub enum CommandNode<'a>
 	// Memory Barriers //
 	BufferBarrier(ExpressionNode<'a>, ExpressionNode<'a>, ExpressionNode<'a>, ExpressionNode<'a>, ExpressionNode<'a>, ExpressionNode<'a>),
 	ImageBarrier(ExpressionNode<'a>, ExpressionNode<'a>, ExpressionNode<'a>, ExpressionNode<'a>, ExpressionNode<'a>, ExpressionNode<'a>, ExpressionNode<'a>, ExpressionNode<'a>),
+	// Copying Commands //
+	CopyBuffer(ExpressionNode<'a>, ExpressionNode<'a>, ExpressionNode<'a>, ExpressionNode<'a>, ExpressionNode<'a>),
 	// Assembly Intrinsics //
 	InjectCommands(&'a [char], Vec<ExpressionNode<'a>>)
 }
@@ -183,7 +190,16 @@ pub fn parse_define(line: &[char]) -> ParserChainData<(&[char], ExpressionNode)>
 }
 pub fn parse_primary_terms(input: &[char]) -> ParserChainData<ExpressionNode>
 {
-	if input.is_front_of('(')
+	if input.len() >= 3 && input[..3] == ['u', '3', '2']
+	{
+		// External u32
+		ParserChainData::from(input.drop(3)).skip_spaces()
+			.syntax_char_e('[', ParseError::MissingArgumentIndexing).skip_spaces()
+			.action(|(), rest| parse_expression(rest)).skip_spaces()
+			.syntax_char_e(']', ParseError::MissingArgumentIndexing)
+			.reduce(|idx| ExpressionNode::ExternalU32(Box::new(idx)))
+	}
+	else if input.is_front_of('(')
 	{
 		// Nested Expression
 		parse_expression(input.drop(1).skip_while(is_space))
@@ -287,6 +303,19 @@ fn take_3_args<'a, F>(input: &'a [char], reducer: F) -> ParserChainData<CommandN
 		.skip_spaces().syntax_char_e(',', ParseError::MissingArgument).skip_spaces()
 		.action(|(a, b), rest| parse_expression(rest).reduce(|c| reducer(a, b, c)))
 }
+fn take_5_args<'a, F>(input: &'a [char], reducer: F) -> ParserChainData<CommandNode<'a>>
+	where F: FnOnce(ExpressionNode<'a>, ExpressionNode<'a>, ExpressionNode<'a>, ExpressionNode<'a>, ExpressionNode<'a>) -> CommandNode<'a>
+{
+	parse_expression(input)
+		.skip_spaces().syntax_char_e(',', ParseError::MissingArgument).skip_spaces()
+		.action(|a, rest| parse_expression(rest).reduce(|b| (a, b)))
+		.skip_spaces().syntax_char_e(',', ParseError::MissingArgument).skip_spaces()
+		.action(|(a, b), rest| parse_expression(rest).reduce(|c| (a, b, c)))
+		.skip_spaces().syntax_char_e(',', ParseError::MissingArgument).skip_spaces()
+		.action(|(a, b, c), rest| parse_expression(rest).reduce(|d| (a, b, c, d)))
+		.skip_spaces().syntax_char_e(',', ParseError::MissingArgument).skip_spaces()
+		.action(|(a, b, c, d), rest| parse_expression(rest).reduce(|e| reducer(a, b, c, d, e)))
+}
 fn take_6_args<'a, F>(input: &'a [char], reducer: F) -> ParserChainData<CommandNode<'a>>
 	where F: FnOnce(ExpressionNode<'a>, ExpressionNode<'a>, ExpressionNode<'a>, ExpressionNode<'a>, ExpressionNode<'a>, ExpressionNode<'a>) -> CommandNode<'a>
 {
@@ -347,6 +376,8 @@ pub fn parse_command(input: &[char]) -> ParserChainData<CommandNode>
 		"BUFFERBARRIER" | "BUFBARRIER" | "BUFB" => take_6_args(args, CommandNode::BufferBarrier),
 		// imagebarrier [srcstagemask], [dststagemask], [imgres], [imgsubres], [srcusage], [dstusage], [srclayout], [dstlayout]
 		"IMAGEBARRIER" | "IMGBARRIER" | "IMGB" => take_8_args(args, CommandNode::ImageBarrier),
+		// copybuffer [srcbuffer], [dstbuffer], [srcoffs], [size], [dstoffs]
+		"COPYBUFFER" | "COPYBUF" | "CBUF" => take_5_args(args, CommandNode::CopyBuffer),
 		// inject [label_name], [args]...
 		"INJECT" =>
 		{
@@ -528,6 +559,10 @@ mod test
 		let testcase_collect = testcase.chars().collect_vec();
 		let res = super::parse_primary_terms(&testcase_collect);
 		assert_eq!(res.0.unwrap(), super::ExpressionNode::InjectionArgRef(30));
+		let testcase = "u32[30]";
+		let testcase_collect = testcase.chars().collect_vec();
+		let res = super::parse_primary_terms(&testcase_collect);
+		assert_eq!(res.0.unwrap(), super::ExpressionNode::ExternalU32(Box::new(super::ExpressionNode::Number(30))));
 	}
 	#[test] fn parse_expression()
 	{
