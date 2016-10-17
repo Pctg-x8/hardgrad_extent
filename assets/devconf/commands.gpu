@@ -96,7 +96,7 @@ render_to_buffer:
 .sc_renderpass 1
 smaa_edge_detection:
 	BindPS	PS_SMAA_EDGEDETECT
-	BindDS	1, 1, SMAA_EDGEDETECT_INPUTS_DS
+	BindDS	2, 1, SMAA_EDGEDETECT_INPUTS_DS
 	BindVB	0, POSTPROCESS_VERTICES
 	Draw	4, 1
 
@@ -104,14 +104,14 @@ smaa_edge_detection:
 .sc_renderpass 2
 smaa_blend_weight_calc:
 	BindPS	PS_SMAA_BLENDWEIGHT_CALC
-	BindDS	2, 1, SMAA_BLENDWEIGHT_INPUTS_DS
+	BindDS	3, 1, SMAA_BLENDWEIGHT_INPUTS_DS
 	Draw	4, 1
 
 .type primary
 .sc_renderpass 3
 smaa_combine:
 	BindPS	PS_SMAA_COMBINE
-	BindDS	3, 1, SMAA_COMBINE_INPUTS_DS
+	BindDS	4, 1, SMAA_COMBINE_INPUTS_DS
 	Draw	4, 1
 
 .type primary
