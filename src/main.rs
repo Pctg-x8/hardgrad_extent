@@ -10,6 +10,7 @@ extern crate itertools;
 #[macro_use] extern crate lazy_static;
 
 #[macro_use] extern crate interlude;
+extern crate postludium;
 extern crate texture_compression;
 extern crate psdloader;
 
@@ -31,7 +32,6 @@ use logical_resources::*;
 mod utils;
 use rand::distributions::*;
 
-mod postludium;
 use postludium::*;
 
 mod smaa_extra_textures;
