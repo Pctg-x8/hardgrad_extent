@@ -93,6 +93,7 @@ impl MemoryBlockManager
 
 		recursive(self.freelist.iter().enumerate(), index)
 	}
+	#[allow(dead_code)]
 	fn dump_freelist(&self)
 	{
 		println!("== Freelist ==");
@@ -102,6 +103,7 @@ impl MemoryBlockManager
 		}
 	}
 }
+#[allow(dead_code)]
 pub fn memory_management_test()
 {
 	use rand; use time;

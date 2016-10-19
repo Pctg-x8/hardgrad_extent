@@ -8,6 +8,7 @@ in gl_PerVertex { vec4 gl_Position; } gl_in[];
 out gl_PerVertex { vec4 gl_Position; };
 
 #include "UniformMemory.glsl"
+layout(set = 1, binding = 0) uniform sampler1D color_gradient;
 
 vec4 vertex_transform(vec4 inv)
 {
@@ -27,7 +28,7 @@ void main()
 
 		if(0.0f <= lifetime_inv && lifetime_inv <= 1.0f)
 		{
-			color = vec4(1.0f, 1.0f, 1.0f, lifetime_inv);
+			color = texture(color_gradient, lifetime);
 			gl_Position = vertex_transform(base_pos); EmitVertex();
 			gl_Position = vertex_transform(fma(dir, lb_particle_info[index].length_colrel_lifetime_lifemult.xxxx, base_pos)); EmitVertex();
 			EndPrimitive();

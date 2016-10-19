@@ -1,6 +1,6 @@
 // Device Memory Structures
 
-use vertex_formats::*;
+use interlude::Position;
 use constants::*;
 use std;
 

@@ -54,6 +54,14 @@ prepare_for_render:
 	# ImgBarrier	SrcPipelineStg, DstPipelineStg, ImageResource, ImageSubresource, SrcMemoryUsage, DstMemoryUsage, SrcImageLayout, DstImageLayout
 	ImgBarrier	TOP, COLOR_ATTACHMENT_OUTPUT, FRAMEBUFFER_IMAGE, IMAGE_SUBRESOURCE_COLOR, MEMORY_READ, COLOR_ATTACHMENT_WRITE, PRESENT_SRC, COLOR_ATTACHMENT_OPT
 
+.type secondary
+.sc_renderpass 0
+render_background:
+	bps		PS_RENDER_BACKGROUND
+	inj		push_wire_colors, 0.125, 0.5, 0.1875, 0.625
+	bvb		1, BACKGROUND_INSTANCE_DATA
+	draw	4, MAX_BK_COUNT
+
 .type primary
 .sc_renderpass 0
 render_to_buffer:
