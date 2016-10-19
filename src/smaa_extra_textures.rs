@@ -29,12 +29,12 @@
  */
 
 // area texture //
-pub const AREATEX_WIDTH: u32 = 160;
-pub const AREATEX_HEIGHT: u32 = 560;
-pub const AREATEX_PITCH: u32 = AREATEX_WIDTH * 2;
-pub const AREATEX_SIZE: u32 = AREATEX_HEIGHT * AREATEX_PITCH;
+pub const AREATEX_WIDTH: usize = 160;
+pub const AREATEX_HEIGHT: usize = 560;
+pub const AREATEX_PITCH: usize = AREATEX_WIDTH * 2;
+pub const AREATEX_SIZE: usize = AREATEX_HEIGHT * AREATEX_PITCH;
 
-pub static AREATEX_BYTES: [u8; AREATEX_SIZE as usize] = [
+pub static AREATEX_BYTES: [u8; AREATEX_SIZE] = [
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x1f, 0x00, 0x00, 
@@ -14972,12 +14972,12 @@ pub static AREATEX_BYTES: [u8; AREATEX_SIZE as usize] = [
 ];
 
 // search texture //
-pub const SEARCHTEX_WIDTH: u32 = 64;
-pub const SEARCHTEX_HEIGHT: u32 = 16;
-pub const SEARCHTEX_PITCH: u32 = SEARCHTEX_WIDTH;
-pub const SEARCHTEX_SIZE: u32 = SEARCHTEX_HEIGHT * SEARCHTEX_PITCH;
+pub const SEARCHTEX_WIDTH: usize = 64;
+pub const SEARCHTEX_HEIGHT: usize = 16;
+pub const SEARCHTEX_PITCH: usize = SEARCHTEX_WIDTH;
+pub const SEARCHTEX_SIZE: usize = SEARCHTEX_HEIGHT * SEARCHTEX_PITCH;
 
-pub static SEARCHTEX_BYTES: [u8; SEARCHTEX_SIZE as usize] = [
+pub static SEARCHTEX_BYTES: [u8; SEARCHTEX_SIZE] = [
     0xfe, 0xfe, 0x00, 0x7f, 0x7f, 0x00, 0x00, 0xfe, 0xfe, 0x00, 0x7f, 0x7f, 
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x7f, 0x7f, 0x00, 
     0x7f, 0x7f, 0x00, 0x00, 0x7f, 0x7f, 0x00, 0x7f, 0x7f, 0xfe, 0x7f, 0x00, 

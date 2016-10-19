@@ -172,7 +172,7 @@ fn app_main() -> Result<(), EngineError>
 fn game_main(engine: Engine, target: Box<RenderWindow>, target_extent: VkExtent2D) -> Result<(), EngineError>
 {
 	// Resources //
-	let images = DevConfImages::from_file(&engine, "devconf.images", target_extent, VkFormat::R8G8B8A8_UNORM).ensure_has_staging();
+	let images = DevConfImages::from_file(&engine, "devconf.images", target_extent, target.get_format()).ensure_has_staging();
 	// Reference Bindings //
 	let ref gbuffer_set = images.images_2d()[0];
 	let ref edgebuffer_set = images.images_2d()[1];
@@ -191,10 +191,10 @@ fn game_main(engine: Engine, target: Box<RenderWindow>, target_extent: VkExtent2
 	{
 		let mapped = images.map_staging_images_memory();
 		let offsets = images.staging_offsets();
-		let areatex_compressed = BC5::compress(&AREATEX_BYTES, (AREATEX_WIDTH as usize, AREATEX_HEIGHT as usize));
-		mapped.map_mut::<[u8; AREATEX_SIZE as usize / 2]>(offsets[1] as usize).copy_from_slice(&areatex_compressed);
-		let searchtex_compressed = BC4::compress(&SEARCHTEX_BYTES, (SEARCHTEX_WIDTH as usize, SEARCHTEX_HEIGHT as usize));
-		mapped.map_mut::<[u8; SEARCHTEX_SIZE as usize / 2]>(offsets[2] as usize).copy_from_slice(&searchtex_compressed);
+		let areatex_compressed = BC5::compress(&AREATEX_BYTES, (AREATEX_WIDTH, AREATEX_HEIGHT));
+		mapped.map_mut::<[u8; AREATEX_SIZE / 2]>(offsets[1] as usize).copy_from_slice(&areatex_compressed);
+		let searchtex_compressed = BC4::compress(&SEARCHTEX_BYTES, (SEARCHTEX_WIDTH, SEARCHTEX_HEIGHT));
+		mapped.map_mut::<[u8; SEARCHTEX_SIZE / 2]>(offsets[2] as usize).copy_from_slice(&searchtex_compressed);
 
 		let playerbullet_pixels = pack_color(
 			VkExtent2D(playerbullet_image.width as u32, playerbullet_image.height as u32),
@@ -220,12 +220,12 @@ fn game_main(engine: Engine, target: Box<RenderWindow>, target_extent: VkExtent2
 	let enabled_pass = if use_post_smaa { &render_passes.fullset } else { &render_passes.noaa };
 	let framebuffers = target.get_back_images().iter().map(|&x| if use_post_smaa
 	{
-		Unrecoverable!(engine.create_framebuffer(&render_passes.fullset, &[gbuffer_set, edgebuffer_set, blend_weight_set, x], VkExtent3D::from(target_extent)))
+		engine.create_framebuffer(&render_passes.fullset, &[gbuffer_set, edgebuffer_set, blend_weight_set, x], VkExtent3D::from(target_extent))
 	}
 	else
 	{
-		Unrecoverable!(engine.create_framebuffer(&render_passes.noaa, &[x], VkExtent3D::from(target_extent)))
-	}).collect::<Vec<_>>();
+		engine.create_framebuffer(&render_passes.noaa, &[x], VkExtent3D::from(target_extent))
+	}).collect::<Result<Vec<_>, _>>().or_crash();
 
 	// Pipelines //
 	let sc_viewport = VkViewport::from(target_extent);
@@ -254,14 +254,13 @@ fn game_main(engine: Engine, target: Box<RenderWindow>, target_extent: VkExtent2
 	else
 	{
 		engine.update_descriptors(&[
-			interlude::DescriptorSetWriteInfo::UniformBuffer(pipelines.get_descriptor_set_for_uniform_buffer(), 0, vec![uniform_memory_info])
+			DescriptorSetWriteInfo::UniformBuffer(pipelines.get_descriptor_set_for_uniform_buffer(), 0, vec![uniform_memory_info])
 		]);
 	}
 
 	// Initial Data Transmission, Layouting for Swapchain Backbuffer Images //
+	engine.allocate_transient_transfer_command_buffers(1).and_then(|setup_commands|
 	{
-		let setup_commands = try!(engine.allocate_transient_transfer_command_buffers(1));
-
 		let buffer_memory_barriers = [
 			BufferMemoryBarrier::hold_ownership(&appdata.stg, 0 .. appdata.size(), 0, VK_ACCESS_TRANSFER_READ_BIT),
 			BufferMemoryBarrier::hold_ownership(&appdata.dev, 0 .. appdata.size(), 0, VK_ACCESS_TRANSFER_WRITE_BIT)
@@ -272,36 +271,35 @@ fn game_main(engine: Engine, target: Box<RenderWindow>, target_extent: VkExtent2
 				VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT | VK_ACCESS_INDEX_READ_BIT | VK_ACCESS_UNIFORM_READ_BIT)
 		];
 		let blitted_image_templates_dev = vec![
-			ImageMemoryBarrier::template(smaa_areatex_set, interlude::ImageSubresourceRange::base_color()),
-			ImageMemoryBarrier::template(smaa_searchtex_set, interlude::ImageSubresourceRange::base_color()),
-			ImageMemoryBarrier::template(playerbullet_tex_set, interlude::ImageSubresourceRange::base_color()),
-			ImageMemoryBarrier::template(lineburst_particle_gradient_tex_set, interlude::ImageSubresourceRange::base_color())
+			ImageMemoryBarrier::template(smaa_areatex_set, ImageSubresourceRange::base_color()),
+			ImageMemoryBarrier::template(smaa_searchtex_set, ImageSubresourceRange::base_color()),
+			ImageMemoryBarrier::template(playerbullet_tex_set, ImageSubresourceRange::base_color()),
+			ImageMemoryBarrier::template(lineburst_particle_gradient_tex_set, ImageSubresourceRange::base_color())
 		];
 		let blitted_image_templates_stg = vec![
-			ImageMemoryBarrier::template(smaa_areatex_stg, interlude::ImageSubresourceRange::base_color()),
-			ImageMemoryBarrier::template(smaa_searchtex_stg, interlude::ImageSubresourceRange::base_color()),
-			ImageMemoryBarrier::template(playerbullet_tex_stg, interlude::ImageSubresourceRange::base_color()),
-			ImageMemoryBarrier::template(lineburst_particle_gradient_tex_stg, interlude::ImageSubresourceRange::base_color())
+			ImageMemoryBarrier::template(smaa_areatex_stg, ImageSubresourceRange::base_color()),
+			ImageMemoryBarrier::template(smaa_searchtex_stg, ImageSubresourceRange::base_color()),
+			ImageMemoryBarrier::template(playerbullet_tex_stg, ImageSubresourceRange::base_color()),
+			ImageMemoryBarrier::template(lineburst_particle_gradient_tex_stg, ImageSubresourceRange::base_color())
 		];
 		let image_memory_barriers = target.get_back_images().iter()
-			.map(|x| ImageMemoryBarrier::hold_ownership(*x, interlude::ImageSubresourceRange::base_color(),
+			.map(|x| ImageMemoryBarrier::hold_ownership(*x, ImageSubresourceRange::base_color(),
 				0, VK_ACCESS_MEMORY_READ_BIT, VkImageLayout::Undefined, VkImageLayout::PresentSrcKHR))
 			.chain(vec![
-				ImageMemoryBarrier::hold_ownership(gbuffer_set, interlude::ImageSubresourceRange::base_color(), VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VkImageLayout::Preinitialized, VkImageLayout::ColorAttachmentOptimal),
-				ImageMemoryBarrier::hold_ownership(edgebuffer_set, interlude::ImageSubresourceRange::base_color(), VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VkImageLayout::Preinitialized, VkImageLayout::ColorAttachmentOptimal),
-				ImageMemoryBarrier::hold_ownership(blend_weight_set, interlude::ImageSubresourceRange::base_color(), VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VkImageLayout::Preinitialized, VkImageLayout::ColorAttachmentOptimal)
+				ImageMemoryBarrier::hold_ownership(gbuffer_set, ImageSubresourceRange::base_color(), VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VkImageLayout::Preinitialized, VkImageLayout::ColorAttachmentOptimal),
+				ImageMemoryBarrier::hold_ownership(edgebuffer_set, ImageSubresourceRange::base_color(), VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VkImageLayout::Preinitialized, VkImageLayout::ColorAttachmentOptimal),
+				ImageMemoryBarrier::hold_ownership(blend_weight_set, ImageSubresourceRange::base_color(), VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VkImageLayout::Preinitialized, VkImageLayout::ColorAttachmentOptimal)
 			]).chain(blitted_image_templates_dev.iter().map(|t| t.into_transfer_dst(VK_ACCESS_HOST_WRITE_BIT, VkImageLayout::Preinitialized)))
-			.chain(blitted_image_templates_stg.into_iter().map(|t| t.into_transfer_src(VK_ACCESS_HOST_WRITE_BIT, VkImageLayout::Preinitialized)))
-			.collect::<Vec<_>>();
+			.chain(blitted_image_templates_stg.into_iter().map(|t| t.into_transfer_src(VK_ACCESS_HOST_WRITE_BIT, VkImageLayout::Preinitialized))).collect_vec();
 		let image_memory_barriers_ret = blitted_image_templates_dev.into_iter()
 			.map(|t| t.from_transfer_dst(VK_ACCESS_SHADER_READ_BIT, VkImageLayout::ShaderReadOnlyOptimal)).collect_vec();
 
-		Unrecoverable!(setup_commands.begin(0).and_then(|recorder|
-			recorder.pipeline_barrier(VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, false,
+		try!(setup_commands.begin(0).and_then(|recorder| recorder
+			.pipeline_barrier(VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, false,
 				&[], &buffer_memory_barriers, &image_memory_barriers)
-			.copy_buffer(&appdata.stg, &appdata.dev, &[interlude::BufferCopyRegion(0, 0, appdata.size())])
-			.copy_image(smaa_areatex_stg, smaa_areatex_set, &[ImageCopyRegion::entire_colorbits(VkExtent3D(AREATEX_WIDTH, AREATEX_HEIGHT, 1))])
-			.copy_image(smaa_searchtex_stg, smaa_searchtex_set, &[ImageCopyRegion::entire_colorbits(VkExtent3D(SEARCHTEX_WIDTH, SEARCHTEX_HEIGHT, 1))])
+			.copy_buffer(&appdata.stg, &appdata.dev, &[BufferCopyRegion(0, 0, appdata.size())])
+			.copy_image(smaa_areatex_stg, smaa_areatex_set, &[ImageCopyRegion::entire_colorbits(VkExtent3D(AREATEX_WIDTH as u32, AREATEX_HEIGHT as u32, 1))])
+			.copy_image(smaa_searchtex_stg, smaa_searchtex_set, &[ImageCopyRegion::entire_colorbits(VkExtent3D(SEARCHTEX_WIDTH as u32, SEARCHTEX_HEIGHT as u32, 1))])
 			.copy_image(playerbullet_tex_stg, playerbullet_tex_set,
 				&[ImageCopyRegion::entire_colorbits(VkExtent3D(playerbullet_image.width as u32, playerbullet_image.height as u32, 1))])
 			.copy_image(lineburst_particle_gradient_tex_stg, lineburst_particle_gradient_tex_set, &[ImageCopyRegion::entire_colorbits(VkExtent3D(4, 1, 1))])
@@ -309,9 +307,8 @@ fn game_main(engine: Engine, target: Box<RenderWindow>, target_extent: VkExtent2
 				&[], &buffer_memory_barriers_ret, &image_memory_barriers_ret)
 			.end()
 		));
-
-		Unrecoverable!(setup_commands.execute());
-	}
+		setup_commands.execute()
+	}).or_crash();
 
 	// Debug Information //
 	let frame_time_ms = RefCell::new(0.0f64);
