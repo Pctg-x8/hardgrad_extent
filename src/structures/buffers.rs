@@ -1,12 +1,8 @@
 // Device Memory Structures
 
-use interlude::Position;
+use interlude::*;
 use constants::*;
 use std;
-
-pub type CVector4 = [f32; 4];
-pub type CVector2 = [f32; 2];
-pub type CMatrix4 = [CVector4; 4];
 
 #[repr(C)] pub struct LineBurstParticleGroup
 {

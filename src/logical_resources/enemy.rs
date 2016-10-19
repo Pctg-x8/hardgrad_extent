@@ -3,6 +3,7 @@ use utils::*;
 use constants::*;
 use structures::*;
 use nalgebra::*;
+use interlude::*;
 
 fn store_quaternion(to: &mut CVector4, q: &Quaternion<f32>)
 {

@@ -22,8 +22,6 @@ use psdloader::*;
 
 mod constants;
 use constants::*;
-mod traits;
-mod vertex_formats;
 mod structures;
 use structures::*;
 mod logical_resources;
@@ -40,7 +38,6 @@ use smaa_extra_textures::*;
 
 use rayon::prelude::*;
 
-use std::rc::Rc;
 use std::cell::RefCell;
 
 // For InputSystem
@@ -48,42 +45,6 @@ use std::cell::RefCell;
 pub enum LogicalInputTypes
 {
 	Horizontal, Vertical, Shoot, Slowdown, Overdrive
-}
-
-// Wire Render Wrapper with moving pipeline state object
-pub struct WireRender
-{
-	renderstate: interlude::GraphicsPipeline, layout_ref: Rc<interlude::PipelineLayout>
-}
-impl WireRender
-{
-	pub fn new(renderstate: interlude::GraphicsPipeline, layout: &Rc<interlude::PipelineLayout>) -> Self
-	{
-		WireRender { renderstate: renderstate, layout_ref: layout.clone() }
-	}
-	pub fn begin<RecorderT>(&self, comrec: RecorderT, wirecolor_r: f32, wirecolor_g: f32, wirecolor_b: f32, wirecolor_a: f32) -> RecorderT
-		where RecorderT: DrawingCommandRecorder
-	{
-		comrec.bind_pipeline(&self.renderstate).push_constants(&self.layout_ref, &[interlude::ShaderStage::Vertex],
-			0 .. std::mem::size_of::<structures::CVector4>() as u32, &[wirecolor_r, wirecolor_g, wirecolor_b, wirecolor_a])
-	}
-}
-// Sprite Render with moving pipeline state object
-pub struct SpriteRender
-{
-	renderstate: interlude::GraphicsPipeline, layout_ref: Rc<interlude::PipelineLayout>
-}
-impl SpriteRender
-{
-	pub fn new(renderstate: interlude::GraphicsPipeline, layout: &Rc<interlude::PipelineLayout>) -> Self
-	{
-		SpriteRender { renderstate: renderstate, layout_ref: layout.clone() }
-	}
-	pub fn begin<RecorderT>(&self, comrec: RecorderT, texture_ds: VkDescriptorSet) -> RecorderT
-		where RecorderT: DrawingCommandRecorder
-	{
-		comrec.bind_pipeline(&self.renderstate).bind_descriptor_sets_partial(&self.layout_ref, 1, &[texture_ds])
-	}
 }
 
 fn pack_color(canvas_size: VkExtent2D, red: DecompressedChannelImageData, green: DecompressedChannelImageData,
@@ -126,11 +87,15 @@ fn pack_color(canvas_size: VkExtent2D, red: DecompressedChannelImageData, green:
 	color_pixels
 }
 
+mod assets;
+use assets::*;
 mod framebuffer;
+mod renderstate;
 use framebuffer::*;
+use renderstate::*;
 
 #[allow(dead_code)]
-struct SMAAPipelineStates
+pub struct SMAAPipelineStates
 {
 	edgedetect_vshader: interlude::ShaderProgram, blendweight_vshader: interlude::ShaderProgram, combine_vshader: interlude::ShaderProgram,
 	edgedetect_shader: interlude::ShaderProgram, blendweight_shader: interlude::ShaderProgram, combine_shader: interlude::ShaderProgram,
@@ -193,189 +158,6 @@ impl SMAAPipelineStates
 		}
 	}
 }
-struct ShaderStore
-{
-	// Vertex Shaders //
-	geometry_preinstancing_vsh: interlude::ShaderProgram,
-	erz_preinstancing_vsh: interlude::ShaderProgram,
-	player_rotate_vsh: interlude::ShaderProgram,
-	playerbullet_vsh: interlude::ShaderProgram,
-	lineburst_particle_vsh: interlude::ShaderProgram,
-	// Geometry Shaders //
-	enemy_duplication_gsh: interlude::ShaderProgram,
-	background_duplication_gsh: interlude::ShaderProgram,
-	enemy_rezonator_duplication_gsh: interlude::ShaderProgram,
-	lineburst_particle_instantiate_gsh: interlude::ShaderProgram,
-	// Fragment Shaders //
-	solid_fsh: interlude::ShaderProgram,
-	sprite_fsh: interlude::ShaderProgram
-}
-impl ShaderStore
-{
-	fn new(engine: &interlude::Engine) -> Box<Self>
-	{
-		Box::new(ShaderStore
-		{
-			geometry_preinstancing_vsh: Unrecoverable!(engine.create_vertex_shader_from_asset("shaders.GeometryPreinstancing", "main", &[
-				interlude::VertexBinding::PerVertex(std::mem::size_of::<CVector4>() as u32),
-				interlude::VertexBinding::PerInstance(std::mem::size_of::<u32>() as u32)
-			], &[
-				interlude::VertexAttribute(0, VkFormat::R32G32B32A32_SFLOAT, 0),
-				interlude::VertexAttribute(1, VkFormat::R32_UINT, 0)
-			])),
-			erz_preinstancing_vsh: Unrecoverable!(engine.create_vertex_shader_from_asset("shaders.EnemyRezonatorV", "main", &[
-				interlude::VertexBinding::PerVertex(std::mem::size_of::<CVector4>() as u32),
-				interlude::VertexBinding::PerInstance(std::mem::size_of::<CVector4>() as u32)
-			], &[
-				interlude::VertexAttribute(0, VkFormat::R32G32B32A32_SFLOAT, 0),
-				interlude::VertexAttribute(1, VkFormat::R32G32B32A32_SFLOAT, 0)
-			])),
-			player_rotate_vsh: Unrecoverable!(engine.create_vertex_shader_from_asset("shaders.PlayerRotor", "main", &[
-				interlude::VertexBinding::PerVertex(std::mem::size_of::<CVector4>() as u32),
-				interlude::VertexBinding::PerInstance(std::mem::size_of::<CVector4>() as u32)
-			], &[
-				interlude::VertexAttribute(0, VkFormat::R32G32B32A32_SFLOAT, 0),
-				interlude::VertexAttribute(1, VkFormat::R32G32B32A32_SFLOAT, 0)
-			])),
-			playerbullet_vsh: Unrecoverable!(engine.create_vertex_shader_from_asset("shaders.PlayerBullet", "main", &[
-				interlude::VertexBinding::PerVertex(std::mem::size_of::<CVector4>() as u32),
-				interlude::VertexBinding::PerInstance(std::mem::size_of::<CVector4>() as u32)
-			], &[
-				interlude::VertexAttribute(0, VkFormat::R32G32B32A32_SFLOAT, 0),
-				interlude::VertexAttribute(1, VkFormat::R32G32B32A32_SFLOAT, 0)
-			])),
-			lineburst_particle_vsh: Unrecoverable!(engine.create_vertex_shader_from_asset("shaders.LineBurstParticleVert", "main", &[
-				interlude::VertexBinding::PerVertex(std::mem::size_of::<structures::LineBurstParticleGroup>() as u32)
-			], &[
-				interlude::VertexAttribute(0, VkFormat::R32_UINT, 0),
-				interlude::VertexAttribute(0, VkFormat::R32G32_SFLOAT, std::mem::size_of::<u32>() as u32)
-			])),
-			enemy_duplication_gsh: Unrecoverable!(engine.create_geometry_shader_from_asset("shaders.EnemyDuplicator", "main")),
-			background_duplication_gsh: Unrecoverable!(engine.create_geometry_shader_from_asset("shaders.BackLineDuplicator", "main")),
-			enemy_rezonator_duplication_gsh: Unrecoverable!(engine.create_geometry_shader_from_asset("shaders.EnemyRezonatorDup", "main")),
-			lineburst_particle_instantiate_gsh: Unrecoverable!(engine.create_geometry_shader_from_asset("shaders.LineBurstParticleInstantiate", "main")),
-			solid_fsh: Unrecoverable!(engine.create_fragment_shader_from_asset("shaders.ThroughColor", "main")),
-			sprite_fsh: Unrecoverable!(engine.create_fragment_shader_from_asset("shaders.SpriteFrag", "main"))
-		})
-	}
-}
-struct Layouts
-{
-	pub global_uniform_layout: DescriptorSetLayout, pub texture_layout: DescriptorSetLayout, pub texture_layout_geom: DescriptorSetLayout,
-	pub wire_pipeline_layout: Rc<PipelineLayout>, pub lineburst_particle_layout: PipelineLayout, pub sprite_layout: Rc<PipelineLayout>
-}
-impl Layouts
-{
-	pub fn new(engine: &Engine) -> Self
-	{
-		let gu_layout = Unrecoverable!(engine.create_descriptor_set_layout(&[Descriptor::Uniform(1, vec![ShaderStage::Vertex, ShaderStage::Geometry])]));
-		let t_layout = Unrecoverable!(engine.create_descriptor_set_layout(&[Descriptor::CombinedSampler(1, vec![ShaderStage::Fragment])]));
-		let t_layout_g = Unrecoverable!(engine.create_descriptor_set_layout(&[Descriptor::CombinedSampler(1, vec![ShaderStage::Geometry])]));
-		
-		Layouts
-		{
-			wire_pipeline_layout: Rc::new(Unrecoverable!(engine.create_pipeline_layout(&[&gu_layout],
-				&[PushConstantDesc(VK_SHADER_STAGE_VERTEX_BIT, 0 .. std::mem::size_of::<CVector4>() as u32)]))),
-			lineburst_particle_layout: Unrecoverable!(engine.create_pipeline_layout(&[&gu_layout, &t_layout_g], &[])),
-			sprite_layout: Rc::new(Unrecoverable!(engine.create_pipeline_layout(&[&gu_layout, &t_layout], &[]))),
-			global_uniform_layout: gu_layout, texture_layout: t_layout, texture_layout_geom: t_layout_g
-		}
-	}
-}
-#[allow(dead_code)]
-struct PipelineStates
-{
-	shaderstore: Box<ShaderStore>, layouts: Layouts,
-	pub background: WireRender, pub enemy_body: WireRender, pub enemy_rezonator: WireRender, pub player: WireRender, pub playerbullet: SpriteRender,
-	pub lineburst: interlude::GraphicsPipeline,
-	pub smaa: Option<SMAAPipelineStates>,
-	descriptor_sets: interlude::DescriptorSets
-}
-impl PipelineStates
-{
-	pub fn new(engine: &interlude::Engine, use_smaa: bool, render_pass: &interlude::RenderPass, swapchain_viewport: VkViewport) -> Self
-	{
-		let shaderstore = ShaderStore::new(engine);
-		let layouts = Layouts::new(engine);
-
-		let mut gps =
-		{
-			let background_ps = interlude::GraphicsPipelineBuilder::new(&layouts.wire_pipeline_layout, render_pass, 0)
-				.vertex_shader(interlude::PipelineShaderProgram::unspecialized(&shaderstore.geometry_preinstancing_vsh))
-				.geometry_shader(interlude::PipelineShaderProgram::unspecialized(&shaderstore.background_duplication_gsh))
-				.fragment_shader(interlude::PipelineShaderProgram::unspecialized(&shaderstore.solid_fsh))
-				.primitive_topology(interlude::PrimitiveTopology::LineList(true))
-				.viewport_scissors(&[interlude::ViewportWithScissorRect::default_scissor(swapchain_viewport)])
-				.blend_state(&[interlude::AttachmentBlendState::PremultipliedAlphaBlend]);
-			let enemy_ps = interlude::GraphicsPipelineBuilder::inherit(&background_ps)
-				.geometry_shader(interlude::PipelineShaderProgram::unspecialized(&shaderstore.enemy_duplication_gsh))
-				.blend_state(&[interlude::AttachmentBlendState::Disabled]);
-			let enemy_rezonator_ps = interlude::GraphicsPipelineBuilder::inherit(&enemy_ps)
-				.vertex_shader(interlude::PipelineShaderProgram::unspecialized(&shaderstore.erz_preinstancing_vsh))
-				.geometry_shader(interlude::PipelineShaderProgram::unspecialized(&shaderstore.enemy_rezonator_duplication_gsh))
-				.primitive_topology(interlude::PrimitiveTopology::TriangleList(false));
-			let player_ps = interlude::GraphicsPipelineBuilder::new(&layouts.wire_pipeline_layout, render_pass, 0)
-				.vertex_shader(interlude::PipelineShaderProgram::unspecialized(&shaderstore.player_rotate_vsh))
-				.fragment_shader(interlude::PipelineShaderProgram::unspecialized(&shaderstore.solid_fsh))
-				.primitive_topology(interlude::PrimitiveTopology::LineList(false))
-				.viewport_scissors(&[interlude::ViewportWithScissorRect::default_scissor(swapchain_viewport)])
-				.blend_state(&[interlude::AttachmentBlendState::Disabled]);
-			let playerbullet_ps = interlude::GraphicsPipelineBuilder::new(&layouts.sprite_layout, render_pass, 0)
-				.vertex_shader(interlude::PipelineShaderProgram(&shaderstore.playerbullet_vsh, vec![(0, interlude::ConstantEntry::Float(0.75))]))
-				.fragment_shader(interlude::PipelineShaderProgram::unspecialized(&shaderstore.sprite_fsh))
-				.primitive_topology(interlude::PrimitiveTopology::TriangleStrip(false))
-				.viewport_scissors(&[interlude::ViewportWithScissorRect::default_scissor(swapchain_viewport)])
-				.blend_state(&[interlude::AttachmentBlendState::PremultipliedAlphaBlend]);
-			let lineburst_ps = interlude::GraphicsPipelineBuilder::new(&layouts.lineburst_particle_layout, render_pass, 0)
-				.vertex_shader(interlude::PipelineShaderProgram::unspecialized(&shaderstore.lineburst_particle_vsh))
-				.geometry_shader(interlude::PipelineShaderProgram::unspecialized(&shaderstore.lineburst_particle_instantiate_gsh))
-				.fragment_shader(interlude::PipelineShaderProgram::unspecialized(&shaderstore.solid_fsh))
-				.primitive_topology(interlude::PrimitiveTopology::Point)
-				.viewport_scissors(&[interlude::ViewportWithScissorRect::default_scissor(swapchain_viewport)])
-				.blend_state(&[interlude::AttachmentBlendState::PremultipliedAlphaBlend]);
-			Unrecoverable!(engine.create_graphics_pipelines(&[&background_ps, &enemy_ps, &enemy_rezonator_ps, &player_ps, &playerbullet_ps, &lineburst_ps]))
-		};
-		let lineburst_ps = gps.pop().unwrap();
-		let playerbullet_sr = SpriteRender::new(gps.pop().unwrap(), &layouts.sprite_layout);
-		let player_wr = WireRender::new(gps.pop().unwrap(), &layouts.wire_pipeline_layout);
-		let enemy_rezonator_wr = WireRender::new(gps.pop().unwrap(), &layouts.wire_pipeline_layout);
-		let enemy_wr = WireRender::new(gps.pop().unwrap(), &layouts.wire_pipeline_layout);
-		let background_wr = WireRender::new(gps.pop().unwrap(), &layouts.wire_pipeline_layout);
-		assert_eq!(gps.len(), 0);
-
-		let (smaa, descriptor_sets) = if use_smaa
-		{
-			let ps = SMAAPipelineStates::new(engine, render_pass, 1, swapchain_viewport);
-			let dslist = Unrecoverable!(engine.preallocate_all_descriptor_sets(&[
-				&layouts.global_uniform_layout, &layouts.texture_layout, &layouts.texture_layout_geom,
-				&ps.descriptor_sets[0], &ps.descriptor_sets[1], &ps.descriptor_sets[2]
-			]));
-			(Some(ps), dslist)
-		}
-		else
-		{
-			let dslist = Unrecoverable!(engine.preallocate_all_descriptor_sets(&[
-				&layouts.global_uniform_layout, &layouts.texture_layout, &layouts.texture_layout_geom
-			]));
-			(None, dslist)
-		};
-
-		PipelineStates
-		{
-			shaderstore: shaderstore, layouts: layouts,
-			background: background_wr, enemy_body: enemy_wr, enemy_rezonator: enemy_rezonator_wr, player: player_wr, playerbullet: playerbullet_sr,
-			lineburst: lineburst_ps,
-			smaa: smaa, descriptor_sets: descriptor_sets
-		}
-	}
-	
-	pub fn get_descriptor_set_for_uniform_buffer(&self) -> VkDescriptorSet { self.descriptor_sets[0] }
-	pub fn get_descriptor_set_for_playerbullet_texture(&self) -> VkDescriptorSet { self.descriptor_sets[1] }
-	pub fn get_descriptor_set_for_lineburst_particle_color(&self) -> VkDescriptorSet { self.descriptor_sets[2] }
-	pub fn get_descriptor_set_for_smaa_edgedetect(&self) -> VkDescriptorSet { self.descriptor_sets[3] }
-	pub fn get_descriptor_set_for_smaa_blendweight(&self) -> VkDescriptorSet { self.descriptor_sets[4] }
-	pub fn get_descriptor_set_for_smaa_combine(&self) -> VkDescriptorSet { self.descriptor_sets[5] }
-}
 
 enum ApplicationEvent { Update, Exit }
 
@@ -429,14 +211,7 @@ fn game_main(engine: Engine, target: Box<RenderWindow>, target_extent: VkExtent2
 			[f16::from_f64(0.25), f16::from_f64(0.25), f16::from_f64(0.25), f16::from_f64(0.375)]
 		]);
 	}
-	let application_buffer_prealloc = engine.buffer_preallocate(&[
-		(std::mem::size_of::<[interlude::PosUV; 4]>(), interlude::BufferDataType::Vertex),
-		(std::mem::size_of::<structures::VertexMemoryForWireRender>(), interlude::BufferDataType::Vertex),
-		(std::mem::size_of::<structures::IndexMemory>(), interlude::BufferDataType::Index),
-		(std::mem::size_of::<structures::InstanceMemory>(), interlude::BufferDataType::Vertex),
-		(std::mem::size_of::<structures::UniformMemory>(), interlude::BufferDataType::Uniform)
-	]);
-	let (application_data, appdata_stage) = try!(engine.create_double_buffer(&application_buffer_prealloc));
+	let appdata = ApplicationBufferData::new(&engine, target_extent);
 
 	// Rendering Switches //
 	let use_post_smaa = true;
@@ -452,57 +227,12 @@ fn game_main(engine: Engine, target: Box<RenderWindow>, target_extent: VkExtent2
 		Unrecoverable!(engine.create_framebuffer(&render_passes.noaa, &[x], VkExtent3D::from(target_extent)))
 	}).collect::<Vec<_>>();
 
-	// setup initial data //
-	try!(appdata_stage.map().map(|mapped|
-	{
-		*mapped.map_mut::<[interlude::PosUV; 4]>(application_buffer_prealloc.offset(0)) = [
-			interlude::PosUV(-1.0f32, -1.0f32, 0.0f32, 0.0f32), interlude::PosUV(1.0f32, -1.0f32, 1.0f32, 0.0f32),
-			interlude::PosUV(-1.0f32, 1.0f32, 0.0f32, 1.0f32), interlude::PosUV(1.0f32, 1.0f32, 1.0f32, 1.0f32)
-		];
-		let vertices = mapped.map_mut::<structures::VertexMemoryForWireRender>(application_buffer_prealloc.offset(1));
-		let indices = mapped.map_mut::<structures::IndexMemory>(application_buffer_prealloc.offset(2));
-		vertices.unit_plane_source_vts = [
-			Position(-1.0f32, -1.0f32, 0.0f32, 1.0f32),
-			Position( 1.0f32, -1.0f32, 0.0f32, 1.0f32),
-			Position( 1.0f32,  1.0f32, 0.0f32, 1.0f32),
-			Position(-1.0f32,  1.0f32, 0.0f32, 1.0f32)
-		];
-		vertices.player_cube_vts = [
-			Position(-1.0f32, -1.0f32, -1.0f32, 1.0f32),
-			Position( 1.0f32, -1.0f32, -1.0f32, 1.0f32),
-			Position( 1.0f32,  1.0f32, -1.0f32, 1.0f32),
-			Position(-1.0f32,  1.0f32, -1.0f32, 1.0f32),
-			Position(-1.0f32, -1.0f32,  1.0f32, 1.0f32),
-			Position( 1.0f32, -1.0f32,  1.0f32, 1.0f32),
-			Position( 1.0f32,  1.0f32,  1.0f32, 1.0f32),
-			Position(-1.0f32,  1.0f32,  1.0f32, 1.0f32)
-		];
-		vertices.enemy_rezonator_vts = [
-			Position(0.0f32, 1.0f32, 0.0f32, 1.0f32),
-			Position(-1.0f32, -1.0f32, 0.0f32, 1.0f32),
-			Position(1.0f32, -1.0f32, 0.0f32, 1.0f32)
-		];
-		vertices.sprite_plane_vts = [
-			Position(-1.0, -1.0, 0.0, 1.0),
-			Position( 1.0, -1.0, 0.0, 1.0),
-			Position(-1.0,  1.0, 0.0, 1.0),
-			Position( 1.0,  1.0, 0.0, 1.0)
-		];
-		indices.player_cube_ids = [
-			0, 1, 1, 2, 2, 3, 3, 0,
-			4, 5, 5, 6, 6, 7, 7, 4,
-			0, 4, 1, 5, 2, 6, 3, 7
-		];
-		let uniforms = mapped.map_mut::<structures::UniformMemory>(application_buffer_prealloc.offset(4));
-		logical_resources::projection_matrixes::setup_parameters(uniforms, target_extent);
-	}));
-
 	// Pipelines //
 	let sc_viewport = VkViewport::from(target_extent);
 	let pipelines = PipelineStates::new(&engine, use_post_smaa, enabled_pass, sc_viewport);
 
 	// Descriptor Set //
-	let uniform_memory_info = BufferInfo(&application_data, application_buffer_prealloc.offset(4) .. application_buffer_prealloc.total_size());
+	let uniform_memory_info = BufferInfo(&appdata.dev, appdata.offset_uniform() .. appdata.size());
 	let gbuffer_info = ImageInfo(gbuffer_sampler, gbuffer_set, VkImageLayout::ShaderReadOnlyOptimal);
 	let edgebuffer_info = ImageInfo(gbuffer_sampler, edgebuffer_set, VkImageLayout::ShaderReadOnlyOptimal);
 	let blendweight_info = ImageInfo(gbuffer_sampler, blend_weight_set, VkImageLayout::ShaderReadOnlyOptimal);
@@ -533,13 +263,12 @@ fn game_main(engine: Engine, target: Box<RenderWindow>, target_extent: VkExtent2
 		let setup_commands = try!(engine.allocate_transient_transfer_command_buffers(1));
 
 		let buffer_memory_barriers = [
-			BufferMemoryBarrier::hold_ownership(&appdata_stage, 0 .. application_buffer_prealloc.total_size(), 0, VK_ACCESS_TRANSFER_READ_BIT),
-			BufferMemoryBarrier::hold_ownership(&application_data, 0 .. application_buffer_prealloc.total_size(), 0, VK_ACCESS_TRANSFER_WRITE_BIT)
+			BufferMemoryBarrier::hold_ownership(&appdata.stg, 0 .. appdata.size(), 0, VK_ACCESS_TRANSFER_READ_BIT),
+			BufferMemoryBarrier::hold_ownership(&appdata.dev, 0 .. appdata.size(), 0, VK_ACCESS_TRANSFER_WRITE_BIT)
 		];
 		let buffer_memory_barriers_ret = [
-			BufferMemoryBarrier::hold_ownership(&appdata_stage, 0 .. application_buffer_prealloc.total_size(),
-				VK_ACCESS_TRANSFER_READ_BIT, VK_ACCESS_MEMORY_READ_BIT),
-			BufferMemoryBarrier::hold_ownership(&application_data, 0 .. application_buffer_prealloc.total_size(),
+			BufferMemoryBarrier::hold_ownership(&appdata.stg, 0 .. appdata.size(), VK_ACCESS_TRANSFER_READ_BIT, VK_ACCESS_MEMORY_READ_BIT),
+			BufferMemoryBarrier::hold_ownership(&appdata.dev, 0 .. appdata.size(),
 				VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT | VK_ACCESS_INDEX_READ_BIT | VK_ACCESS_UNIFORM_READ_BIT)
 		];
 		let blitted_image_templates_dev = vec![
@@ -570,7 +299,7 @@ fn game_main(engine: Engine, target: Box<RenderWindow>, target_extent: VkExtent2
 		Unrecoverable!(setup_commands.begin(0).and_then(|recorder|
 			recorder.pipeline_barrier(VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, false,
 				&[], &buffer_memory_barriers, &image_memory_barriers)
-			.copy_buffer(&appdata_stage, &application_data, &[interlude::BufferCopyRegion(0, 0, application_buffer_prealloc.total_size() as usize)])
+			.copy_buffer(&appdata.stg, &appdata.dev, &[interlude::BufferCopyRegion(0, 0, appdata.size())])
 			.copy_image(smaa_areatex_stg, smaa_areatex_set, &[ImageCopyRegion::entire_colorbits(VkExtent3D(AREATEX_WIDTH, AREATEX_HEIGHT, 1))])
 			.copy_image(smaa_searchtex_stg, smaa_searchtex_set, &[ImageCopyRegion::entire_colorbits(VkExtent3D(SEARCHTEX_WIDTH, SEARCHTEX_HEIGHT, 1))])
 			.copy_image(playerbullet_tex_stg, playerbullet_tex_set,
@@ -599,7 +328,7 @@ fn game_main(engine: Engine, target: Box<RenderWindow>, target_extent: VkExtent2
 	let combine_commands = if use_post_smaa
 	{
 		let smaa_combine_descriptor_sets = [pipelines.get_descriptor_set_for_smaa_combine()];
-		let smaa_combine_vertex_buffers = [(&application_data as &BufferResource, application_buffer_prealloc.offset(0))];
+		let smaa_combine_vertex_buffers = [(&appdata.dev as &BufferResource, appdata.offset_ppvbuf())];
 		let combine_commands = try!(engine.allocate_bundled_command_buffers(2 * framebuffers.len() as u32));
 		for (n, f) in framebuffers.iter().enumerate()
 		{
@@ -636,35 +365,35 @@ fn game_main(engine: Engine, target: Box<RenderWindow>, target_extent: VkExtent2
 				.pipeline_barrier(VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, false, &[], &[], &[color_output_barrier])
 				.begin_render_pass(&framebuffers[i], &clear_values, false)
 				// Pass 0 : Render to Buffer //
-				.bind_descriptor_sets(&pipelines.layouts.wire_pipeline_layout, &[pipelines.get_descriptor_set_for_uniform_buffer()])
-				.bind_vertex_buffers(&[(&application_data, application_buffer_prealloc.offset(1))])
+				.bind_descriptor_sets(pipelines.layout_for_wire_render(), &[pipelines.get_descriptor_set_for_uniform_buffer()])
+				.bind_vertex_buffers(&[(&appdata.dev, appdata.offset_vbuf())])
 				.inject_commands(|r| pipelines.background.begin(r, 0.125, 0.5, 0.1875, 0.625))
-				.bind_vertex_buffers_partial(1, &[(&application_data, application_buffer_prealloc.offset(3) + structures::InstanceMemory::background_offs())])
+				.bind_vertex_buffers_partial(1, &[(&appdata.dev, appdata.offset_instance() + InstanceMemory::background_offs())])
 				.draw(4, MAX_BK_COUNT as u32)
 				.inject_commands(|r| pipelines.enemy_body.begin(r, 0.25, 0.9875, 1.5, 1.0))
-				.bind_vertex_buffers_partial(1, &[(&application_data, application_buffer_prealloc.offset(3))])
+				.bind_vertex_buffers_partial(1, &[(&appdata.dev, appdata.offset_instance())])
 				.draw(4, MAX_ENEMY_COUNT as u32)
 				.inject_commands(|r| pipelines.player.begin(r, 1.5, 1.25, 0.375, 1.0))
-				.bind_vertex_buffers_partial(1, &[(&application_data, application_buffer_prealloc.offset(3) + structures::InstanceMemory::player_rot_offs())])
-				.bind_index_buffer(&application_data, application_buffer_prealloc.offset(2))
+				.bind_vertex_buffers_partial(1, &[(&appdata.dev, appdata.offset_instance() + InstanceMemory::player_rot_offs())])
+				.bind_index_buffer(&appdata.dev, appdata.offset_ibuf())
 				.draw_indexed(24, 2, 4)
 				.inject_commands(|r| pipelines.enemy_rezonator.begin(r, 1.25, 0.5, 0.625, 1.0))
-				.bind_vertex_buffers(&[(&application_data, application_buffer_prealloc.offset(1) + structures::VertexMemoryForWireRender::enemy_rezonator_offs()),
-					(&application_data, application_buffer_prealloc.offset(3) + structures::InstanceMemory::enemy_rez_offs())])
+				.bind_vertex_buffers(&[(&appdata.dev, appdata.offset_vbuf() + VertexMemoryForWireRender::enemy_rezonator_offs()),
+					(&appdata.dev, appdata.offset_instance() + InstanceMemory::enemy_rez_offs())])
 				.draw(3, MAX_ENEMY_COUNT as u32)
 				.inject_commands(|r| pipelines.playerbullet.begin(r, pipelines.get_descriptor_set_for_playerbullet_texture()))
 				.bind_vertex_buffers(&[
-					(&application_data, application_buffer_prealloc.offset(1) + structures::VertexMemoryForWireRender::sprite_plane_offs()),
-					(&application_data, application_buffer_prealloc.offset(3) + structures::InstanceMemory::player_bullet_offs())
+					(&appdata.dev, appdata.offset_vbuf() + VertexMemoryForWireRender::sprite_plane_offs()),
+					(&appdata.dev, appdata.offset_instance() + InstanceMemory::player_bullet_offs())
 				])
 				.draw(4, MAX_PLAYER_BULLET_COUNT as u32)
 				.bind_pipeline(&pipelines.lineburst)
-				.bind_descriptor_sets_partial(&pipelines.layouts.lineburst_particle_layout, 1, &[pipelines.get_descriptor_set_for_lineburst_particle_color()])
-				.bind_vertex_buffers(&[(&application_data, application_buffer_prealloc.offset(3) + structures::InstanceMemory::lbparticle_groups_offs())])
+				.bind_descriptor_sets_partial(&pipelines.layout_for_lineburst_particle_render(), 1, &[pipelines.get_descriptor_set_for_lineburst_particle_color()])
+				.bind_vertex_buffers(&[(&appdata.dev, appdata.offset_instance() + structures::InstanceMemory::lbparticle_groups_offs())])
 				.draw(MAX_LBPARTICLE_GROUPS as u32, 1)
 				.next_subpass(false)
 				// Pass 1 : Edge Detection(SMAA 1x) //
-				.bind_vertex_buffers(&[(&application_data, application_buffer_prealloc.offset(0))])
+				.bind_vertex_buffers(&[(&appdata.dev, appdata.offset_ppvbuf())])
 				.bind_pipeline(&pipelines.smaa.as_ref().unwrap().edgedetect)
 				.bind_descriptor_sets(&pipelines.smaa.as_ref().unwrap().edgedetect_layout, &[pipelines.get_descriptor_set_for_smaa_edgedetect()])
 				.draw(4, 1)
@@ -693,21 +422,21 @@ fn game_main(engine: Engine, target: Box<RenderWindow>, target_extent: VkExtent2
 				.pipeline_barrier(VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, false, &[], &[], &[color_output_barrier])
 				.begin_render_pass(&framebuffers[i], &clear_values, false)
 				// Pass 0 : Render to Buffer //
-				.bind_descriptor_sets(&pipelines.layouts.wire_pipeline_layout, &[pipelines.get_descriptor_set_for_uniform_buffer()])
-				.bind_vertex_buffers(&[(&application_data, application_buffer_prealloc.offset(1))])
+				.bind_descriptor_sets(&pipelines.layout_for_wire_render(), &[pipelines.get_descriptor_set_for_uniform_buffer()])
+				.bind_vertex_buffers(&[(&appdata.dev, appdata.offset_vbuf())])
 				.inject_commands(|r| pipelines.background.begin(r, 0.125, 0.5, 0.1875, 0.625))
-				.bind_vertex_buffers_partial(1, &[(&application_data, application_buffer_prealloc.offset(3) + structures::InstanceMemory::background_offs())])
+				.bind_vertex_buffers_partial(1, &[(&appdata.dev, appdata.offset_instance() + InstanceMemory::background_offs())])
 				.draw(4, MAX_BK_COUNT as u32)
 				.inject_commands(|r| pipelines.enemy_body.begin(r, 0.25, 0.9875, 1.5, 1.0))
-				.bind_vertex_buffers_partial(1, &[(&application_data, application_buffer_prealloc.offset(3))])
+				.bind_vertex_buffers_partial(1, &[(&appdata.dev, appdata.offset_instance())])
 				.draw(4, MAX_ENEMY_COUNT as u32)
 				.inject_commands(|r| pipelines.player.begin(r, 1.5, 1.25, 0.375, 1.0))
-				.bind_vertex_buffers_partial(1, &[(&application_data, application_buffer_prealloc.offset(3) + structures::InstanceMemory::player_rot_offs())])
-				.bind_index_buffer(&application_data, application_buffer_prealloc.offset(2))
+				.bind_vertex_buffers_partial(1, &[(&appdata.dev, appdata.offset_instance() + InstanceMemory::player_rot_offs())])
+				.bind_index_buffer(&appdata.dev, appdata.offset_ibuf())
 				.draw_indexed(24, 2, 4)
 				.inject_commands(|r| pipelines.enemy_rezonator.begin(r, 1.25, 0.5, 0.625, 1.0))
-				.bind_vertex_buffers(&[(&application_data, application_buffer_prealloc.offset(1) + structures::VertexMemoryForWireRender::enemy_rezonator_offs()),
-					(&application_data, application_buffer_prealloc.offset(3) + structures::InstanceMemory::enemy_rez_offs())])
+				.bind_vertex_buffers(&[(&appdata.dev, appdata.offset_vbuf() + VertexMemoryForWireRender::enemy_rezonator_offs()),
+					(&appdata.dev, appdata.offset_instance() + InstanceMemory::enemy_rez_offs())])
 				.draw(3, MAX_ENEMY_COUNT as u32)
 				.inject_commands(|r| debug_info.inject_render_commands(r))
 				.end_render_pass()
@@ -719,23 +448,23 @@ fn game_main(engine: Engine, target: Box<RenderWindow>, target_extent: VkExtent2
 	let update_commands = try!(engine.allocate_transfer_command_buffers(1));
 	try!(update_commands.begin(0).and_then(|recorder|
 	{
-		let uoffs = application_buffer_prealloc.offset(3);
+		let uoffs = appdata.offset_instance();
 		let buffer_barriers = [
-			interlude::BufferMemoryBarrier::hold_ownership(&application_data, uoffs .. application_buffer_prealloc.total_size(),
+			interlude::BufferMemoryBarrier::hold_ownership(&appdata.dev, uoffs .. appdata.size(),
 				VK_ACCESS_INDEX_READ_BIT | VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT | VK_ACCESS_UNIFORM_READ_BIT, VK_ACCESS_TRANSFER_WRITE_BIT),
-			interlude::BufferMemoryBarrier::hold_ownership(&appdata_stage, uoffs .. application_buffer_prealloc.total_size(),
+			interlude::BufferMemoryBarrier::hold_ownership(&appdata.stg, uoffs .. appdata.size(),
 				VK_ACCESS_MEMORY_READ_BIT, VK_ACCESS_TRANSFER_READ_BIT)
 		];
 		let buffer_barriers_ret = [
-			interlude::BufferMemoryBarrier::hold_ownership(&application_data, uoffs .. application_buffer_prealloc.total_size(),
+			interlude::BufferMemoryBarrier::hold_ownership(&appdata.dev, uoffs .. appdata.size(),
 				VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_INDEX_READ_BIT | VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT | VK_ACCESS_UNIFORM_READ_BIT),
-			interlude::BufferMemoryBarrier::hold_ownership(&appdata_stage, uoffs .. application_buffer_prealloc.total_size(),
+			interlude::BufferMemoryBarrier::hold_ownership(&appdata.stg, uoffs .. appdata.size(),
 				VK_ACCESS_TRANSFER_READ_BIT, VK_ACCESS_MEMORY_READ_BIT)
 		];
 
 		recorder
 			.pipeline_barrier(VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, false, &[], &buffer_barriers, &[])
-			.copy_buffer(&appdata_stage, &application_data, &[interlude::BufferCopyRegion(uoffs, uoffs, application_buffer_prealloc.total_size() as usize - uoffs)])
+			.copy_buffer(&appdata.stg, &appdata.dev, &[interlude::BufferCopyRegion(uoffs, uoffs, appdata.size() - uoffs)])
 			.pipeline_barrier(VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, false, &[], &buffer_barriers_ret, &[])
 		.end()
 	}));
@@ -793,16 +522,16 @@ fn game_main(engine: Engine, target: Box<RenderWindow>, target_extent: VkExtent2
 			event_sender2.send(ApplicationEvent::Exit).unwrap();
 		}) };
 
-		let mapped_range = try!(appdata_stage.map());
+		let mapped_range = try!(appdata.stg.map());
 		let (uref_enemy, uref_bk, uref_player_center, uref_gametime, uref_particle_infos) =
 		{
-			let mapped = mapped_range.map_mut::<structures::UniformMemory>(application_buffer_prealloc.offset(4));
+			let mapped = mapped_range.map_mut::<UniformMemory>(appdata.offset_uniform());
 			(&mut mapped.enemy_instance_data, &mut mapped.background_instance_data, &mut mapped.player_center_tf,
 				&mut mapped.gametime, &mut mapped.lineburst_particles)
 		};
 		let (iref_enemy, iref_bk, iref_player, iref_enemy_rez, iref_player_bullet, iref_lineburst_particle_groups) =
 		{
-			let mapped = mapped_range.map_mut::<structures::InstanceMemory>(application_buffer_prealloc.offset(3));
+			let mapped = mapped_range.map_mut::<InstanceMemory>(appdata.offset_instance());
 			(&mut mapped.enemy_instance_mult, &mut mapped.background_instance_mult, &mut mapped.player_rotq,
 				&mut mapped.enemy_rez_instance_data, &mut mapped.player_bullet_offset_sincos, &mut mapped.lineburst_particle_groups)
 		};
