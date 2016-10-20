@@ -1,24 +1,28 @@
 # HardGrad -> Extend Device Configuration File
 
-# SMAA Backbuffers
+# Backbuffer
 Image 2D
+- Format: R16G16B16A16 SFLOAT
+- Extent: $ScreenWidth $ScreenHeight
+- Usage: Sampled / ColorAttachment / InputAttachment / DeviceLocal
+Image 2D # Tonemap Result
 - Format: R8G8B8A8 UNORM
 - Extent: $ScreenWidth $ScreenHeight
 - Usage: Sampled / ColorAttachment / DeviceLocal
-Image 2D
+Image 2D # SMAA EdgeDetect Result
 - Format: R8G8 UNORM
 - Extent: $ScreenWidth $ScreenHeight
 - Usage: Sampled / ColorAttachment / DeviceLocal
-Image 2D
+Image 2D # SMAA BlendWeight Result
 - Format: R8G8B8A8 UNORM
 - Extent: $ScreenWidth $ScreenHeight
 - Usage: Sampled / ColorAttachment / DeviceLocal
-Image 2D
+Image 2D # SMAA Area Texture
 - Format: BlockCompression5 UNORM
 - Extent: 160 560
 - Usage: Sampled
 - ComponentMap: RGRG
-Image 2D
+Image 2D # SMAA Search Texture
 - Format: BlockCompression4 UNORM
 - Extent: 64 16
 - Usage: Sampled

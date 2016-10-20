@@ -21,7 +21,8 @@ pub struct ShaderStore
 	pub lineburst_particle_instantiate_gsh: ShaderProgram,
 	// Fragment Shaders //
 	pub solid_fsh: ShaderProgram,
-	pub sprite_fsh: ShaderProgram
+	pub sprite_fsh: ShaderProgram,
+	pub tonemap_fsh: ShaderProgram
 }
 impl ShaderStore
 {
@@ -68,7 +69,8 @@ impl ShaderStore
 			enemy_rezonator_duplication_gsh: Unrecoverable!(engine.create_geometry_shader_from_asset("shaders.EnemyRezonatorDup", "main")),
 			lineburst_particle_instantiate_gsh: Unrecoverable!(engine.create_geometry_shader_from_asset("shaders.LineBurstParticleInstantiate", "main")),
 			solid_fsh: Unrecoverable!(engine.create_fragment_shader_from_asset("shaders.ThroughColor", "main")),
-			sprite_fsh: Unrecoverable!(engine.create_fragment_shader_from_asset("shaders.SpriteFrag", "main"))
+			sprite_fsh: Unrecoverable!(engine.create_fragment_shader_from_asset("shaders.SpriteFrag", "main")),
+			tonemap_fsh: engine.create_fragment_shader_from_asset("shaders.SaturatingToneMap", "main").or_crash()
 		}
 	}
 }

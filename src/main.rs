@@ -97,15 +97,15 @@ use renderstate::*;
 #[allow(dead_code)]
 pub struct SMAAPipelineStates
 {
-	edgedetect_vshader: interlude::ShaderProgram, blendweight_vshader: interlude::ShaderProgram, combine_vshader: interlude::ShaderProgram,
-	edgedetect_shader: interlude::ShaderProgram, blendweight_shader: interlude::ShaderProgram, combine_shader: interlude::ShaderProgram,
-	descriptor_sets: [interlude::DescriptorSetLayout; 3],
-	pub edgedetect_layout: interlude::PipelineLayout, pub blendweight_layout: interlude::PipelineLayout, pub combine_layout: interlude::PipelineLayout,
-	pub edgedetect: interlude::GraphicsPipeline, pub blendweight_calc: interlude::GraphicsPipeline, pub combine: interlude::GraphicsPipeline
+	edgedetect_vshader: ShaderProgram, blendweight_vshader: ShaderProgram, combine_vshader: ShaderProgram,
+	edgedetect_shader: ShaderProgram, blendweight_shader: ShaderProgram, combine_shader: ShaderProgram,
+	descriptor_sets: [DescriptorSetLayout; 3],
+	pub edgedetect_layout: PipelineLayout, pub blendweight_layout: PipelineLayout, pub combine_layout: PipelineLayout,
+	pub edgedetect: GraphicsPipeline, pub blendweight_calc: GraphicsPipeline, pub combine: GraphicsPipeline
 }
 impl SMAAPipelineStates
 {
-	pub fn new(engine: &interlude::Engine, render_pass: &interlude::RenderPass, base_subpass: usize, processing_viewport: VkViewport) -> Self
+	pub fn new(engine: &Engine, render_pass: &RenderPass, base_subpass: u32, processing_viewport: VkViewport) -> Self
 	{
 		let VkViewport(_, _, vw, vh, _, _) = processing_viewport;
 
@@ -117,31 +117,31 @@ impl SMAAPipelineStates
 		let csh = Unrecoverable!(engine.create_fragment_shader_from_asset("shaders.smaa.Combine", "main"));
 
 		let dss = [
-			Unrecoverable!(engine.create_descriptor_set_layout(&[interlude::Descriptor::CombinedSampler(1, vec![interlude::ShaderStage::Fragment])])),
-			Unrecoverable!(engine.create_descriptor_set_layout(&[interlude::Descriptor::CombinedSampler(3, vec![interlude::ShaderStage::Fragment])])),
-			Unrecoverable!(engine.create_descriptor_set_layout(&[interlude::Descriptor::CombinedSampler(2, vec![interlude::ShaderStage::Fragment])]))
+			Unrecoverable!(engine.create_descriptor_set_layout(&[Descriptor::CombinedSampler(1, vec![ShaderStage::Fragment])])),
+			Unrecoverable!(engine.create_descriptor_set_layout(&[Descriptor::CombinedSampler(3, vec![ShaderStage::Fragment])])),
+			Unrecoverable!(engine.create_descriptor_set_layout(&[Descriptor::CombinedSampler(2, vec![ShaderStage::Fragment])]))
 		];
 		let epl = Unrecoverable!(engine.create_pipeline_layout(&[&dss[0]], &[]));
 		let bwpl = Unrecoverable!(engine.create_pipeline_layout(&[&dss[1]], &[]));
 		let cpl = Unrecoverable!(engine.create_pipeline_layout(&[&dss[2]], &[]));
 
 		let scons_rt_metrics = vec![
-			(0, interlude::ConstantEntry::Float(vw)),
-			(1, interlude::ConstantEntry::Float(vh)),
-			(2, interlude::ConstantEntry::Float(vw.recip())),
-			(3, interlude::ConstantEntry::Float(vh.recip()))
+			(0, ConstantEntry::Float(vw)),
+			(1, ConstantEntry::Float(vh)),
+			(2, ConstantEntry::Float(vw.recip())),
+			(3, ConstantEntry::Float(vh.recip()))
 		];
 		let mut gps =
 		{
-			let eps = interlude::GraphicsPipelineBuilder::for_postprocess(engine, &epl, render_pass, base_subpass as u32 + 0,
-				interlude::PipelineShaderProgram::unspecialized(&esh), processing_viewport)
-				.vertex_shader(interlude::PipelineShaderProgram(&evsh, scons_rt_metrics.clone()));
-			let bwps = interlude::GraphicsPipelineBuilder::for_postprocess(engine, &bwpl, render_pass, base_subpass as u32 + 1,
-				interlude::PipelineShaderProgram(&bwsh, scons_rt_metrics.clone()), processing_viewport)
-				.vertex_shader(interlude::PipelineShaderProgram(&bwvsh, scons_rt_metrics.clone()));
-			let cps = interlude::GraphicsPipelineBuilder::for_postprocess(engine, &cpl, render_pass, base_subpass as u32 + 2,
-				interlude::PipelineShaderProgram(&csh, scons_rt_metrics.clone()), processing_viewport)
-				.vertex_shader(interlude::PipelineShaderProgram(&cvsh, scons_rt_metrics));
+			let eps = GraphicsPipelineBuilder::for_postprocess(engine, &epl, render_pass, base_subpass + 0,
+				PipelineShaderProgram::unspecialized(&esh), processing_viewport)
+				.vertex_shader(PipelineShaderProgram(&evsh, scons_rt_metrics.clone()));
+			let bwps = GraphicsPipelineBuilder::for_postprocess(engine, &bwpl, render_pass, base_subpass + 1,
+				PipelineShaderProgram(&bwsh, scons_rt_metrics.clone()), processing_viewport)
+				.vertex_shader(PipelineShaderProgram(&bwvsh, scons_rt_metrics.clone()));
+			let cps = GraphicsPipelineBuilder::for_postprocess(engine, &cpl, render_pass, base_subpass + 2,
+				PipelineShaderProgram(&csh, scons_rt_metrics.clone()), processing_viewport)
+				.vertex_shader(PipelineShaderProgram(&cvsh, scons_rt_metrics));
 			Unrecoverable!(engine.create_graphics_pipelines(&[&eps, &bwps, &cps]))
 		};
 		let cpso = gps.pop().unwrap();
@@ -174,12 +174,13 @@ fn game_main(engine: Engine, target: Box<RenderWindow>, target_extent: VkExtent2
 	// Resources //
 	let images = DevConfImages::from_file(&engine, "devconf.images", target_extent, target.get_format()).ensure_has_staging();
 	// Reference Bindings //
-	let ref gbuffer_set = images.images_2d()[0];
-	let ref edgebuffer_set = images.images_2d()[1];
-	let ref blend_weight_set = images.images_2d()[2];
-	let ref smaa_areatex_set = images.images_2d()[3];
-	let ref smaa_searchtex_set = images.images_2d()[4];
-	let ref playerbullet_tex_set = images.images_2d()[5];
+	let ref backbuffer_sfloat4_set = images.images_2d()[0];
+	let ref backbuffer_unorm4f_set = images.images_2d()[1];
+	let ref backbuffer_unorm2_set = images.images_2d()[2];
+	let ref backbuffer_unorm4_set = images.images_2d()[3];
+	let ref smaa_areatex_set = images.images_2d()[4];
+	let ref smaa_searchtex_set = images.images_2d()[5];
+	let ref playerbullet_tex_set = images.images_2d()[6];
 	let ref lineburst_particle_gradient_tex_set = images.images_1d()[0];
 	let ref gbuffer_sampler = images.samplers()[0];
 	let ref lineburst_particle_gradient_tex_stg = images.staging_images()[0];
@@ -213,50 +214,32 @@ fn game_main(engine: Engine, target: Box<RenderWindow>, target_extent: VkExtent2
 	}
 	let appdata = ApplicationBufferData::new(&engine, target_extent);
 
-	// Rendering Switches //
-	let use_post_smaa = true;
-
-	let render_passes = RenderPasses::new(&engine, target.get_format());
-	let enabled_pass = if use_post_smaa { &render_passes.fullset } else { &render_passes.noaa };
-	let framebuffers = target.get_back_images().iter().map(|&x| if use_post_smaa
-	{
-		engine.create_framebuffer(&render_passes.fullset, &[gbuffer_set, edgebuffer_set, blend_weight_set, x], VkExtent3D::from(target_extent))
-	}
-	else
-	{
-		engine.create_framebuffer(&render_passes.noaa, &[x], VkExtent3D::from(target_extent))
-	}).collect::<Result<Vec<_>, _>>().or_crash();
+	let render_pass = RenderPasses::new(&engine, target.get_format());
+	let framebuffers = target.get_back_images().iter().map(|&finalbuffer| 
+		engine.create_framebuffer(&render_pass.object, &[backbuffer_sfloat4_set, backbuffer_unorm4f_set, backbuffer_unorm2_set, backbuffer_unorm4_set, finalbuffer], VkExtent3D::from(target_extent))
+	).collect::<Result<Vec<_>, _>>().or_crash();
 
 	// Pipelines //
 	let sc_viewport = VkViewport::from(target_extent);
-	let pipelines = PipelineStates::new(&engine, use_post_smaa, enabled_pass, sc_viewport);
+	let pipelines = PipelineStates::new(&engine, true, &render_pass, sc_viewport);
 
 	// Descriptor Set //
 	let uniform_memory_info = BufferInfo(&appdata.dev, appdata.offset_uniform() .. appdata.size());
-	let gbuffer_info = ImageInfo(gbuffer_sampler, gbuffer_set, VkImageLayout::ShaderReadOnlyOptimal);
-	let edgebuffer_info = ImageInfo(gbuffer_sampler, edgebuffer_set, VkImageLayout::ShaderReadOnlyOptimal);
-	let blendweight_info = ImageInfo(gbuffer_sampler, blend_weight_set, VkImageLayout::ShaderReadOnlyOptimal);
+	let backbuffer_unorm4f_info = ImageInfo(gbuffer_sampler, backbuffer_unorm4f_set, VkImageLayout::ShaderReadOnlyOptimal);
+	let backbuffer_unorm2_info = ImageInfo(gbuffer_sampler, backbuffer_unorm2_set, VkImageLayout::ShaderReadOnlyOptimal);
+	let backbuffer_unorm4_info = ImageInfo(gbuffer_sampler, backbuffer_unorm4_set, VkImageLayout::ShaderReadOnlyOptimal);
 	let areatex_info = ImageInfo(gbuffer_sampler, smaa_areatex_set, VkImageLayout::ShaderReadOnlyOptimal);
 	let searchtex_info = ImageInfo(gbuffer_sampler, smaa_searchtex_set, VkImageLayout::ShaderReadOnlyOptimal);
 	let playerbullet_info = ImageInfo(gbuffer_sampler, playerbullet_tex_set, VkImageLayout::ShaderReadOnlyOptimal);
 	let lineburst_particle_gradient_tex_info = ImageInfo(gbuffer_sampler, lineburst_particle_gradient_tex_set, VkImageLayout::ShaderReadOnlyOptimal);
-	if use_post_smaa
-	{
-		engine.update_descriptors(&[
-			DescriptorSetWriteInfo::UniformBuffer(pipelines.get_descriptor_set_for_uniform_buffer(), 0, vec![uniform_memory_info]),
-			DescriptorSetWriteInfo::CombinedImageSampler(pipelines.get_descriptor_set_for_smaa_edgedetect(), 0, vec![gbuffer_info.clone()]),
-			DescriptorSetWriteInfo::CombinedImageSampler(pipelines.get_descriptor_set_for_smaa_blendweight(), 0, vec![edgebuffer_info, areatex_info, searchtex_info]),
-			DescriptorSetWriteInfo::CombinedImageSampler(pipelines.get_descriptor_set_for_smaa_combine(), 0, vec![gbuffer_info, blendweight_info]),
-			DescriptorSetWriteInfo::CombinedImageSampler(pipelines.get_descriptor_set_for_playerbullet_texture(), 0, vec![playerbullet_info]),
-			DescriptorSetWriteInfo::CombinedImageSampler(pipelines.get_descriptor_set_for_lineburst_particle_color(), 0, vec![lineburst_particle_gradient_tex_info])
-		]);
-	}
-	else
-	{
-		engine.update_descriptors(&[
-			DescriptorSetWriteInfo::UniformBuffer(pipelines.get_descriptor_set_for_uniform_buffer(), 0, vec![uniform_memory_info])
-		]);
-	}
+	engine.update_descriptors(&[
+		DescriptorSetWriteInfo::UniformBuffer(pipelines.get_descriptor_set_for_uniform_buffer(), 0, vec![uniform_memory_info]),
+		DescriptorSetWriteInfo::CombinedImageSampler(pipelines.get_descriptor_set_for_smaa_edgedetect(), 0, vec![backbuffer_unorm4f_info.clone()]),
+		DescriptorSetWriteInfo::CombinedImageSampler(pipelines.get_descriptor_set_for_smaa_blendweight(), 0, vec![backbuffer_unorm2_info, areatex_info, searchtex_info]),
+		DescriptorSetWriteInfo::CombinedImageSampler(pipelines.get_descriptor_set_for_smaa_combine(), 0, vec![backbuffer_unorm4f_info, backbuffer_unorm4_info]),
+		DescriptorSetWriteInfo::CombinedImageSampler(pipelines.get_descriptor_set_for_playerbullet_texture(), 0, vec![playerbullet_info]),
+		DescriptorSetWriteInfo::CombinedImageSampler(pipelines.get_descriptor_set_for_lineburst_particle_color(), 0, vec![lineburst_particle_gradient_tex_info])
+	]);
 
 	// Initial Data Transmission, Layouting for Swapchain Backbuffer Images //
 	engine.allocate_transient_transfer_command_buffers(1).and_then(|setup_commands|
@@ -286,9 +269,10 @@ fn game_main(engine: Engine, target: Box<RenderWindow>, target_extent: VkExtent2
 			.map(|x| ImageMemoryBarrier::hold_ownership(*x, ImageSubresourceRange::base_color(),
 				0, VK_ACCESS_MEMORY_READ_BIT, VkImageLayout::Undefined, VkImageLayout::PresentSrcKHR))
 			.chain(vec![
-				ImageMemoryBarrier::hold_ownership(gbuffer_set, ImageSubresourceRange::base_color(), VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VkImageLayout::Preinitialized, VkImageLayout::ColorAttachmentOptimal),
-				ImageMemoryBarrier::hold_ownership(edgebuffer_set, ImageSubresourceRange::base_color(), VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VkImageLayout::Preinitialized, VkImageLayout::ColorAttachmentOptimal),
-				ImageMemoryBarrier::hold_ownership(blend_weight_set, ImageSubresourceRange::base_color(), VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VkImageLayout::Preinitialized, VkImageLayout::ColorAttachmentOptimal)
+				ImageMemoryBarrier::hold_ownership(backbuffer_sfloat4_set, ImageSubresourceRange::base_color(), VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VkImageLayout::Preinitialized, VkImageLayout::ColorAttachmentOptimal),
+				ImageMemoryBarrier::hold_ownership(backbuffer_unorm4f_set, ImageSubresourceRange::base_color(), VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VkImageLayout::Preinitialized, VkImageLayout::ColorAttachmentOptimal),
+				ImageMemoryBarrier::hold_ownership(backbuffer_unorm2_set, ImageSubresourceRange::base_color(), VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VkImageLayout::Preinitialized, VkImageLayout::ColorAttachmentOptimal),
+				ImageMemoryBarrier::hold_ownership(backbuffer_unorm4_set, ImageSubresourceRange::base_color(), VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VkImageLayout::Preinitialized, VkImageLayout::ColorAttachmentOptimal)
 			]).chain(blitted_image_templates_dev.iter().map(|t| t.into_transfer_dst(VK_ACCESS_HOST_WRITE_BIT, VkImageLayout::Preinitialized)))
 			.chain(blitted_image_templates_stg.into_iter().map(|t| t.into_transfer_src(VK_ACCESS_HOST_WRITE_BIT, VkImageLayout::Preinitialized))).collect_vec();
 		let image_memory_barriers_ret = blitted_image_templates_dev.into_iter()
@@ -318,18 +302,18 @@ fn game_main(engine: Engine, target: Box<RenderWindow>, target_extent: VkExtent2
 		interlude::DebugLine::Float("Frame Time".to_owned(), &frame_time_ms, Some("ms".to_owned())),
 		interlude::DebugLine::Float("CPU Time".to_owned(), &cputime_ms, Some("ms".to_owned())),
 		interlude::DebugLine::UnsignedInt("Enemy Count".to_owned(), &enemy_count, None)
-	], enabled_pass, if use_post_smaa { 3 } else { 0 }, sc_viewport));
+	], &render_pass.object, render_pass.smaa_combine_pass, sc_viewport));
 
 	info!("Recording Rendering Commands...");
 	// Rendering Commands //
-	let combine_commands = if use_post_smaa
+	let combine_commands = 
 	{
 		let smaa_combine_descriptor_sets = [pipelines.get_descriptor_set_for_smaa_combine()];
 		let smaa_combine_vertex_buffers = [(&appdata.dev as &BufferResource, appdata.offset_ppvbuf())];
 		let combine_commands = try!(engine.allocate_bundled_command_buffers(2 * framebuffers.len() as u32));
 		for (n, f) in framebuffers.iter().enumerate()
 		{
-			try!(combine_commands.begin(0 + 2 * n, enabled_pass, 3, f).and_then(|recorder|
+			try!(combine_commands.begin(0 + 2 * n, &render_pass.object, 3, f).and_then(|recorder|
 				recorder
 					.bind_pipeline(&pipelines.smaa.as_ref().unwrap().combine)
 					.bind_descriptor_sets(&pipelines.smaa.as_ref().unwrap().combine_layout, &smaa_combine_descriptor_sets)
@@ -337,108 +321,77 @@ fn game_main(engine: Engine, target: Box<RenderWindow>, target_extent: VkExtent2
 					.draw(4, 1)
 				.end()
 			));
-			try!(combine_commands.begin(1 + 2 * n, enabled_pass, 3, f).and_then(|recorder|
+			/*try!(combine_commands.begin(1 + 2 * n, &render_pass.object, 3, f).and_then(|recorder|
 				recorder.inject_commands(|r| debug_info.inject_render_commands(r)).end()
-			));
+			));*/
 		}
 		Some(combine_commands)
-	}
-	else { None };
+	};
 	let framebuffer_commands = try!(engine.allocate_graphics_command_buffers(target.get_back_images().len() as u32));
 	try!(framebuffer_commands.begin_all().map(|iter| iter.map(|(i, recorder)|
 	{
-		if use_post_smaa
-		{
-			let clear_values = [
-				interlude::AttachmentClearValue::Color(0.0f32, 0.0f32, 0.015625f32, 1.0f32),
-				interlude::AttachmentClearValue::Color(0.0f32, 0.0f32, 0.0f32, 0.0f32),
-				interlude::AttachmentClearValue::Color(0.0f32, 0.0f32, 0.0f32, 0.0f32),
-				interlude::AttachmentClearValue::Color(0.0f32, 0.0f32, 0.0f32, 0.0f32)
-			];
-			let color_output_barrier = interlude::ImageMemoryBarrier::template(target.get_back_images()[i], interlude::ImageSubresourceRange::base_color())
-				.hold_ownership(VK_ACCESS_MEMORY_READ_BIT, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VkImageLayout::PresentSrcKHR, VkImageLayout::ColorAttachmentOptimal);
+		let clear_values = [
+			interlude::AttachmentClearValue::Color(0.0f32, 0.0f32, 0.015625f32, 1.0f32),
+			interlude::AttachmentClearValue::Color(0.0f32, 0.0f32, 0.0f32, 0.0f32),
+			interlude::AttachmentClearValue::Color(0.0f32, 0.0f32, 0.0f32, 0.0f32),
+			interlude::AttachmentClearValue::Color(0.0f32, 0.0f32, 0.0f32, 0.0f32)
+		];
+		let color_output_barrier = interlude::ImageMemoryBarrier::template(target.get_back_images()[i], interlude::ImageSubresourceRange::base_color())
+			.hold_ownership(VK_ACCESS_MEMORY_READ_BIT, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VkImageLayout::PresentSrcKHR, VkImageLayout::ColorAttachmentOptimal);
 
-			recorder
-				.pipeline_barrier(VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, false, &[], &[], &[color_output_barrier])
-				.begin_render_pass(&framebuffers[i], &clear_values, false)
-				// Pass 0 : Render to Buffer //
-				.bind_descriptor_sets(pipelines.layout_for_wire_render(), &[pipelines.get_descriptor_set_for_uniform_buffer()])
-				.bind_vertex_buffers(&[(&appdata.dev, appdata.offset_vbuf())])
-				.inject_commands(|r| pipelines.background.begin(r, 0.125, 0.5, 0.1875, 0.625))
-				.bind_vertex_buffers_partial(1, &[(&appdata.dev, appdata.offset_instance() + InstanceMemory::background_offs())])
-				.draw(4, MAX_BK_COUNT as u32)
-				.inject_commands(|r| pipelines.enemy_body.begin(r, 0.25, 0.9875, 1.5, 1.0))
-				.bind_vertex_buffers_partial(1, &[(&appdata.dev, appdata.offset_instance())])
-				.draw(4, MAX_ENEMY_COUNT as u32)
-				.inject_commands(|r| pipelines.player.begin(r, 1.5, 1.25, 0.375, 1.0))
-				.bind_vertex_buffers_partial(1, &[(&appdata.dev, appdata.offset_instance() + InstanceMemory::player_rot_offs())])
-				.bind_index_buffer(&appdata.dev, appdata.offset_ibuf())
-				.draw_indexed(24, 2, 4)
-				.inject_commands(|r| pipelines.enemy_rezonator.begin(r, 1.25, 0.5, 0.625, 1.0))
-				.bind_vertex_buffers(&[(&appdata.dev, appdata.offset_vbuf() + VertexMemoryForWireRender::enemy_rezonator_offs()),
-					(&appdata.dev, appdata.offset_instance() + InstanceMemory::enemy_rez_offs())])
-				.draw(3, MAX_ENEMY_COUNT as u32)
-				.inject_commands(|r| pipelines.playerbullet.begin(r, pipelines.get_descriptor_set_for_playerbullet_texture()))
-				.bind_vertex_buffers(&[
-					(&appdata.dev, appdata.offset_vbuf() + VertexMemoryForWireRender::sprite_plane_offs()),
-					(&appdata.dev, appdata.offset_instance() + InstanceMemory::player_bullet_offs())
-				])
-				.draw(4, MAX_PLAYER_BULLET_COUNT as u32)
-				.bind_pipeline(&pipelines.lineburst)
-				.bind_descriptor_sets_partial(&pipelines.layout_for_lineburst_particle_render(), 1, &[pipelines.get_descriptor_set_for_lineburst_particle_color()])
-				.bind_vertex_buffers(&[(&appdata.dev, appdata.offset_instance() + structures::InstanceMemory::lbparticle_groups_offs())])
-				.draw(MAX_LBPARTICLE_GROUPS as u32, 1)
-				.next_subpass(false)
-				// Pass 1 : Edge Detection(SMAA 1x) //
-				.bind_vertex_buffers(&[(&appdata.dev, appdata.offset_ppvbuf())])
-				.bind_pipeline(&pipelines.smaa.as_ref().unwrap().edgedetect)
-				.bind_descriptor_sets(&pipelines.smaa.as_ref().unwrap().edgedetect_layout, &[pipelines.get_descriptor_set_for_smaa_edgedetect()])
-				.draw(4, 1)
-				// .pipeline_barrier(VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, false, &[], &[], &[ibar_edgebuffer_end])
-				.next_subpass(false)
-				// Pass 2 : Blend Weight Calculation(SMAA 1x) //
-				.bind_pipeline(&pipelines.smaa.as_ref().unwrap().blendweight_calc)
-				.bind_descriptor_sets(&pipelines.smaa.as_ref().unwrap().blendweight_layout, &[pipelines.get_descriptor_set_for_smaa_blendweight()])
-				.draw(4, 1)
-				// .pipeline_barrier(VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, false, &[], &[], &[ibar_blendweight_end])
-				.next_subpass(true)
-				// Pass 3 : SMAA Combine and Debug Print //
-				.execute_commands(&combine_commands.as_ref().unwrap()[i * 2 .. i * 2 + 2])
-				.end_render_pass()
-			.end().unwrap()
-		}
-		else
-		{
-			let clear_values = [
-				interlude::AttachmentClearValue::Color(0.0f32, 0.0f32, 0.015625f32, 1.0f32)
-			];
-			let color_output_barrier = interlude::ImageMemoryBarrier::template(target.get_back_images()[i], interlude::ImageSubresourceRange::base_color())
-				.hold_ownership(VK_ACCESS_MEMORY_READ_BIT, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VkImageLayout::PresentSrcKHR, VkImageLayout::ColorAttachmentOptimal);
-
-			recorder
-				.pipeline_barrier(VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, false, &[], &[], &[color_output_barrier])
-				.begin_render_pass(&framebuffers[i], &clear_values, false)
-				// Pass 0 : Render to Buffer //
-				.bind_descriptor_sets(&pipelines.layout_for_wire_render(), &[pipelines.get_descriptor_set_for_uniform_buffer()])
-				.bind_vertex_buffers(&[(&appdata.dev, appdata.offset_vbuf())])
-				.inject_commands(|r| pipelines.background.begin(r, 0.125, 0.5, 0.1875, 0.625))
-				.bind_vertex_buffers_partial(1, &[(&appdata.dev, appdata.offset_instance() + InstanceMemory::background_offs())])
-				.draw(4, MAX_BK_COUNT as u32)
-				.inject_commands(|r| pipelines.enemy_body.begin(r, 0.25, 0.9875, 1.5, 1.0))
-				.bind_vertex_buffers_partial(1, &[(&appdata.dev, appdata.offset_instance())])
-				.draw(4, MAX_ENEMY_COUNT as u32)
-				.inject_commands(|r| pipelines.player.begin(r, 1.5, 1.25, 0.375, 1.0))
-				.bind_vertex_buffers_partial(1, &[(&appdata.dev, appdata.offset_instance() + InstanceMemory::player_rot_offs())])
-				.bind_index_buffer(&appdata.dev, appdata.offset_ibuf())
-				.draw_indexed(24, 2, 4)
-				.inject_commands(|r| pipelines.enemy_rezonator.begin(r, 1.25, 0.5, 0.625, 1.0))
-				.bind_vertex_buffers(&[(&appdata.dev, appdata.offset_vbuf() + VertexMemoryForWireRender::enemy_rezonator_offs()),
-					(&appdata.dev, appdata.offset_instance() + InstanceMemory::enemy_rez_offs())])
-				.draw(3, MAX_ENEMY_COUNT as u32)
-				.inject_commands(|r| debug_info.inject_render_commands(r))
-				.end_render_pass()
-			.end().unwrap()
-		}
+		recorder
+			.pipeline_barrier(VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, false, &[], &[], &[color_output_barrier])
+			.begin_render_pass(&framebuffers[i], &clear_values, false)
+			// Pass 0 : Render to Buffer //
+			.bind_descriptor_sets(pipelines.layout_for_wire_render(), &[pipelines.get_descriptor_set_for_uniform_buffer()])
+			.bind_vertex_buffers(&[(&appdata.dev, appdata.offset_vbuf())])
+			.inject_commands(|r| pipelines.background.begin(r, 0.125, 0.5, 0.1875, 0.625))
+			.bind_vertex_buffers_partial(1, &[(&appdata.dev, appdata.offset_instance() + InstanceMemory::background_offs())])
+			.draw(4, MAX_BK_COUNT as u32)
+			.inject_commands(|r| pipelines.enemy_body.begin(r, 0.25, 0.9875, 1.5, 1.0))
+			.bind_vertex_buffers_partial(1, &[(&appdata.dev, appdata.offset_instance())])
+			.draw(4, MAX_ENEMY_COUNT as u32)
+			.inject_commands(|r| pipelines.player.begin(r, 1.5, 1.25, 0.375, 1.0))
+			.bind_vertex_buffers_partial(1, &[(&appdata.dev, appdata.offset_instance() + InstanceMemory::player_rot_offs())])
+			.bind_index_buffer(&appdata.dev, appdata.offset_ibuf())
+			.draw_indexed(24, 2, 4)
+			.inject_commands(|r| pipelines.enemy_rezonator.begin(r, 1.25, 0.5, 0.625, 1.0))
+			.bind_vertex_buffers(&[(&appdata.dev, appdata.offset_vbuf() + VertexMemoryForWireRender::enemy_rezonator_offs()),
+				(&appdata.dev, appdata.offset_instance() + InstanceMemory::enemy_rez_offs())])
+			.draw(3, MAX_ENEMY_COUNT as u32)
+			.inject_commands(|r| pipelines.playerbullet.begin(r, pipelines.get_descriptor_set_for_playerbullet_texture()))
+			.bind_vertex_buffers(&[
+				(&appdata.dev, appdata.offset_vbuf() + VertexMemoryForWireRender::sprite_plane_offs()),
+				(&appdata.dev, appdata.offset_instance() + InstanceMemory::player_bullet_offs())
+			])
+			.draw(4, MAX_PLAYER_BULLET_COUNT as u32)
+			.bind_pipeline(&pipelines.lineburst)
+			.bind_descriptor_sets_partial(&pipelines.layout_for_lineburst_particle_render(), 1, &[pipelines.get_descriptor_set_for_lineburst_particle_color()])
+			.bind_vertex_buffers(&[(&appdata.dev, appdata.offset_instance() + structures::InstanceMemory::lbparticle_groups_offs())])
+			.draw(MAX_LBPARTICLE_GROUPS as u32, 1)
+			.next_subpass(false)
+			// Tonemapping //
+			.bind_vertex_buffers(&[(&appdata.dev, appdata.offset_ppvbuf())])
+			.bind_pipeline(&pipelines.tonemapper)
+			.draw(4, 1)
+			.next_subpass(false)
+			// Edge Detection(SMAA 1x) //
+			.bind_vertex_buffers(&[(&appdata.dev, appdata.offset_ppvbuf())])
+			.bind_pipeline(&pipelines.smaa.as_ref().unwrap().edgedetect)
+			.bind_descriptor_sets(&pipelines.smaa.as_ref().unwrap().edgedetect_layout, &[pipelines.get_descriptor_set_for_smaa_edgedetect()])
+			.draw(4, 1)
+			// .pipeline_barrier(VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, false, &[], &[], &[ibar_edgebuffer_end])
+			.next_subpass(false)
+			// Blend Weight Calculation(SMAA 1x) //
+			.bind_pipeline(&pipelines.smaa.as_ref().unwrap().blendweight_calc)
+			.bind_descriptor_sets(&pipelines.smaa.as_ref().unwrap().blendweight_layout, &[pipelines.get_descriptor_set_for_smaa_blendweight()])
+			.draw(4, 1)
+			// .pipeline_barrier(VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, false, &[], &[], &[ibar_blendweight_end])
+			.next_subpass(true)
+			// SMAA Combine and Debug Print //
+			.execute_commands(&combine_commands.as_ref().unwrap()[i * 2 .. i * 2 + 1])
+			.end_render_pass()
+		.end().or_crash()
 	}).collect::<Vec<_>>()));
 	info!("Recording Transfer Commands...");
 	// Transfer Commands //

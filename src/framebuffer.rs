@@ -1,66 +1,83 @@
-use interlude;
+use interlude::*;
 use interlude::ffi::*;
 
 pub struct RenderPasses
 {
-	pub noaa: interlude::RenderPass, pub fullset: interlude::RenderPass,
+	pub object: RenderPass,
+	pub content_render_pass: u32,
+	pub tonemap_pass: u32,
+	pub smaa_edge_pass: u32,
+	pub smaa_weight_pass: u32,
+	pub smaa_combine_pass: u32,
+	pub required_image_count: usize
 }
 impl RenderPasses
 {
-	pub fn new(engine: &interlude::Engine, sc_format: VkFormat) -> Self
+	pub fn new(engine: &Engine, sc_format: VkFormat) -> Self
 	{
 		// Attachment Descriptions //
-		let gbuffer_desc = interlude::AttachmentDesc
-		{
-			format: VkFormat::R8G8B8A8_UNORM, clear_on_load: Some(true), preserve_stored_value: false,
-			initial_layout: VkImageLayout::ColorAttachmentOptimal, final_layout: VkImageLayout::ColorAttachmentOptimal,
-			.. Default::default()
-		};
-		let edgebuffer_desc = interlude::AttachmentDesc
-		{
-			format: VkFormat::R8G8_UNORM, clear_on_load: Some(true), preserve_stored_value: false,
-			initial_layout: VkImageLayout::ColorAttachmentOptimal, final_layout: VkImageLayout::ColorAttachmentOptimal,
-			.. Default::default()
-		};
-		let blendweight_buffer_desc = interlude::AttachmentDesc
-		{
-			format: VkFormat::R8G8B8A8_UNORM, clear_on_load: Some(true), preserve_stored_value: false,
-			initial_layout: VkImageLayout::ColorAttachmentOptimal, final_layout: VkImageLayout::ColorAttachmentOptimal,
-			.. Default::default()
-		};
-		let swapchain_buffer_desc = interlude::AttachmentDesc::swapchain_buffer(sc_format);
-
-		// Render Pass Descriptiones //
-		let content_render_pass = interlude::PassDesc::single_fragment_output(0);
-		let aa_edgedetect_pass = interlude::PassDesc
-		{
-			color_attachment_indices: vec![interlude::AttachmentRef::color(1)], preserved_attachment_indices: vec![0],
-			.. Default::default()
-		};
-		let aa_blendweight_pass = interlude::PassDesc
-		{
-			color_attachment_indices: vec![interlude::AttachmentRef::color(2)], preserved_attachment_indices: vec![0, 1],
-			.. Default::default()
-		};
-		let aa_combine_pass = interlude::PassDesc::single_fragment_output(3);
-
+		let attachments = [
+			AttachmentDesc
+			{
+				format: VkFormat::R16G16B16A16_SFLOAT, clear_on_load: Some(true), preserve_stored_value: false,
+				initial_layout: VkImageLayout::ColorAttachmentOptimal, final_layout: VkImageLayout::ShaderReadOnlyOptimal,
+				.. Default::default()
+			},
+			AttachmentDesc
+			{
+				format: VkFormat::R8G8B8A8_UNORM, clear_on_load: None, preserve_stored_value: false,
+				initial_layout: VkImageLayout::ColorAttachmentOptimal, final_layout: VkImageLayout::ColorAttachmentOptimal,
+				.. Default::default()
+			},
+			AttachmentDesc
+			{
+				format: VkFormat::R8G8_UNORM, clear_on_load: Some(true), preserve_stored_value: false,
+				initial_layout: VkImageLayout::ColorAttachmentOptimal, final_layout: VkImageLayout::ColorAttachmentOptimal,
+				.. Default::default()
+			},
+			AttachmentDesc
+			{
+				format: VkFormat::R8G8B8A8_UNORM, clear_on_load: Some(true), preserve_stored_value: false,
+				initial_layout: VkImageLayout::ColorAttachmentOptimal, final_layout: VkImageLayout::ColorAttachmentOptimal,
+				.. Default::default()
+			},
+			AttachmentDesc::swapchain_buffer(sc_format)
+		];
+		let ai_sfloat4 = 0;
+		let ai_unorm4f = 1;
+		let ai_unorm2 = 2;
+		let ai_unorm4 = 3;
+		let ai_final = 4;
+		// Pass Descriptions //
+		let passes =  [
+			PassDesc::single_fragment_output(ai_sfloat4),
+			PassDesc { input_attachment_indices: vec![AttachmentRef::color(ai_sfloat4)], color_attachment_indices: vec![AttachmentRef::color(ai_unorm4f)], .. Default::default() },
+			PassDesc { color_attachment_indices: vec![AttachmentRef::color(ai_unorm2)], preserved_attachment_indices: vec![ai_unorm4], .. Default::default() },
+			PassDesc { color_attachment_indices: vec![AttachmentRef::color(ai_unorm4)], preserved_attachment_indices: vec![ai_unorm4], .. Default::default() },
+			PassDesc::single_fragment_output(ai_final)
+		];
+		let p_content = 0;
+		let p_tonemap = 1;
+		let p_smaa_edge = 2;
+		let p_smaa_weight = 3;
+		let p_smaa_combine = 4;
 		// Pass Dependencies //
-		let deps_content_to_edge = interlude::PassDependency::fragment_referer(0, 1, false);
-		let deps_content_to_combine = interlude::PassDependency::fragment_referer(0, 3, false);
-		let deps_edge_to_blend = interlude::PassDependency::fragment_referer(1, 2, false);
-		let deps_blend_to_combine = interlude::PassDependency::fragment_referer(2, 3, false);
+		let deps = [
+			PassDependency::fragment_referer(p_content, p_tonemap, true),
+			PassDependency::fragment_referer(p_tonemap, p_smaa_edge, false),
+			PassDependency::fragment_referer(p_smaa_edge, p_smaa_weight, false),
+			PassDependency::fragment_referer(p_tonemap, p_smaa_combine, false),
+			PassDependency::fragment_referer(p_smaa_weight, p_smaa_combine, false)
+		];
 
 		// Objects //
-		let fullpass = Unrecoverable!(engine.create_render_pass(
-			&[gbuffer_desc, edgebuffer_desc, blendweight_buffer_desc, swapchain_buffer_desc],
-			&[content_render_pass.clone(), aa_edgedetect_pass, aa_blendweight_pass, aa_combine_pass],
-			&[deps_content_to_edge, deps_content_to_combine, deps_edge_to_blend, deps_blend_to_combine]
-		));
-		let noaa_pass = Unrecoverable!(engine.create_render_pass(&[swapchain_buffer_desc], &[content_render_pass], &[]));
+		let fullpass = engine.create_render_pass(&attachments, &passes, &deps).or_crash();
 		
 		RenderPasses
 		{
-			noaa: noaa_pass, fullset: fullpass
+			object: fullpass,
+			content_render_pass: p_content, tonemap_pass: p_tonemap, smaa_edge_pass: p_smaa_edge, smaa_weight_pass: p_smaa_weight, smaa_combine_pass: p_smaa_combine,
+			required_image_count: attachments.len()
 		}
 	}
 }
