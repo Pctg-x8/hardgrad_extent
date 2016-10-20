@@ -51,7 +51,7 @@ impl RenderPasses
 		// Pass Descriptions //
 		let passes =  [
 			PassDesc::single_fragment_output(ai_sfloat4),
-			PassDesc { input_attachment_indices: vec![AttachmentRef::color(ai_sfloat4)], color_attachment_indices: vec![AttachmentRef::color(ai_unorm4f)], .. Default::default() },
+			PassDesc { input_attachment_indices: vec![AttachmentRef::input(ai_sfloat4)], color_attachment_indices: vec![AttachmentRef::color(ai_unorm4f)], .. Default::default() },
 			PassDesc { color_attachment_indices: vec![AttachmentRef::color(ai_unorm2)], preserved_attachment_indices: vec![ai_unorm4], .. Default::default() },
 			PassDesc { color_attachment_indices: vec![AttachmentRef::color(ai_unorm4)], preserved_attachment_indices: vec![ai_unorm4], .. Default::default() },
 			PassDesc::single_fragment_output(ai_final)

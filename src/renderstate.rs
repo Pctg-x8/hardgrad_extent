@@ -103,7 +103,7 @@ impl PipelineStates
 		{
 			let ps = SMAAPipelineStates::new(engine, &passes.object, passes.smaa_edge_pass, swapchain_viewport);
 			let dslist = Unrecoverable!(engine.preallocate_all_descriptor_sets(&[
-				&layouts.global_uniform_layout, &layouts.texture_layout, &layouts.texture_layout_geom,
+				&layouts.global_uniform_layout, &layouts.texture_layout, &layouts.texture_layout_geom, &layouts.ainput_layout,
 				&ps.descriptor_sets[0], &ps.descriptor_sets[1], &ps.descriptor_sets[2]
 			]));
 			(Some(ps), dslist)
@@ -111,7 +111,7 @@ impl PipelineStates
 		else
 		{
 			let dslist = Unrecoverable!(engine.preallocate_all_descriptor_sets(&[
-				&layouts.global_uniform_layout, &layouts.texture_layout, &layouts.texture_layout_geom
+				&layouts.global_uniform_layout, &layouts.texture_layout, &layouts.texture_layout_geom, &layouts.ainput_layout
 			]));
 			(None, dslist)
 		};
@@ -126,14 +126,16 @@ impl PipelineStates
 	}
 	
 	// readonly exporter
+	pub fn layout_for_attachment_input(&self) -> &PipelineLayout { &self.layouts.ainput_require_layout }
 	pub fn layout_for_wire_render(&self) -> &PipelineLayout { &self.layouts.wire_pipeline_layout }
 	pub fn layout_for_lineburst_particle_render(&self) -> &PipelineLayout { &self.layouts.lineburst_particle_layout }
 	pub fn get_descriptor_set_for_uniform_buffer(&self) -> VkDescriptorSet { self.descriptor_sets[0] }
 	pub fn get_descriptor_set_for_playerbullet_texture(&self) -> VkDescriptorSet { self.descriptor_sets[1] }
 	pub fn get_descriptor_set_for_lineburst_particle_color(&self) -> VkDescriptorSet { self.descriptor_sets[2] }
-	pub fn get_descriptor_set_for_smaa_edgedetect(&self) -> VkDescriptorSet { self.descriptor_sets[3] }
-	pub fn get_descriptor_set_for_smaa_blendweight(&self) -> VkDescriptorSet { self.descriptor_sets[4] }
-	pub fn get_descriptor_set_for_smaa_combine(&self) -> VkDescriptorSet { self.descriptor_sets[5] }
+	pub fn get_descriptor_set_for_tonemap_input(&self) -> VkDescriptorSet { self.descriptor_sets[3] }
+	pub fn get_descriptor_set_for_smaa_edgedetect(&self)	-> VkDescriptorSet { self.descriptor_sets[4] }
+	pub fn get_descriptor_set_for_smaa_blendweight(&self)	-> VkDescriptorSet { self.descriptor_sets[5] }
+	pub fn get_descriptor_set_for_smaa_combine(&self)		-> VkDescriptorSet { self.descriptor_sets[6] }
 }
 
 // Wire Render Wrapper with moving pipeline state object

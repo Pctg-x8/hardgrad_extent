@@ -225,6 +225,7 @@ fn game_main(engine: Engine, target: Box<RenderWindow>, target_extent: VkExtent2
 
 	// Descriptor Set //
 	let uniform_memory_info = BufferInfo(&appdata.dev, appdata.offset_uniform() .. appdata.size());
+	let backbuffer_sfloat4_info = ImageInfo(gbuffer_sampler, backbuffer_sfloat4_set, VkImageLayout::ShaderReadOnlyOptimal);
 	let backbuffer_unorm4f_info = ImageInfo(gbuffer_sampler, backbuffer_unorm4f_set, VkImageLayout::ShaderReadOnlyOptimal);
 	let backbuffer_unorm2_info = ImageInfo(gbuffer_sampler, backbuffer_unorm2_set, VkImageLayout::ShaderReadOnlyOptimal);
 	let backbuffer_unorm4_info = ImageInfo(gbuffer_sampler, backbuffer_unorm4_set, VkImageLayout::ShaderReadOnlyOptimal);
@@ -234,6 +235,7 @@ fn game_main(engine: Engine, target: Box<RenderWindow>, target_extent: VkExtent2
 	let lineburst_particle_gradient_tex_info = ImageInfo(gbuffer_sampler, lineburst_particle_gradient_tex_set, VkImageLayout::ShaderReadOnlyOptimal);
 	engine.update_descriptors(&[
 		DescriptorSetWriteInfo::UniformBuffer(pipelines.get_descriptor_set_for_uniform_buffer(), 0, vec![uniform_memory_info]),
+		DescriptorSetWriteInfo::InputAttachment(pipelines.get_descriptor_set_for_tonemap_input(), 0, vec![backbuffer_sfloat4_info]),
 		DescriptorSetWriteInfo::CombinedImageSampler(pipelines.get_descriptor_set_for_smaa_edgedetect(), 0, vec![backbuffer_unorm4f_info.clone()]),
 		DescriptorSetWriteInfo::CombinedImageSampler(pipelines.get_descriptor_set_for_smaa_blendweight(), 0, vec![backbuffer_unorm2_info, areatex_info, searchtex_info]),
 		DescriptorSetWriteInfo::CombinedImageSampler(pipelines.get_descriptor_set_for_smaa_combine(), 0, vec![backbuffer_unorm4f_info, backbuffer_unorm4_info]),
@@ -269,7 +271,8 @@ fn game_main(engine: Engine, target: Box<RenderWindow>, target_extent: VkExtent2
 			.map(|x| ImageMemoryBarrier::hold_ownership(*x, ImageSubresourceRange::base_color(),
 				0, VK_ACCESS_MEMORY_READ_BIT, VkImageLayout::Undefined, VkImageLayout::PresentSrcKHR))
 			.chain(vec![
-				ImageMemoryBarrier::hold_ownership(backbuffer_sfloat4_set, ImageSubresourceRange::base_color(), VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VkImageLayout::Preinitialized, VkImageLayout::ColorAttachmentOptimal),
+				ImageMemoryBarrier::hold_ownership(backbuffer_sfloat4_set, ImageSubresourceRange::base_color(), VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_INPUT_ATTACHMENT_READ_BIT | VK_ACCESS_SHADER_READ_BIT,
+					VkImageLayout::Preinitialized, VkImageLayout::ShaderReadOnlyOptimal),
 				ImageMemoryBarrier::hold_ownership(backbuffer_unorm4f_set, ImageSubresourceRange::base_color(), VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VkImageLayout::Preinitialized, VkImageLayout::ColorAttachmentOptimal),
 				ImageMemoryBarrier::hold_ownership(backbuffer_unorm2_set, ImageSubresourceRange::base_color(), VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VkImageLayout::Preinitialized, VkImageLayout::ColorAttachmentOptimal),
 				ImageMemoryBarrier::hold_ownership(backbuffer_unorm4_set, ImageSubresourceRange::base_color(), VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VkImageLayout::Preinitialized, VkImageLayout::ColorAttachmentOptimal)
@@ -331,16 +334,22 @@ fn game_main(engine: Engine, target: Box<RenderWindow>, target_extent: VkExtent2
 	try!(framebuffer_commands.begin_all().map(|iter| iter.map(|(i, recorder)|
 	{
 		let clear_values = [
-			interlude::AttachmentClearValue::Color(0.0f32, 0.0f32, 0.015625f32, 1.0f32),
-			interlude::AttachmentClearValue::Color(0.0f32, 0.0f32, 0.0f32, 0.0f32),
-			interlude::AttachmentClearValue::Color(0.0f32, 0.0f32, 0.0f32, 0.0f32),
-			interlude::AttachmentClearValue::Color(0.0f32, 0.0f32, 0.0f32, 0.0f32)
+			AttachmentClearValue::Color(0.0f32, 0.0f32, 0.015625f32, 1.0f32),
+			AttachmentClearValue::Color(0.0f32, 0.0f32, 0.0f32, 0.0f32),	/* unused */
+			AttachmentClearValue::Color(0.0f32, 0.0f32, 0.0f32, 0.0f32),
+			AttachmentClearValue::Color(0.0f32, 0.0f32, 0.0f32, 0.0f32),
+			AttachmentClearValue::Color(0.0f32, 0.0f32, 0.0f32, 0.0f32)
 		];
-		let color_output_barrier = interlude::ImageMemoryBarrier::template(target.get_back_images()[i], interlude::ImageSubresourceRange::base_color())
-			.hold_ownership(VK_ACCESS_MEMORY_READ_BIT, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VkImageLayout::PresentSrcKHR, VkImageLayout::ColorAttachmentOptimal);
+		let color_output_barriers = [
+			ImageMemoryBarrier::template(target.get_back_images()[i], interlude::ImageSubresourceRange::base_color())
+				.hold_ownership(VK_ACCESS_MEMORY_READ_BIT, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VkImageLayout::PresentSrcKHR, VkImageLayout::ColorAttachmentOptimal),
+			ImageMemoryBarrier::template(backbuffer_sfloat4_set, interlude::ImageSubresourceRange::base_color())
+				.hold_ownership(VK_ACCESS_INPUT_ATTACHMENT_READ_BIT | VK_ACCESS_SHADER_READ_BIT, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+				VkImageLayout::ShaderReadOnlyOptimal, VkImageLayout::ColorAttachmentOptimal)
+		];
 
 		recorder
-			.pipeline_barrier(VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, false, &[], &[], &[color_output_barrier])
+			.pipeline_barrier(VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, false, &[], &[], &color_output_barriers)
 			.begin_render_pass(&framebuffers[i], &clear_values, false)
 			// Pass 0 : Render to Buffer //
 			.bind_descriptor_sets(pipelines.layout_for_wire_render(), &[pipelines.get_descriptor_set_for_uniform_buffer()])
@@ -373,10 +382,10 @@ fn game_main(engine: Engine, target: Box<RenderWindow>, target_extent: VkExtent2
 			// Tonemapping //
 			.bind_vertex_buffers(&[(&appdata.dev, appdata.offset_ppvbuf())])
 			.bind_pipeline(&pipelines.tonemapper)
+			.bind_descriptor_sets(&pipelines.layout_for_attachment_input(), &[pipelines.get_descriptor_set_for_tonemap_input()])
 			.draw(4, 1)
 			.next_subpass(false)
 			// Edge Detection(SMAA 1x) //
-			.bind_vertex_buffers(&[(&appdata.dev, appdata.offset_ppvbuf())])
 			.bind_pipeline(&pipelines.smaa.as_ref().unwrap().edgedetect)
 			.bind_descriptor_sets(&pipelines.smaa.as_ref().unwrap().edgedetect_layout, &[pipelines.get_descriptor_set_for_smaa_edgedetect()])
 			.draw(4, 1)
