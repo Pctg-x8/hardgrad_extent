@@ -39,6 +39,8 @@ use smaa_extra_textures::*;
 use rayon::prelude::*;
 
 use std::cell::RefCell;
+use std::sync::Arc;
+use std::sync::atomic::*;
 
 // For InputSystem
 #[derive(PartialEq, Eq, Hash, Copy, Clone, Debug)]
@@ -142,7 +144,7 @@ impl SMAAPipelineStates
 			let cps = GraphicsPipelineBuilder::for_postprocess(engine, &cpl, render_pass, base_subpass + 2,
 				PipelineShaderProgram(&csh, scons_rt_metrics.clone()), processing_viewport)
 				.vertex_shader(PipelineShaderProgram(&cvsh, scons_rt_metrics));
-			Unrecoverable!(engine.create_graphics_pipelines(&[&eps, &bwps, &cps]))
+			engine.create_graphics_pipelines(&[&eps, &bwps, &cps]).or_crash()
 		};
 		let cpso = gps.pop().unwrap();
 		let bwpso = gps.pop().unwrap();
@@ -209,7 +211,7 @@ fn game_main(engine: Engine, target: Box<RenderWindow>, target_extent: VkExtent2
 			[f16::from_f64(2.0), f16::from_f64(1.5), f16::from_f64(1.0), f16::from_f64(1.0)],
 			[f16::from_f64(1.5), f16::from_f64(1.0), f16::from_f64(0.25), f16::from_f64(1.0)],
 			[f16::from_f64(1.0), f16::from_f64(0.1875), f16::from_f64(0.125), f16::from_f64(0.875)],
-			[f16::from_f64(0.25), f16::from_f64(0.25), f16::from_f64(0.25), f16::from_f64(0.375)]
+			[f16::from_f64(0.125), f16::from_f64(0.125), f16::from_f64(0.125), f16::from_f64(0.375)]
 		]);
 	}
 	let appdata = ApplicationBufferData::new(&engine, target_extent);
@@ -301,37 +303,43 @@ fn game_main(engine: Engine, target: Box<RenderWindow>, target_extent: VkExtent2
 	let frame_time_ms = RefCell::new(0.0f64);
 	let cputime_ms = RefCell::new(0.0f64);
 	let enemy_count = RefCell::new(0u32);
-	let debug_info = try!(interlude::DebugInfo::new(&engine, &[
-		interlude::DebugLine::Float("Frame Time".to_owned(), &frame_time_ms, Some("ms".to_owned())),
-		interlude::DebugLine::Float("CPU Time".to_owned(), &cputime_ms, Some("ms".to_owned())),
-		interlude::DebugLine::UnsignedInt("Enemy Count".to_owned(), &enemy_count, None)
-	], &render_pass.object, render_pass.smaa_combine_pass, sc_viewport));
+	let player_bithash = RefCell::new(0u32);
+	let debug_info = DebugInfo::new(&engine, &[
+		DebugLine::Float("Frame Time".to_owned(), &frame_time_ms, Some("ms".to_owned())),
+		DebugLine::Float("CPU Time".to_owned(), &cputime_ms, Some("ms".to_owned())),
+		DebugLine::UnsignedInt("Enemy Count".to_owned(), &enemy_count, None),
+		DebugLine::UnsignedInt("Player Bithash".to_owned(), &player_bithash, None)
+	], &render_pass.object, render_pass.smaa_combine_pass, sc_viewport).or_crash();
 
 	info!("Recording Rendering Commands...");
 	// Rendering Commands //
-	let combine_commands = 
+	let combine_commands = engine.allocate_bundled_command_buffers(2 * framebuffers.len() as u32).or_crash();
+	for (n, f) in framebuffers.iter().enumerate()
 	{
-		let smaa_combine_descriptor_sets = [pipelines.get_descriptor_set_for_smaa_combine()];
-		let smaa_combine_vertex_buffers = [(&appdata.dev as &BufferResource, appdata.offset_ppvbuf())];
-		let combine_commands = try!(engine.allocate_bundled_command_buffers(2 * framebuffers.len() as u32));
-		for (n, f) in framebuffers.iter().enumerate()
-		{
-			try!(combine_commands.begin(0 + 2 * n, &render_pass.object, 3, f).and_then(|recorder|
-				recorder
-					.bind_pipeline(&pipelines.smaa.as_ref().unwrap().combine)
-					.bind_descriptor_sets(&pipelines.smaa.as_ref().unwrap().combine_layout, &smaa_combine_descriptor_sets)
-					.bind_vertex_buffers(&smaa_combine_vertex_buffers)
-					.draw(4, 1)
-				.end()
-			));
-			/*try!(combine_commands.begin(1 + 2 * n, &render_pass.object, 3, f).and_then(|recorder|
-				recorder.inject_commands(|r| debug_info.inject_render_commands(r)).end()
-			));*/
-		}
-		Some(combine_commands)
-	};
-	let framebuffer_commands = try!(engine.allocate_graphics_command_buffers(target.get_back_images().len() as u32));
-	try!(framebuffer_commands.begin_all().map(|iter| iter.map(|(i, recorder)|
+		combine_commands.begin(0 + 2 * n, &render_pass.object, 3, f).and_then(|recorder|
+			recorder
+				.bind_pipeline(&pipelines.smaa.as_ref().unwrap().combine)
+				.bind_descriptor_sets(&pipelines.smaa.as_ref().unwrap().combine_layout, &[pipelines.get_descriptor_set_for_smaa_combine()])
+				.bind_vertex_buffers(&[(&appdata.dev, appdata.offset_ppvbuf())])
+				.draw(4, 1)
+			.end()
+		).or_crash();
+		combine_commands.begin(1 + 2 * n, &render_pass.object, 3, f).and_then(|recorder|
+			recorder.inject_commands(|r| debug_info.inject_render_commands(r))
+				.bind_pipeline(&pipelines.gridrender)
+				.bind_descriptor_sets(pipelines.layout_for_gridrender(), &[pipelines.get_descriptor_set_for_uniform_buffer()])
+				.bind_vertex_buffers(&[(&appdata.dev, appdata.offset_vbuf() + structures::VertexMemoryForWireRender::gridsource_offs())])
+				.push_constants(pipelines.layout_for_gridrender(), &[ShaderStage::Vertex], 0 .. std::mem::size_of::<f32>() as u32, &[0.0])
+				.draw(2, 36)
+				.push_constants(pipelines.layout_for_gridrender(), &[ShaderStage::Vertex], 0 .. std::mem::size_of::<f32>() as u32, &[1.0])
+				.draw(2, 36)
+				.push_constants(pipelines.layout_for_gridrender(), &[ShaderStage::Vertex], 0 .. std::mem::size_of::<f32>() as u32, &[2.0])
+				.draw(2, 50)
+			.end()
+		).or_crash();
+	}
+	let framebuffer_commands = engine.allocate_graphics_command_buffers(target.get_back_images().len() as u32).or_crash();
+	framebuffer_commands.begin_all().and_then(|iter| iter.map(|(i, recorder)|
 	{
 		let clear_values = [
 			AttachmentClearValue::Color(0.0f32, 0.0f32, 0.015625f32, 1.0f32),
@@ -398,10 +406,10 @@ fn game_main(engine: Engine, target: Box<RenderWindow>, target_extent: VkExtent2
 			// .pipeline_barrier(VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, false, &[], &[], &[ibar_blendweight_end])
 			.next_subpass(true)
 			// SMAA Combine and Debug Print //
-			.execute_commands(&combine_commands.as_ref().unwrap()[i * 2 .. i * 2 + 1])
+			.execute_commands(&combine_commands[i * 2 .. i * 2 + 2])
 			.end_render_pass()
-		.end().or_crash()
-	}).collect::<Vec<_>>()));
+		.end()
+	}).collect::<Result<Vec<_>, _>>()).or_crash();
 	info!("Recording Transfer Commands...");
 	// Transfer Commands //
 	let update_commands = try!(engine.allocate_transfer_command_buffers(1));
@@ -409,16 +417,14 @@ fn game_main(engine: Engine, target: Box<RenderWindow>, target_extent: VkExtent2
 	{
 		let uoffs = appdata.offset_instance();
 		let buffer_barriers = [
-			interlude::BufferMemoryBarrier::hold_ownership(&appdata.dev, uoffs .. appdata.size(),
+			BufferMemoryBarrier::hold_ownership(&appdata.dev, uoffs .. appdata.size(),
 				VK_ACCESS_INDEX_READ_BIT | VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT | VK_ACCESS_UNIFORM_READ_BIT, VK_ACCESS_TRANSFER_WRITE_BIT),
-			interlude::BufferMemoryBarrier::hold_ownership(&appdata.stg, uoffs .. appdata.size(),
-				VK_ACCESS_MEMORY_READ_BIT, VK_ACCESS_TRANSFER_READ_BIT)
+			BufferMemoryBarrier::hold_ownership(&appdata.stg, uoffs .. appdata.size(), VK_ACCESS_MEMORY_READ_BIT, VK_ACCESS_TRANSFER_READ_BIT)
 		];
 		let buffer_barriers_ret = [
-			interlude::BufferMemoryBarrier::hold_ownership(&appdata.dev, uoffs .. appdata.size(),
+			BufferMemoryBarrier::hold_ownership(&appdata.dev, uoffs .. appdata.size(),
 				VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_INDEX_READ_BIT | VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT | VK_ACCESS_UNIFORM_READ_BIT),
-			interlude::BufferMemoryBarrier::hold_ownership(&appdata.stg, uoffs .. appdata.size(),
-				VK_ACCESS_TRANSFER_READ_BIT, VK_ACCESS_MEMORY_READ_BIT)
+			BufferMemoryBarrier::hold_ownership(&appdata.stg, uoffs .. appdata.size(), VK_ACCESS_TRANSFER_READ_BIT, VK_ACCESS_MEMORY_READ_BIT)
 		];
 
 		recorder
@@ -432,7 +438,7 @@ fn game_main(engine: Engine, target: Box<RenderWindow>, target_extent: VkExtent2
 
 	let _/*engine*/ = {
 		let window_system = engine.window_system_ref().clone();
-		let exit_flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+		let exit_flag = Arc::new(AtomicBool::new(false));
 		let exit_flag_uo = exit_flag.clone();
 		let execute_next_signal = Unrecoverable!(engine.create_fence());
 		let copy_completion_sig = Unrecoverable!(engine.create_fence());
@@ -452,27 +458,24 @@ fn game_main(engine: Engine, target: Box<RenderWindow>, target_extent: VkExtent2
 						None, Some(&execute_next_signal)).map(|()| findex)
 				)
 			);
-			while !exit_flag_uo.load(std::sync::atomic::Ordering::Acquire)
+			while !exit_flag_uo.load(Ordering::Acquire)
 			{
-				Unrecoverable!(execute_next_signal.wait());
-				Unrecoverable!(execute_next_signal.clear());
+				execute_next_signal.wait().and_then(|()| execute_next_signal.clear()).or_crash();
 				Unrecoverable!(engine.submit_transfer_commands(&debug_transfer_commands, &[], None, Some(&dbg_copy_completion_sig)));
 				Unrecoverable!(engine.submit_transfer_commands(&update_commands, &[], None, Some(&copy_completion_sig)));
-				Unrecoverable!(copy_completion_sig.wait());  Unrecoverable!(dbg_copy_completion_sig.wait());
-				Unrecoverable!(copy_completion_sig.clear()); Unrecoverable!(dbg_copy_completion_sig.clear());
+				copy_completion_sig.wait().and_then(|()| copy_completion_sig.clear()).or_crash();
+				dbg_copy_completion_sig.wait().and_then(|()| dbg_copy_completion_sig.clear()).or_crash();
 				event_sender.send(ApplicationEvent::Update).unwrap();
-				frame_index = Unrecoverable!(
-					target.present(engine.graphics_queue_ref(), frame_index).and_then(|()|
+				frame_index = target.present(engine.graphics_queue_ref(), frame_index).and_then(|()|
 					target.acquire_next_backbuffer_index(&rendering_order_sem).and_then(|findex|
 					{
 						engine.submit_graphics_commands(&framebuffer_commands[findex as usize .. findex as usize + 1],
 							&[(&rendering_order_sem, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT)],
 							None, Some(&execute_next_signal)).map(|()| findex)
-					}))
-				);
+					})).or_crash();
 			}
 
-			Unrecoverable!(engine.wait_device());
+			engine.wait_device().or_crash();
 			engine
 		}) };
 		let ws_event_observer = unsafe { thread_scoped::scoped(move ||
@@ -620,7 +623,8 @@ fn game_main(engine: Engine, target: Box<RenderWindow>, target_extent: VkExtent2
 						*e = Enemy::Free;
 						*enemy_count.borrow_mut() -= 1;
 					}
-					player.update(delta_time_sec, &input);
+					*player_bithash.borrow_mut() = player.update(delta_time_sec, &input);
+					// println!("PlayerBitHashBin: {:08b}", *player_bithash.borrow());
 
 					if let Some((count, x, y)) = next_particle_spawn
 					{
@@ -655,8 +659,9 @@ fn game_main(engine: Engine, target: Box<RenderWindow>, target_extent: VkExtent2
 			}
 		}
 
+		info!("Terminating Threads...");
 		ws_event_observer.join();
-		exit_flag.store(true, std::sync::atomic::Ordering::Release);
+		exit_flag.store(true, Ordering::Release);
 		update_observer.join()
 	};
 

@@ -14,6 +14,7 @@ pub struct ShaderStore
 	pub player_rotate_vsh: ShaderProgram,
 	pub playerbullet_vsh: ShaderProgram,
 	pub lineburst_particle_vsh: ShaderProgram,
+	pub gridrender_vsh: ShaderProgram,
 	// Geometry Shaders //
 	pub enemy_duplication_gsh: ShaderProgram,
 	pub background_duplication_gsh: ShaderProgram,
@@ -64,6 +65,8 @@ impl ShaderStore
 				VertexAttribute(0, VkFormat::R32_UINT, 0),
 				VertexAttribute(0, VkFormat::R32G32_SFLOAT, size_of::<u32>() as u32)
 			])),
+			gridrender_vsh: engine.create_vertex_shader_from_asset("shaders.GridRenderV", "main",
+				&[VertexBinding::PerVertex(size_of::<Position>() as u32)], &[VertexAttribute(0, VkFormat::R32G32B32A32_SFLOAT, 0)]).or_crash(),
 			enemy_duplication_gsh: Unrecoverable!(engine.create_geometry_shader_from_asset("shaders.EnemyDuplicator", "main")),
 			background_duplication_gsh: Unrecoverable!(engine.create_geometry_shader_from_asset("shaders.BackLineDuplicator", "main")),
 			enemy_rezonator_duplication_gsh: Unrecoverable!(engine.create_geometry_shader_from_asset("shaders.EnemyRezonatorDup", "main")),
@@ -134,6 +137,7 @@ impl ApplicationBufferData
 			Position(-1.0,  1.0, 0.0, 1.0),
 			Position( 1.0,  1.0, 0.0, 1.0)
 		];
+		vertices.gridsource = [Position(0.0, 0.0, 0.0, 1.0), Position(0.0, 75.0, 0.0, 1.0)];
 		indices.player_cube_ids = [
 			0, 1, 1, 2, 2, 3, 3, 0,
 			4, 5, 5, 6, 6, 7, 7, 4,

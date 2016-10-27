@@ -92,7 +92,7 @@ impl <'a> Enemy<'a>
 				rezonator_iref[2] += 220.0f32.to_radians() * delta_time;
 				*living_secs += delta_time;
 
-				if current_y >= 52.0 { rezonator_iref[0] = 0.0; Some(block_index) } else { None }
+				if current_y >= 51.5 { rezonator_iref[0] = 0.0; Some(block_index) } else { None }
 			},
 			_ => None
 		};

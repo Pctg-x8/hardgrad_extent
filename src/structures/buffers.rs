@@ -20,12 +20,14 @@ use std;
 	pub unit_plane_source_vts: [Position; 4],
 	pub player_cube_vts: [Position; 8],
 	pub enemy_rezonator_vts: [Position; 3],
-	pub sprite_plane_vts: [Position; 4]
+	pub sprite_plane_vts: [Position; 4],
+	pub gridsource: [Position; 2]
 }
 impl VertexMemoryForWireRender
 {
 	pub fn enemy_rezonator_offs() -> usize { unsafe { std::mem::transmute(&std::mem::transmute::<_, &VertexMemoryForWireRender>(0usize).enemy_rezonator_vts) } }
 	pub fn sprite_plane_offs() -> usize { unsafe { std::mem::transmute(&std::mem::transmute::<_, &VertexMemoryForWireRender>(0usize).sprite_plane_vts) } }
+	pub fn gridsource_offs() -> usize { unsafe { std::mem::transmute(&std::mem::transmute::<_, &VertexMemoryForWireRender>(0usize).gridsource) } }
 }
 #[repr(C)] pub struct IndexMemory
 {

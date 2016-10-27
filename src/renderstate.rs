@@ -13,7 +13,8 @@ pub struct Layouts
 	pub global_uniform_layout: DescriptorSetLayout, pub texture_layout: DescriptorSetLayout, pub texture_layout_geom: DescriptorSetLayout,
 	pub ainput_layout: DescriptorSetLayout,
 	pub ainput_require_layout: PipelineLayout,
-	pub wire_pipeline_layout: Rc<PipelineLayout>, pub lineburst_particle_layout: PipelineLayout, pub sprite_layout: Rc<PipelineLayout>
+	pub wire_pipeline_layout: Rc<PipelineLayout>, pub lineburst_particle_layout: PipelineLayout, pub sprite_layout: Rc<PipelineLayout>,
+	pub gridrender_layout: PipelineLayout
 }
 impl Layouts
 {
@@ -31,6 +32,8 @@ impl Layouts
 				&[PushConstantDesc(VK_SHADER_STAGE_VERTEX_BIT, 0 .. size_of::<CVector4>() as u32)]).or_crash()),
 			lineburst_particle_layout: engine.create_pipeline_layout(&[&gu_layout, &t_layout_g], &[]).or_crash(),
 			sprite_layout: Rc::new(engine.create_pipeline_layout(&[&gu_layout, &t_layout], &[]).or_crash()),
+			gridrender_layout: engine.create_pipeline_layout(&[&gu_layout],
+				&[PushConstantDesc(VK_SHADER_STAGE_VERTEX_BIT, 0 .. size_of::<f32>() as u32)]).or_crash(),
 			global_uniform_layout: gu_layout, texture_layout: t_layout, texture_layout_geom: t_layout_g, ainput_layout: ainput_layout
 		}
 	}
@@ -39,7 +42,7 @@ pub struct PipelineStates
 {
 	#[allow(dead_code)] shaderstore: ShaderStore, layouts: Layouts,
 	pub background: WireRender, pub enemy_body: WireRender, pub enemy_rezonator: WireRender, pub player: WireRender,
-	pub playerbullet: SpriteRender, pub lineburst: GraphicsPipeline,
+	pub playerbullet: SpriteRender, pub lineburst: GraphicsPipeline, pub gridrender: GraphicsPipeline,
 	pub tonemapper: GraphicsPipeline, pub smaa: Option<SMAAPipelineStates>,
 	descriptor_sets: DescriptorSets
 }
@@ -88,8 +91,16 @@ impl PipelineStates
 			let tonemapper_ps = GraphicsPipelineBuilder::for_postprocess(&engine, &layouts.ainput_require_layout, &passes.object, passes.tonemap_pass,
 				PipelineShaderProgram::unspecialized(&shaderstore.tonemap_fsh), swapchain_viewport)
 				.vertex_shader(PipelineShaderProgram::unspecialized(&engine.postprocess_vsh_nouv));
-			engine.create_graphics_pipelines(&[&background_ps, &enemy_ps, &enemy_rezonator_ps, &player_ps, &playerbullet_ps, &lineburst_ps, &tonemapper_ps]).or_crash()
+			let gridrender_ps = GraphicsPipelineBuilder::new(&layouts.gridrender_layout, &passes.object, passes.smaa_combine_pass)
+				.vertex_shader(PipelineShaderProgram::unspecialized(&shaderstore.gridrender_vsh))
+				.fragment_shader(PipelineShaderProgram::unspecialized(&shaderstore.solid_fsh))
+				.primitive_topology(PrimitiveTopology::LineList(false))
+				.viewport_scissors(&[ViewportWithScissorRect::default_scissor(swapchain_viewport)])
+				.blend_state(&[AttachmentBlendState::PremultipliedAlphaBlend]);
+			engine.create_graphics_pipelines(&[&background_ps, &enemy_ps, &enemy_rezonator_ps,
+				&player_ps, &playerbullet_ps, &lineburst_ps, &tonemapper_ps, &gridrender_ps]).or_crash()
 		};
+		let gridrender_ps = gps.pop().unwrap();
 		let tonemap_ps = gps.pop().unwrap();
 		let lineburst_ps = gps.pop().unwrap();
 		let playerbullet_sr = SpriteRender::new(gps.pop().unwrap(), &layouts.sprite_layout);
@@ -120,7 +131,7 @@ impl PipelineStates
 		{
 			shaderstore: shaderstore, layouts: layouts,
 			background: background_wr, enemy_body: enemy_wr, enemy_rezonator: enemy_rezonator_wr, player: player_wr, playerbullet: playerbullet_sr,
-			lineburst: lineburst_ps,
+			lineburst: lineburst_ps, gridrender: gridrender_ps,
 			tonemapper: tonemap_ps, smaa: smaa, descriptor_sets: descriptor_sets
 		}
 	}
@@ -129,6 +140,7 @@ impl PipelineStates
 	pub fn layout_for_attachment_input(&self) -> &PipelineLayout { &self.layouts.ainput_require_layout }
 	pub fn layout_for_wire_render(&self) -> &PipelineLayout { &self.layouts.wire_pipeline_layout }
 	pub fn layout_for_lineburst_particle_render(&self) -> &PipelineLayout { &self.layouts.lineburst_particle_layout }
+	pub fn layout_for_gridrender(&self) -> &PipelineLayout { &self.layouts.gridrender_layout }
 	pub fn get_descriptor_set_for_uniform_buffer(&self) -> VkDescriptorSet { self.descriptor_sets[0] }
 	pub fn get_descriptor_set_for_playerbullet_texture(&self) -> VkDescriptorSet { self.descriptor_sets[1] }
 	pub fn get_descriptor_set_for_lineburst_particle_color(&self) -> VkDescriptorSet { self.descriptor_sets[2] }

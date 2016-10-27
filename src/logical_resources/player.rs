@@ -4,6 +4,13 @@ use nalgebra::*;
 use LogicalInputTypes;
 use interlude::*;
 use std;
+use utils::quadtree::*;
+
+const PLAYER_SIZE_H: f32 = 1.5;
+const SCREEN_HSIZE: f32 = 36.0;
+const SCREEN_VSIZE: f32 = 4.0 * 36.0 / 3.0;
+const PLAYER_HLIMIT: f32 = SCREEN_HSIZE - PLAYER_SIZE_H;
+const PLAYER_VLIMIT: f32 = SCREEN_VSIZE - PLAYER_SIZE_H;
 
 pub struct Player<'a>
 {
@@ -26,7 +33,7 @@ impl<'a> Player<'a>
 			uniform_memory: uniform_ref, instance_memory: instance_ref, living_secs: 0.0f32
 		}
 	}
-	pub fn update(&mut self, frame_delta: f32, input: &InputSystem<LogicalInputTypes>)
+	pub fn update(&mut self, frame_delta: f32, input: &InputSystem<LogicalInputTypes>) -> u32
 	{
 		let u_quaternions = [
 			UnitQuaternion::new(Vector3::new(-1.0f32, 0.0f32, 0.75f32).normalize() * (260.0f32 * self.living_secs as f32).to_radians()),
@@ -36,12 +43,14 @@ impl<'a> Player<'a>
 		self.living_secs += frame_delta;
 
 		self.uniform_memory[0] =
-			(self.uniform_memory[0] + input[LogicalInputTypes::Horizontal] * 40.0f32 * frame_delta).max(-33.0f32).min(33.0f32);
+			(self.uniform_memory[0] + input[LogicalInputTypes::Horizontal] * 40.0f32 * frame_delta).max(-PLAYER_HLIMIT).min(PLAYER_HLIMIT);
 		self.uniform_memory[1] =
-			(self.uniform_memory[1] + input[LogicalInputTypes::Vertical] * 40.0f32 * frame_delta).max(1.5f32).min(45.0f32);
+			(self.uniform_memory[1] + input[LogicalInputTypes::Vertical] * 40.0f32 * frame_delta).max(PLAYER_SIZE_H).min(PLAYER_VLIMIT);
 
 		self.instance_memory[0] = quaternions.next().unwrap();
 		self.instance_memory[1] = quaternions.next().unwrap();
+
+		bithash(self.uniform_memory[0], self.uniform_memory[1]) as u32
 	}
 
 	pub fn left(&self) -> f32 { self.uniform_memory[0] }
@@ -71,7 +80,7 @@ impl<'a> PlayerBullet<'a>
 			{
 				offs_sincos[0] += offs_sincos[2] * 8.0 * 14.0 * delta_time;
 				offs_sincos[1] -= offs_sincos[3] * 8.0 * 14.0 * delta_time;
-				if offs_sincos[0].abs() > 33.0 || !(0.0 <= offs_sincos[1] && offs_sincos[1] <= 50.0)
+				if offs_sincos[0].abs() > SCREEN_HSIZE || !(0.0 <= offs_sincos[1] && offs_sincos[1] <= SCREEN_VSIZE)
 				{
 					offs_sincos[0] = std::f32::MAX;
 					offs_sincos[1] = std::f32::MAX;
