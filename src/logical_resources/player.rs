@@ -92,5 +92,26 @@ impl<'a> PlayerBullet<'a>
 		
 		if let Some(bindex) = died_index { *self = PlayerBullet::Garbage(bindex); }
 	}
+	pub fn crash(&mut self, t_left: f32, t_top: f32) -> Option<(f32, f32)>
+	{
+		let died_index = match self
+		{
+			&mut PlayerBullet::Entity { block_index: block, offs_sincos_ref: ref mut offs_sincos } =>
+			{
+				let (xd, yd) = ((offs_sincos[0] - t_left).abs(), (offs_sincos[1] - t_top).abs());
+				if 0.0 <= xd && xd <= 1.25 + 0.25 && 0.0 <= yd && yd <= 1.25 + 0.25
+				{
+					let rvalue = (block, offs_sincos[0], offs_sincos[1]);
+					offs_sincos[0] = std::f32::MAX;
+					offs_sincos[1] = std::f32::MAX;
+					Some(rvalue)
+				}
+				else { None }
+			},
+			_ => None
+		};
+
+		if let Some((bindex, psx, psy)) = died_index { *self = PlayerBullet::Garbage(bindex); Some((psx, psy)) } else { None }
+	}
 	pub fn is_garbage(&self) -> bool { match self { &PlayerBullet::Garbage(_) => true, _ => false } }
 }

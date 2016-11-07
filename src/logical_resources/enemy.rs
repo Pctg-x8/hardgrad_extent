@@ -69,10 +69,10 @@ impl <'a> Enemy<'a>
 			left: init_left, living_secs: 0.0f32, rezonator_left: 3
 		}
 	}
-	pub fn update(&mut self, delta_time: f32)
+	pub fn update(&mut self, delta_time: f32) -> Option<(f32, f32)>
 	{
 		// update values
-		let died_bi = match self
+		let (died_bi, new_pos) = match self
 		{
 			&mut Enemy::Entity { block_index, ref mut uniform_ref, ref mut rezonator_iref, left: _, ref mut living_secs, rezonator_left } =>
 			{
@@ -92,13 +92,14 @@ impl <'a> Enemy<'a>
 				rezonator_iref[2] += 220.0f32.to_radians() * delta_time;
 				*living_secs += delta_time;
 
-				if current_y >= 51.5 { rezonator_iref[0] = 0.0; Some(block_index) } else { None }
+				(if current_y >= 51.5 { rezonator_iref[0] = 0.0; Some(block_index) } else { None }, Some((uniform_ref.center_tf[0], uniform_ref.center_tf[1])))
 			},
-			_ => None
+			_ => (None, None)
 		};
 
 		// state change
 		if let Some(bindex) = died_bi { *self = Enemy::Garbage(bindex); }
+		new_pos
 	}
 	pub fn is_garbage(&self) -> bool
 	{

@@ -532,7 +532,7 @@ fn game_main(engine: Engine, target: Box<RenderWindow>, target_extent: VkExtent2
 		let mut secs_from_last_trigger = 0.0;
 		let mut game_secs = 0.0;
 		let mut next_shoot = false;
-		let mut next_particle_spawn = None;
+		let mut next_particle_spawn = Vec::new();
 		let particle_spawn_rate = rand::distributions::Range::new(0, 30);
 		let particle_spawn_count = rand::distributions::Range::new(1, 8);
 		let particle_spawn_wrange = rand::distributions::Range::new(-30.0, 30.0);
@@ -616,7 +616,19 @@ fn game_main(engine: Engine, target: Box<RenderWindow>, target_extent: VkExtent2
 						else { warn!("Enemy Datastore is full!!"); }
 						enemy_next_appear = false;
 					}
-					enemy_entities.par_iter_mut().for_each(|e| e.update(delta_time_sec));
+					for e in enemy_entities.iter_mut()
+					{
+						if let Some((new_left, new_top)) = e.update(delta_time_sec)
+						{
+							for pb in player_bullets.iter_mut()
+							{
+								if let Some((psx, psy)) = pb.crash(new_left, new_top)
+								{
+									next_particle_spawn.push((particle_spawn_count.ind_sample(&mut randomizer), psx, psy));
+								}
+							}
+						}
+					}
 					for e in enemy_entities.iter_mut().filter(|e| e.is_garbage())
 					{
 						match e { &mut Enemy::Garbage(bindex) => enemy_datastore.free_block(bindex), _ => unreachable!() };
@@ -626,10 +638,13 @@ fn game_main(engine: Engine, target: Box<RenderWindow>, target_extent: VkExtent2
 					*player_bithash.borrow_mut() = player.update(delta_time_sec, &input);
 					// println!("PlayerBitHashBin: {:08b}", *player_bithash.borrow());
 
-					if let Some((count, x, y)) = next_particle_spawn
+					if !next_particle_spawn.is_empty()
 					{
-						lineburst_particles.spawn(count, x, y, game_secs);
-						next_particle_spawn = None;
+						for &(count, x, y) in next_particle_spawn.iter()
+						{
+							lineburst_particles.spawn(count, x, y, game_secs);
+						}
+						next_particle_spawn.clear();
 					}
 					lineburst_particles = lineburst_particles.garbage_collect(game_secs);
 
@@ -645,11 +660,11 @@ fn game_main(engine: Engine, target: Box<RenderWindow>, target_extent: VkExtent2
 				// fixed update
 				background_next_appear = background_appear_rate.ind_sample(&mut randomizer) == 0;
 				enemy_next_appear = enemy_appear_rate.ind_sample(&mut randomizer) == 0;
-				if particle_spawn_rate.ind_sample(&mut randomizer) == 0
+				/*if particle_spawn_rate.ind_sample(&mut randomizer) == 0
 				{
 					next_particle_spawn = Some((particle_spawn_count.ind_sample(&mut randomizer),
 						particle_spawn_wrange.ind_sample(&mut randomizer), particle_spawn_hrange.ind_sample(&mut randomizer)));
-				}
+				}*/
 				secs_from_last_fixed -= 1.0 / 60.0;
 			}
 			if shooting && secs_from_last_trigger >= 0.0375
