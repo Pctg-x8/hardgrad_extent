@@ -3,4 +3,4 @@
 	url = https://Pctg-x8@github.com/Pctg-x8/interlude.git
 [submodule "postludium"]
 	path = postludium
-	url = ssh://git@postludium.github.com/Pctg-x8/postludium.git
+	url = https://Pctg-x8@github.com/Pctg-x8/postludium
