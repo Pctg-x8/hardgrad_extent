@@ -107,7 +107,7 @@ pub struct SMAAPipelineStates
 }
 impl SMAAPipelineStates
 {
-	pub fn new(engine: &Engine, render_pass: &RenderPass, base_subpass: u32, processing_viewport: VkViewport) -> Self
+	pub fn new<Engine: EngineCore>(engine: &Engine, render_pass: &RenderPass, base_subpass: u32, processing_viewport: VkViewport) -> Self
 	{
 		let VkViewport(_, _, vw, vh, _, _) = processing_viewport;
 
@@ -171,7 +171,7 @@ fn app_main() -> Result<(), EngineError>
 	let extent = main_frame.get_extent();
 	game_main(*engine, main_frame, extent)
 }
-fn game_main(engine: Engine, target: Box<RenderWindow>, target_extent: VkExtent2D) -> Result<(), EngineError>
+fn game_main<WS: WindowServer>(engine: Engine<WS>, target: Box<RenderWindow>, target_extent: VkExtent2D) -> Result<(), EngineError>
 {
 	// Resources //
 	let images = DevConfImages::from_file(&engine, "devconf.images", target_extent, target.get_format()).ensure_has_staging();
@@ -300,11 +300,13 @@ fn game_main(engine: Engine, target: Box<RenderWindow>, target_extent: VkExtent2
 	}).or_crash();
 
 	// Debug Information //
+	let frames_per_second = RefCell::new(0.0f64);
 	let frame_time_ms = RefCell::new(0.0f64);
 	let cputime_ms = RefCell::new(0.0f64);
 	let enemy_count = RefCell::new(0u32);
 	let player_bithash = RefCell::new(0u32);
 	let debug_info = DebugInfo::new(&engine, &[
+		DebugLine::Float("FPS".to_owned(), &frames_per_second, None),
 		DebugLine::Float("Frame Time".to_owned(), &frame_time_ms, Some("ms".to_owned())),
 		DebugLine::Float("CPU Time".to_owned(), &cputime_ms, Some("ms".to_owned())),
 		DebugLine::UnsignedInt("Enemy Count".to_owned(), &enemy_count, None),
@@ -326,15 +328,6 @@ fn game_main(engine: Engine, target: Box<RenderWindow>, target_extent: VkExtent2
 		).or_crash();
 		combine_commands.begin(1 + 2 * n, &render_pass.object, 3, f).and_then(|recorder|
 			recorder.inject_commands(|r| debug_info.inject_render_commands(r))
-				.bind_pipeline(&pipelines.gridrender)
-				.bind_descriptor_sets(pipelines.layout_for_gridrender(), &[pipelines.get_descriptor_set_for_uniform_buffer()])
-				.bind_vertex_buffers(&[(&appdata.dev, appdata.offset_vbuf() + structures::VertexMemoryForWireRender::gridsource_offs())])
-				.push_constants(pipelines.layout_for_gridrender(), &[ShaderStage::Vertex], 0 .. std::mem::size_of::<f32>() as u32, &[0.0])
-				.draw(2, 36)
-				.push_constants(pipelines.layout_for_gridrender(), &[ShaderStage::Vertex], 0 .. std::mem::size_of::<f32>() as u32, &[1.0])
-				.draw(2, 36)
-				.push_constants(pipelines.layout_for_gridrender(), &[ShaderStage::Vertex], 0 .. std::mem::size_of::<f32>() as u32, &[2.0])
-				.draw(2, 50)
 			.end()
 		).or_crash();
 	}
@@ -533,10 +526,7 @@ fn game_main(engine: Engine, target: Box<RenderWindow>, target_extent: VkExtent2
 		let mut game_secs = 0.0;
 		let mut next_shoot = false;
 		let mut next_particle_spawn = Vec::new();
-		let particle_spawn_rate = rand::distributions::Range::new(0, 30);
 		let particle_spawn_count = rand::distributions::Range::new(1, 8);
-		let particle_spawn_wrange = rand::distributions::Range::new(-30.0, 30.0);
-		let particle_spawn_hrange = rand::distributions::Range::new(0.0, 50.0);
 		while let Ok(event) = event_receiver.recv()
 		{
 			match event
@@ -546,6 +536,7 @@ fn game_main(engine: Engine, target: Box<RenderWindow>, target_extent: VkExtent2
 				{
 					let delta_time = prev_time.to(time::PreciseTime::now());
 					*frame_time_ms.borrow_mut() = delta_time.num_microseconds().unwrap_or(-1) as f64 / 1000.0f64;
+					*frames_per_second.borrow_mut() = 1000.0f64 / *frame_time_ms.borrow();
 
 					// normal update
 					let cputime_start = time::PreciseTime::now();
