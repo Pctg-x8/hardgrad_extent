@@ -18,7 +18,7 @@ pub struct Layouts
 }
 impl Layouts
 {
-	fn new(engine: &Engine) -> Self
+	fn new<Engine: EngineCore>(engine: &Engine) -> Self
 	{
 		let gu_layout = engine.create_descriptor_set_layout(&[Descriptor::Uniform(1, vec![ShaderStage::Vertex, ShaderStage::Geometry])]).or_crash();
 		let t_layout = engine.create_descriptor_set_layout(&[Descriptor::CombinedSampler(1, vec![ShaderStage::Fragment])]).or_crash();
@@ -48,7 +48,7 @@ pub struct PipelineStates
 }
 impl PipelineStates
 {
-	pub fn new(engine: &Engine, use_smaa: bool, passes: &RenderPasses, swapchain_viewport: VkViewport) -> Self
+	pub fn new<Engine: EngineCore>(engine: &Engine, use_smaa: bool, passes: &RenderPasses, swapchain_viewport: VkViewport) -> Self
 	{
 		let shaderstore = ShaderStore::new(engine);
 		let layouts = Layouts::new(engine);
@@ -88,9 +88,9 @@ impl PipelineStates
 				.primitive_topology(PrimitiveTopology::Point)
 				.viewport_scissors(&[ViewportWithScissorRect::default_scissor(swapchain_viewport)])
 				.blend_state(&[AttachmentBlendState::PremultipliedAlphaBlend]);
-			let tonemapper_ps = GraphicsPipelineBuilder::for_postprocess(&engine, &layouts.ainput_require_layout, &passes.object, passes.tonemap_pass,
+			let tonemapper_ps = GraphicsPipelineBuilder::for_postprocess(engine, &layouts.ainput_require_layout, &passes.object, passes.tonemap_pass,
 				PipelineShaderProgram::unspecialized(&shaderstore.tonemap_fsh), swapchain_viewport)
-				.vertex_shader(PipelineShaderProgram::unspecialized(&engine.postprocess_vsh_nouv));
+				.vertex_shader(PipelineShaderProgram::unspecialized(&engine.get_postprocess_vsh(false)));
 			let gridrender_ps = GraphicsPipelineBuilder::new(&layouts.gridrender_layout, &passes.object, passes.smaa_combine_pass)
 				.vertex_shader(PipelineShaderProgram::unspecialized(&shaderstore.gridrender_vsh))
 				.fragment_shader(PipelineShaderProgram::unspecialized(&shaderstore.solid_fsh))

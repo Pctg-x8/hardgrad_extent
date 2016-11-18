@@ -13,7 +13,7 @@ pub struct RenderPasses
 }
 impl RenderPasses
 {
-	pub fn new(engine: &Engine, sc_format: VkFormat) -> Self
+	pub fn new<Engine: EngineCore>(engine: &Engine, sc_format: VkFormat) -> Self
 	{
 		// Attachment Descriptions //
 		let attachments = [

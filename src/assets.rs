@@ -27,7 +27,7 @@ pub struct ShaderStore
 }
 impl ShaderStore
 {
-	pub fn new(engine: &Engine) -> Self
+	pub fn new<Engine: EngineCore>(engine: &Engine) -> Self
 	{
 		ShaderStore
 		{
@@ -86,7 +86,7 @@ pub struct ApplicationBufferData
 }
 impl ApplicationBufferData
 {
-	pub fn new(engine: &Engine, target_extent: VkExtent2D) -> Self
+	pub fn new<Engine: EngineCore>(engine: &Engine, target_extent: VkExtent2D) -> Self
 	{
 		let application_buffer_prealloc = engine.buffer_preallocate(&[
 			(size_of::<[PosUV; 4]>(), BufferDataType::Vertex),
