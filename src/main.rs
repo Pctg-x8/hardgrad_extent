@@ -169,9 +169,9 @@ fn app_main() -> Result<(), EngineError>
 	let engine = try!(Engine::new("hardgrad_extend", 0x01, Some(std::env::current_dir().unwrap()), DeviceFeatures::new().enable_block_texture_compression()));
 	let main_frame = try!(engine.create_render_window(VkExtent2D(640, 480), "HardGrad -> Extend"));
 	let extent = main_frame.get_extent();
-	game_main(*engine, main_frame, extent)
+	game_main(engine, main_frame, extent)
 }
-fn game_main<WS: WindowServer>(engine: Engine<WS>, target: Box<RenderWindow>, target_extent: VkExtent2D) -> Result<(), EngineError>
+fn game_main<WS: WindowServer, IS: InputSystem<LogicalInputTypes>>(engine: Engine<WS, IS, LogicalInputTypes>, target: Box<RenderWindow>, target_extent: VkExtent2D) -> Result<(), EngineError>
 {
 	// Resources //
 	let images = DevConfImages::from_file(&engine, "devconf.images", target_extent, target.get_format()).ensure_has_staging();
@@ -431,6 +431,7 @@ fn game_main<WS: WindowServer>(engine: Engine<WS>, target: Box<RenderWindow>, ta
 
 	let _/*engine*/ = {
 		let window_system = engine.window_system_ref().clone();
+		let input_system = engine.input_system_ref().clone();
 		let exit_flag = Arc::new(AtomicBool::new(false));
 		let exit_flag_uo = exit_flag.clone();
 		let execute_next_signal = Unrecoverable!(engine.create_fence());
@@ -503,17 +504,20 @@ fn game_main<WS: WindowServer>(engine: Engine<WS>, target: Box<RenderWindow>, ta
 		for n in 0 .. MAX_PLAYER_BULLET_COUNT { player_bullets[n] = PlayerBullet::Free; }
 
 		let mut secs_from_last_fixed = 0.0f32;
-		let mut input = try!(interlude::InputSystem::new())
-			.add_input(LogicalInputTypes::Horizontal, InputType::Axis(InputAxis::X))
-			.add_input(LogicalInputTypes::Horizontal, InputType::KeyAsAxis(InputKeys::Left, InputKeys::Right))
-			.add_input(LogicalInputTypes::Vertical, InputType::Axis(InputAxis::Y))
-			.add_input(LogicalInputTypes::Vertical, InputType::KeyAsAxis(InputKeys::Up, InputKeys::Down))
-			.add_input(LogicalInputTypes::Shoot, InputType::Key(InputKeys::ButtonA))
-			.add_input(LogicalInputTypes::Shoot, InputType::Key(InputKeys::Character('z')))
-			.add_input(LogicalInputTypes::Slowdown, InputType::Axis(InputAxis::RZ))
-			.add_input(LogicalInputTypes::Slowdown, InputType::Key(InputKeys::ButtonX))
-			.add_input(LogicalInputTypes::Slowdown, InputType::Key(InputKeys::Character('x')))
-			.add_input(LogicalInputTypes::Overdrive, InputType::Axis(InputAxis::Z));
+		input_system.write().and_then(|mut isw|
+		{
+			isw.add_input(LogicalInputTypes::Horizontal, InputType::Axis(InputAxis::X));
+			isw.add_input(LogicalInputTypes::Horizontal, InputType::KeyAsAxis(InputKeys::Left, InputKeys::Right));
+			isw.add_input(LogicalInputTypes::Vertical, InputType::Axis(InputAxis::Y));
+			isw.add_input(LogicalInputTypes::Vertical, InputType::KeyAsAxis(InputKeys::Up, InputKeys::Down));
+			isw.add_input(LogicalInputTypes::Shoot, InputType::Key(InputKeys::ButtonA));
+			isw.add_input(LogicalInputTypes::Shoot, InputType::Key(InputKeys::Character('z')));
+			isw.add_input(LogicalInputTypes::Slowdown, InputType::Axis(InputAxis::RZ));
+			isw.add_input(LogicalInputTypes::Slowdown, InputType::Key(InputKeys::ButtonX));
+			isw.add_input(LogicalInputTypes::Slowdown, InputType::Key(InputKeys::Character('x')));
+			isw.add_input(LogicalInputTypes::Overdrive, InputType::Axis(InputAxis::Z));
+			Ok(())
+		}).unwrap();
 		let mut randomizer = rand::thread_rng();
 		let background_appear_rate = rand::distributions::Range::new(0, 6);
 		let enemy_appear_rate = rand::distributions::Range::new(0, 40);
@@ -540,8 +544,9 @@ fn game_main<WS: WindowServer>(engine: Engine<WS>, target: Box<RenderWindow>, ta
 
 					// normal update
 					let cputime_start = time::PreciseTime::now();
-					input.update();
-					let timescale = (1.0f32 + input[LogicalInputTypes::Slowdown] * 2.0f32) / (1.0f32 + input[LogicalInputTypes::Overdrive]);
+					input_system.write().unwrap().update();
+					let timescale = (1.0f32 + input_system.read().unwrap()[LogicalInputTypes::Slowdown] * 2.0f32) /
+						(1.0f32 + input_system.read().unwrap()[LogicalInputTypes::Overdrive]);
 					let delta_time_sec = (delta_time.num_microseconds().unwrap() as f32 / 1_000_000.0f32) / timescale;
 					secs_from_last_fixed += delta_time_sec;
 					secs_from_last_trigger += delta_time_sec;
@@ -549,7 +554,7 @@ fn game_main<WS: WindowServer>(engine: Engine<WS>, target: Box<RenderWindow>, ta
 					uref_gametime[0] = game_secs;
 					background_datastore.update(&mut randomizer, delta_time_sec, background_next_appear);
 
-					let new_shooting = input[LogicalInputTypes::Shoot] > 0.0;
+					let new_shooting = input_system.read().unwrap()[LogicalInputTypes::Shoot] > 0.0;
 					next_shoot = if !shooting && new_shooting
 					{
 						// start timer
@@ -626,7 +631,7 @@ fn game_main<WS: WindowServer>(engine: Engine<WS>, target: Box<RenderWindow>, ta
 						*e = Enemy::Free;
 						*enemy_count.borrow_mut() -= 1;
 					}
-					*player_bithash.borrow_mut() = player.update(delta_time_sec, &input);
+					*player_bithash.borrow_mut() = player.update(delta_time_sec, &*input_system.read().unwrap());
 					// println!("PlayerBitHashBin: {:08b}", *player_bithash.borrow());
 
 					if !next_particle_spawn.is_empty()

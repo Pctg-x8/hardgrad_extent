@@ -33,7 +33,7 @@ impl<'a> Player<'a>
 			uniform_memory: uniform_ref, instance_memory: instance_ref, living_secs: 0.0f32
 		}
 	}
-	pub fn update(&mut self, frame_delta: f32, input: &InputSystem<LogicalInputTypes>) -> u32
+	pub fn update<IS: InputSystem<LogicalInputTypes>>(&mut self, frame_delta: f32, input: &IS) -> u32
 	{
 		let u_quaternions = [
 			UnitQuaternion::new(Vector3::new(-1.0f32, 0.0f32, 0.75f32).normalize() * (260.0f32 * self.living_secs as f32).to_radians()),
