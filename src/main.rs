@@ -439,8 +439,8 @@ fn game_main<WS: WindowServer, IS: InputSystem<LogicalInputTypes>>(engine: Engin
 		let dbg_copy_completion_sig = Unrecoverable!(engine.create_fence());
 		let rendering_order_sem = Unrecoverable!(engine.create_queue_fence());
 		let debug_transfer_commands = debug_info.get_transfer_commands();
-		let (event_sender, event_receiver) = std::sync::mpsc::channel();
-		let event_sender2 = event_sender.clone();
+		let update_event = interlude::Event::new("Update Event").or_crash();
+		let srv_update = update_event.clone();
 		let update_observer = unsafe { thread_scoped::scoped(move ||
 		{
 			let framebuffer_commands = framebuffer_commands;
@@ -459,7 +459,7 @@ fn game_main<WS: WindowServer, IS: InputSystem<LogicalInputTypes>>(engine: Engin
 				Unrecoverable!(engine.submit_transfer_commands(&update_commands, &[], None, Some(&copy_completion_sig)));
 				copy_completion_sig.wait().and_then(|()| copy_completion_sig.clear()).or_crash();
 				dbg_copy_completion_sig.wait().and_then(|()| dbg_copy_completion_sig.clear()).or_crash();
-				event_sender.send(ApplicationEvent::Update).unwrap();
+				srv_update.set();
 				frame_index = target.present(engine.graphics_queue_ref(), frame_index).and_then(|()|
 					target.acquire_next_backbuffer_index(&rendering_order_sem).and_then(|findex|
 					{
@@ -471,11 +471,6 @@ fn game_main<WS: WindowServer, IS: InputSystem<LogicalInputTypes>>(engine: Engin
 
 			engine.wait_device().or_crash();
 			engine
-		}) };
-		let ws_event_observer = unsafe { thread_scoped::scoped(move ||
-		{
-			window_system.process_all_events();
-			event_sender2.send(ApplicationEvent::Exit).unwrap();
 		}) };
 
 		let mapped_range = try!(appdata.stg.map());
@@ -531,13 +526,16 @@ fn game_main<WS: WindowServer, IS: InputSystem<LogicalInputTypes>>(engine: Engin
 		let mut next_shoot = false;
 		let mut next_particle_spawn = Vec::new();
 		let particle_spawn_count = rand::distributions::Range::new(1, 8);
-		while let Ok(event) = event_receiver.recv()
+		loop
 		{
-			match event
+			let msg = window_system.process_events_and_messages(&[&update_event]);
+			match msg
 			{
-				ApplicationEvent::Exit => break,
-				ApplicationEvent::Update =>
+				ApplicationState::Exited => break,
+				ApplicationState::EventArrived(0) =>
 				{
+					// update
+					update_event.reset();
 					let delta_time = prev_time.to(time::PreciseTime::now());
 					*frame_time_ms.borrow_mut() = delta_time.num_microseconds().unwrap_or(-1) as f64 / 1000.0f64;
 					*frames_per_second.borrow_mut() = 1000.0f64 / *frame_time_ms.borrow();
@@ -648,7 +646,8 @@ fn game_main<WS: WindowServer, IS: InputSystem<LogicalInputTypes>>(engine: Engin
 					prev_time = time::PreciseTime::now();
 					*cputime_ms.borrow_mut() = cputime_start.to(time::PreciseTime::now()).num_microseconds().unwrap_or(0) as f64 / 1000.0f64;
 					debug_info.update();
-				}
+				},
+				_ => ()
 			}
 
 			if secs_from_last_fixed >= 1.0 / 60.0
@@ -671,7 +670,6 @@ fn game_main<WS: WindowServer, IS: InputSystem<LogicalInputTypes>>(engine: Engin
 		}
 
 		info!("Terminating Threads...");
-		ws_event_observer.join();
 		exit_flag.store(true, Ordering::Release);
 		update_observer.join()
 	};
