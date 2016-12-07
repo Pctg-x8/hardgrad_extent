@@ -161,8 +161,6 @@ impl SMAAPipelineStates
 	}
 }
 
-enum ApplicationEvent { Update, Exit }
-
 fn main() { if let Err(e) = app_main() { interlude::crash(e); } }
 fn app_main() -> Result<(), EngineError>
 {
@@ -315,10 +313,10 @@ fn game_main<WS: WindowServer, IS: InputSystem<LogicalInputTypes>>(engine: Engin
 
 	info!("Recording Rendering Commands...");
 	// Rendering Commands //
-	let combine_commands = engine.allocate_bundled_command_buffers(2 * framebuffers.len() as u32).or_crash();
+	let combine_commands = engine.allocate_bundled_command_buffers(2 * framebuffers.len()).or_crash();
 	for (n, f) in framebuffers.iter().enumerate()
 	{
-		combine_commands.begin(0 + 2 * n, &render_pass.object, 3, f).and_then(|recorder|
+		combine_commands.begin(0 + 2 * n, &render_pass.object, render_pass.smaa_combine_pass, f).and_then(|recorder|
 			recorder
 				.bind_pipeline(&pipelines.smaa.as_ref().unwrap().combine)
 				.bind_descriptor_sets(&pipelines.smaa.as_ref().unwrap().combine_layout, &[pipelines.get_descriptor_set_for_smaa_combine()])
@@ -326,12 +324,12 @@ fn game_main<WS: WindowServer, IS: InputSystem<LogicalInputTypes>>(engine: Engin
 				.draw(4, 1)
 			.end()
 		).or_crash();
-		combine_commands.begin(1 + 2 * n, &render_pass.object, 3, f).and_then(|recorder|
+		combine_commands.begin(1 + 2 * n, &render_pass.object, render_pass.smaa_combine_pass, f).and_then(|recorder|
 			recorder.inject_commands(|r| debug_info.inject_render_commands(r))
 			.end()
 		).or_crash();
 	}
-	let framebuffer_commands = engine.allocate_graphics_command_buffers(target.get_back_images().len() as u32).or_crash();
+	let framebuffer_commands = engine.allocate_graphics_command_buffers(target.get_back_images().len()).or_crash();
 	framebuffer_commands.begin_all().and_then(|iter| iter.map(|(i, recorder)|
 	{
 		let clear_values = [
@@ -455,8 +453,8 @@ fn game_main<WS: WindowServer, IS: InputSystem<LogicalInputTypes>>(engine: Engin
 			while !exit_flag_uo.load(Ordering::Acquire)
 			{
 				execute_next_signal.wait().and_then(|()| execute_next_signal.clear()).or_crash();
-				Unrecoverable!(engine.submit_transfer_commands(&debug_transfer_commands, &[], None, Some(&dbg_copy_completion_sig)));
-				Unrecoverable!(engine.submit_transfer_commands(&update_commands, &[], None, Some(&copy_completion_sig)));
+				Unrecoverable!(engine.submit_transfer_commands(&debug_transfer_commands[..], &[], None, Some(&dbg_copy_completion_sig)));
+				Unrecoverable!(engine.submit_transfer_commands(&update_commands[..], &[], None, Some(&copy_completion_sig)));
 				copy_completion_sig.wait().and_then(|()| copy_completion_sig.clear()).or_crash();
 				dbg_copy_completion_sig.wait().and_then(|()| dbg_copy_completion_sig.clear()).or_crash();
 				srv_update.set();
