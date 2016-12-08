@@ -17,7 +17,7 @@ pub use imagedata::*;
 pub enum PSDLoadingError
 {
 	IOError(std::io::Error), EncodingError(std::string::FromUtf8Error),
-	SignatureMismatching(&'static str), VersionMismatching,
+	SignatureMismatching(&'static str), SignatureMismatchingF(String), VersionMismatching,
 	StructureSizeMismatching
 }
 impl std::convert::From<std::io::Error> for PSDLoadingError

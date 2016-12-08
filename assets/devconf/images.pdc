@@ -30,9 +30,15 @@ Image 2D # SMAA Search Texture
 
 # Game Resources
 Image 2D
-- Format: R8G8B8A8 UNORM
+- Format: BlockCompression4 UNORM
 - Extent: 16 16
 - Usage: Sampled
+- ComponentMap: RRRR
+Image 2D
+- Format: BlockCompression4 UNORM
+- Extent: 16 16
+- Usage: Sampled
+- ComponentMap: RRRR
 Image 1D
 - Format: R16G16B16A16 SFLOAT
 - Extent: 4

@@ -94,14 +94,14 @@ impl std::convert::From<u8> for PSDLayerClipping
 		}
 	}
 }
-#[repr(C, u8)] pub enum PSDGlobalLayerMaskKind { ColorSelected = 0, ColorProtected = 1, UseValueStoredPerLayer = 128 }
+#[repr(u8)] pub enum PSDGlobalLayerMaskKind { ColorSelected = 0, ColorProtected = 1, UseValueStoredPerLayer = 128 }
 
 // Primitives //
-#[repr(C, packed)] #[derive(Debug)] pub struct PSDLayerRect { pub top: u32, pub left: u32, pub bottom: u32, pub right: u32 }
+#[repr(C, packed)] #[derive(Debug)] pub struct PSDLayerRect { pub top: i32, pub left: i32, pub bottom: i32, pub right: i32 }
 impl PSDLayerRect
 {
-	pub fn lines(&self) -> u32 { self.bottom - self.top }
-	pub fn width(&self) -> u32 { self.right - self.left }
+	pub fn lines(&self) -> i32 { self.bottom - self.top }
+	pub fn width(&self) -> i32 { self.right - self.left }
 }
 pub struct PSDMaskParameterPair { pub density: Option<u8>, pub feather: Option<f64> }
 #[repr(C, packed)] pub struct PSDLayerBlendingRange { src: u32, dest: u32 }
@@ -206,7 +206,7 @@ pub struct PSDAdditionalLayerInfo
 }
 impl PSDAdditionalLayerInfo
 {
-	fn check_signature(sin: u32) -> Result<(), PSDLoadingError>
+	fn check_signature(sin: u32, bytes: u64) -> Result<(), PSDLoadingError>
 	{
 		static SIM: [u8; 4] = ['8' as u8, 'B' as u8, 'I' as u8, 'M' as u8];
 		static S64: [u8; 4] =  ['8' as u8, 'B' as u8, '6' as u8, '4' as u8];
@@ -215,14 +215,14 @@ impl PSDAdditionalLayerInfo
 		{
 			Ok(())
 		}
-		else { Err(PSDLoadingError::SignatureMismatching("PSDAdditionalLayerInfo")) }
+		else { Err(PSDLoadingError::SignatureMismatchingF(format!("PSDAdditionalLayerInfo: {:08x} at {:x}", sin, bytes))) }
 	}
 }
 impl UnsizedNativeFileContent for PSDAdditionalLayerInfo
 {
 	fn read_from_file(mut fp: std::fs::File) -> Result<(Self, usize, std::fs::File), PSDLoadingError>
 	{
-		try!(fp.read_u32().map_err(PSDLoadingError::from).and_then(Self::check_signature));
+		try!(fp.read_u32().map_err(PSDLoadingError::from).and_then(|x| Self::check_signature(x, fp.seek(std::io::SeekFrom::Current(0)).unwrap())));
 		let mut key = [0u8; 4];
 		try!(fp.read_exact(&mut key));
 		let data_length = try!(fp.read_u32()) as usize;
@@ -274,8 +274,11 @@ impl UnsizedNativeFileContent for PSDLayerRecord
 		try!(if (lbsize + lmsize) >= extra_bytes { Err(PSDLoadingError::StructureSizeMismatching) } else { Ok(()) });
 		let (layer_name, lnsize, frest) = try!(PascalString::read_from_file(frest, 4));
 
-		let layerrec_size = std::mem::size_of::<PSDLayerRect>() + 2 + channels as usize * 6 + 4 + 4 + 4 + 4 + extra_bytes;
-		let mut last_bytes = extra_bytes - (lmsize + lbsize + lnsize);
+		let fixed_bytes = std::mem::size_of::<PSDLayerRect>() + 2 + channels as usize * 6 + 4 + 4 + 4 + 4;
+		let bytes_here = fixed_bytes + lmsize + lbsize + lnsize;
+
+		let layerrec_size = fixed_bytes + extra_bytes;
+		let mut last_bytes = extra_bytes - (bytes_here - fixed_bytes);
 		let mut additional_infos = Vec::new();
 		let mut frest = frest;
 		while last_bytes > 0
@@ -339,8 +342,8 @@ impl UnsizedNativeFileContent<Vec<PSDLayer>> for PSDLayerInfo
 			{
 				content_rect: PSDLayerRect
 				{
-					left: u32::from_be(l.content_rect.left), right: u32::from_be(l.content_rect.right),
-					bottom: u32::from_be(l.content_rect.bottom), top: u32::from_be(l.content_rect.top)
+					left: i32::from_be(l.content_rect.left), right: i32::from_be(l.content_rect.right),
+					bottom: i32::from_be(l.content_rect.bottom), top: i32::from_be(l.content_rect.top)
 				}, channels: channels,
 				blend_mode_key: l.blend_mode_key,
 				opacity: l.opacity, clipping: l.clipping, flags: l.flags,
@@ -348,6 +351,8 @@ impl UnsizedNativeFileContent<Vec<PSDLayer>> for PSDLayerInfo
 				additional_infos: l.additional_infos
 			});
 		}
+
+		if left_bytes != 0 { frest.seek(std::io::SeekFrom::Current(left_bytes as i64)).unwrap(); }
 
 		Ok((layers, structure_size + 4, frest))
 	}

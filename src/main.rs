@@ -88,6 +88,18 @@ fn pack_color(canvas_size: &Size2, red: DecompressedChannelImageData, green: Dec
 	}
 	color_pixels
 }
+fn single(canvas_size: &Size2, v: DecompressedChannelImageData) -> Vec<u8>
+{
+	let &Size2(cwidth, cheight) = canvas_size;
+	let mut color_pixels = vec![0u8; (cwidth * cheight) as usize];
+	for (x, y, px, py) in (0 .. v.height()).flat_map(|y| (0 .. v.width()).map(move |x| (x, y)))
+		.map(|(x, y)| (x, y, x as isize + v.offset_x(), y as isize + v.offset_y()))
+		.filter(|&(_, _, px, py)| (0 <= px && px < cwidth as isize) && (0 <= py && py < cheight as isize))
+	{
+		color_pixels[(px + py * cwidth as isize) as usize] = v.fetch(x, y);
+	}
+	color_pixels
+}
 
 mod assets;
 use assets::*;
@@ -181,14 +193,17 @@ fn game_main<WS: WindowServer, IS: InputSystem<LogicalInputTypes>>(engine: Engin
 	let ref smaa_areatex_set = images.images_2d()[4];
 	let ref smaa_searchtex_set = images.images_2d()[5];
 	let ref playerbullet_tex_set = images.images_2d()[6];
+	let ref circle16_tex_set = images.images_2d()[7];
 	let ref lineburst_particle_gradient_tex_set = images.images_1d()[0];
 	let ref gbuffer_sampler = images.samplers()[0];
 	let ref lineburst_particle_gradient_tex_stg = images.staging_images()[0];
 	let ref smaa_areatex_stg = images.staging_images()[1];
 	let ref smaa_searchtex_stg = images.staging_images()[2];
 	let ref playerbullet_tex_stg = images.staging_images()[3];
+	let ref circle16_tex_stg = images.staging_images()[4];
 
 	let playerbullet_image = PhotoshopDocument::open(engine.parse_asset("graphs.playerbullet", "psd")).unwrap();
+	let circle16_image = PhotoshopDocument::open(engine.parse_asset("graphs.circle16", "psd")).unwrap();
 	{
 		let mapped = images.map_staging_images_memory();
 		let offsets = images.staging_offsets();
@@ -197,14 +212,14 @@ fn game_main<WS: WindowServer, IS: InputSystem<LogicalInputTypes>>(engine: Engin
 		let searchtex_compressed = BC4::compress(&SEARCHTEX_BYTES, (SEARCHTEX_WIDTH, SEARCHTEX_HEIGHT));
 		mapped.map_mut::<[u8; SEARCHTEX_SIZE / 2]>(offsets[2] as usize).copy_from_slice(&searchtex_compressed);
 
-		let playerbullet_pixels = pack_color(
-			&Size2(playerbullet_image.width as u32, playerbullet_image.height as u32),
-			playerbullet_image.layer_raw_channel_image_data(0, PSDChannelIndices::Red),
-			playerbullet_image.layer_raw_channel_image_data(0, PSDChannelIndices::Green),
-			playerbullet_image.layer_raw_channel_image_data(0, PSDChannelIndices::Blue),
+		let playerbullet_pixels = BC4::compress(&single(&Size2(playerbullet_image.width as u32, playerbullet_image.height as u32),
 			playerbullet_image.layer_raw_channel_image_data(0, PSDChannelIndices::Alpha)
-		);
-		mapped.range_mut::<u8>(offsets[3] as usize, 16 * 16 * 4).copy_from_slice(&playerbullet_pixels);
+		), (playerbullet_image.width, playerbullet_image.height));
+		let circle16_pixels = BC4::compress(&single(&Size2(circle16_image.width as u32, circle16_image.height as u32),
+			circle16_image.layer_raw_channel_image_data(0, PSDChannelIndices::Alpha)
+		), (circle16_image.width, circle16_image.height));
+		mapped.range_mut::<u8>(offsets[3] as usize, 16 * 16 / 2).copy_from_slice(&playerbullet_pixels);
+		mapped.range_mut::<u8>(offsets[4] as usize, 16 * 16 / 2).copy_from_slice(&circle16_pixels);
 		mapped.map_mut::<[[f16; 4]; 4]>(offsets[0] as usize).copy_from_slice(&[
 			[f16::from_f64(2.0), f16::from_f64(1.5), f16::from_f64(1.0), f16::from_f64(1.0)],
 			[f16::from_f64(1.5), f16::from_f64(1.0), f16::from_f64(0.25), f16::from_f64(1.0)],
@@ -232,6 +247,7 @@ fn game_main<WS: WindowServer, IS: InputSystem<LogicalInputTypes>>(engine: Engin
 	let areatex_info = ImageInfo(gbuffer_sampler, smaa_areatex_set, VkImageLayout::ShaderReadOnlyOptimal);
 	let searchtex_info = ImageInfo(gbuffer_sampler, smaa_searchtex_set, VkImageLayout::ShaderReadOnlyOptimal);
 	let playerbullet_info = ImageInfo(gbuffer_sampler, playerbullet_tex_set, VkImageLayout::ShaderReadOnlyOptimal);
+	let circle16_info = ImageInfo(gbuffer_sampler, circle16_tex_set, VkImageLayout::ShaderReadOnlyOptimal);
 	let lineburst_particle_gradient_tex_info = ImageInfo(gbuffer_sampler, lineburst_particle_gradient_tex_set, VkImageLayout::ShaderReadOnlyOptimal);
 	engine.update_descriptors(&[
 		DescriptorSetWriteInfo::UniformBuffer(pipelines.get_descriptor_set_for_uniform_buffer(), 0, vec![uniform_memory_info]),
