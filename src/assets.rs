@@ -86,7 +86,7 @@ pub struct ApplicationBufferData
 }
 impl ApplicationBufferData
 {
-	pub fn new<Engine: EngineCore>(engine: &Engine, target_extent: VkExtent2D) -> Self
+	pub fn new<Engine: EngineCore>(engine: &Engine, target_extent: &Size2) -> Self
 	{
 		let application_buffer_prealloc = engine.buffer_preallocate(&[
 			(size_of::<[PosUV; 4]>(), BufferDataType::Vertex),
@@ -100,7 +100,7 @@ impl ApplicationBufferData
 		this.initialize(target_extent);
 		this
 	}
-	fn initialize(&self, target_extent: VkExtent2D)
+	fn initialize(&self, target_extent: &Size2)
 	{
 		let mapped = self.stg.map().or_crash();
 

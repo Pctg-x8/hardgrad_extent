@@ -49,10 +49,10 @@ pub enum LogicalInputTypes
 	Horizontal, Vertical, Shoot, Slowdown, Overdrive
 }
 
-fn pack_color(canvas_size: VkExtent2D, red: DecompressedChannelImageData, green: DecompressedChannelImageData,
+fn pack_color(canvas_size: &Size2, red: DecompressedChannelImageData, green: DecompressedChannelImageData,
 	blue: DecompressedChannelImageData, alpha: DecompressedChannelImageData) -> Vec<u8>
 {
-	let VkExtent2D(cwidth, cheight) = canvas_size;
+	let &Size2(cwidth, cheight) = canvas_size;
 	let mut color_pixels = vec![0u8; (cwidth * cheight) as usize * 4];
 	for (x, y, px, py) in (0 .. red.height()).flat_map(|y| (0 .. red.width()).map(move |x| (x, y)))
 		.map(|(x, y)| (x, y, x as isize + red.offset_x(), y as isize + red.offset_y()))
@@ -107,25 +107,25 @@ pub struct SMAAPipelineStates
 }
 impl SMAAPipelineStates
 {
-	pub fn new<Engine: EngineCore>(engine: &Engine, render_pass: &RenderPass, base_subpass: u32, processing_viewport: VkViewport) -> Self
+	pub fn new<Engine: EngineCore>(engine: &Engine, render_pass: &RenderPass, base_subpass: u32, processing_viewport: &Viewport) -> Self
 	{
-		let VkViewport(_, _, vw, vh, _, _) = processing_viewport;
+		let &Viewport(_, _, vw, vh, _, _) = processing_viewport;
 
-		let evsh = Unrecoverable!(engine.create_postprocess_vertex_shader_from_asset("shaders.smaa.EdgeDetectionV", "main"));
-		let bwvsh = Unrecoverable!(engine.create_postprocess_vertex_shader_from_asset("shaders.smaa.BlendWeightCalcV", "main"));
-		let cvsh = Unrecoverable!(engine.create_postprocess_vertex_shader_from_asset("shaders.smaa.CombineV", "main"));
-		let esh = Unrecoverable!(engine.create_fragment_shader_from_asset("shaders.smaa.EdgeDetection", "main"));
-		let bwsh = Unrecoverable!(engine.create_fragment_shader_from_asset("shaders.smaa.BlendWeightCalc", "main"));
-		let csh = Unrecoverable!(engine.create_fragment_shader_from_asset("shaders.smaa.Combine", "main"));
+		let evsh = engine.create_postprocess_vertex_shader_from_asset("shaders.smaa.EdgeDetectionV", "main").or_crash();
+		let bwvsh = engine.create_postprocess_vertex_shader_from_asset("shaders.smaa.BlendWeightCalcV", "main").or_crash();
+		let cvsh = engine.create_postprocess_vertex_shader_from_asset("shaders.smaa.CombineV", "main").or_crash();
+		let esh = engine.create_fragment_shader_from_asset("shaders.smaa.EdgeDetection", "main").or_crash();
+		let bwsh = engine.create_fragment_shader_from_asset("shaders.smaa.BlendWeightCalc", "main").or_crash();
+		let csh = engine.create_fragment_shader_from_asset("shaders.smaa.Combine", "main").or_crash();
 
 		let dss = [
-			Unrecoverable!(engine.create_descriptor_set_layout(&[Descriptor::CombinedSampler(1, vec![ShaderStage::Fragment])])),
-			Unrecoverable!(engine.create_descriptor_set_layout(&[Descriptor::CombinedSampler(3, vec![ShaderStage::Fragment])])),
-			Unrecoverable!(engine.create_descriptor_set_layout(&[Descriptor::CombinedSampler(2, vec![ShaderStage::Fragment])]))
+			engine.create_descriptor_set_layout(&[Descriptor::CombinedSampler(1, vec![ShaderStage::Fragment])]).or_crash(),
+			engine.create_descriptor_set_layout(&[Descriptor::CombinedSampler(3, vec![ShaderStage::Fragment])]).or_crash(),
+			engine.create_descriptor_set_layout(&[Descriptor::CombinedSampler(2, vec![ShaderStage::Fragment])]).or_crash()
 		];
-		let epl = Unrecoverable!(engine.create_pipeline_layout(&[&dss[0]], &[]));
-		let bwpl = Unrecoverable!(engine.create_pipeline_layout(&[&dss[1]], &[]));
-		let cpl = Unrecoverable!(engine.create_pipeline_layout(&[&dss[2]], &[]));
+		let epl = engine.create_pipeline_layout(&[&dss[0]], &[]).or_crash();
+		let bwpl = engine.create_pipeline_layout(&[&dss[1]], &[]).or_crash();
+		let cpl = engine.create_pipeline_layout(&[&dss[2]], &[]).or_crash();
 
 		let scons_rt_metrics = vec![
 			(0, ConstantEntry::Float(vw)),
@@ -161,18 +161,18 @@ impl SMAAPipelineStates
 	}
 }
 
-fn main() { if let Err(e) = app_main() { interlude::crash(e); } }
+fn main() { app_main().or_crash(); }
 fn app_main() -> Result<(), EngineError>
 {
 	let engine = try!(Engine::new("hardgrad_extend", 0x01, Some(std::env::current_dir().unwrap()), DeviceFeatures::new().enable_block_texture_compression()));
-	let main_frame = try!(engine.create_render_window(VkExtent2D(640, 480), "HardGrad -> Extend"));
-	let extent = main_frame.get_extent();
-	game_main(engine, main_frame, extent)
+	let main_frame = try!(engine.create_render_window(&Size2(640, 480), "HardGrad -> Extend"));
+	let size = main_frame.size();
+	game_main(engine, main_frame, size)
 }
-fn game_main<WS: WindowServer, IS: InputSystem<LogicalInputTypes>>(engine: Engine<WS, IS, LogicalInputTypes>, target: Box<RenderWindow>, target_extent: VkExtent2D) -> Result<(), EngineError>
+fn game_main<WS: WindowServer, IS: InputSystem<LogicalInputTypes>>(engine: Engine<WS, IS, LogicalInputTypes>, target: Box<RenderWindow>, target_extent: Size2) -> Result<(), EngineError>
 {
 	// Resources //
-	let images = DevConfImages::from_file(&engine, "devconf.images", target_extent, target.get_format()).ensure_has_staging();
+	let images = DevConfImages::from_file(&engine, "devconf.images", &target_extent, target.get_format()).ensure_has_staging();
 	// Reference Bindings //
 	let ref backbuffer_sfloat4_set = images.images_2d()[0];
 	let ref backbuffer_unorm4f_set = images.images_2d()[1];
@@ -198,7 +198,7 @@ fn game_main<WS: WindowServer, IS: InputSystem<LogicalInputTypes>>(engine: Engin
 		mapped.map_mut::<[u8; SEARCHTEX_SIZE / 2]>(offsets[2] as usize).copy_from_slice(&searchtex_compressed);
 
 		let playerbullet_pixels = pack_color(
-			VkExtent2D(playerbullet_image.width as u32, playerbullet_image.height as u32),
+			&Size2(playerbullet_image.width as u32, playerbullet_image.height as u32),
 			playerbullet_image.layer_raw_channel_image_data(0, PSDChannelIndices::Red),
 			playerbullet_image.layer_raw_channel_image_data(0, PSDChannelIndices::Green),
 			playerbullet_image.layer_raw_channel_image_data(0, PSDChannelIndices::Blue),
@@ -212,16 +212,16 @@ fn game_main<WS: WindowServer, IS: InputSystem<LogicalInputTypes>>(engine: Engin
 			[f16::from_f64(0.125), f16::from_f64(0.125), f16::from_f64(0.125), f16::from_f64(0.375)]
 		]);
 	}
-	let appdata = ApplicationBufferData::new(&engine, target_extent);
+	let appdata = ApplicationBufferData::new(&engine, &target_extent);
 
 	let render_pass = RenderPasses::new(&engine, target.get_format());
-	let framebuffers = target.get_back_images().iter().map(|&finalbuffer| 
-		engine.create_framebuffer(&render_pass.object, &[backbuffer_sfloat4_set, backbuffer_unorm4f_set, backbuffer_unorm2_set, backbuffer_unorm4_set, finalbuffer], VkExtent3D::from(target_extent))
-	).collect::<Result<Vec<_>, _>>().or_crash();
+	let framebuffers = target.get_back_images().iter().map(|&finalbuffer| engine.create_framebuffer(&render_pass.object, &[
+		backbuffer_sfloat4_set, backbuffer_unorm4f_set, backbuffer_unorm2_set, backbuffer_unorm4_set, finalbuffer
+	], &Size3::from(target_extent.clone()))).collect::<Result<Vec<_>, _>>().or_crash();
 
 	// Pipelines //
-	let sc_viewport = VkViewport::from(target_extent);
-	let pipelines = PipelineStates::new(&engine, true, &render_pass, sc_viewport);
+	let sc_viewport = Viewport::from(target_extent);
+	let pipelines = PipelineStates::new(&engine, true, &render_pass, &sc_viewport);
 
 	// Descriptor Set //
 	let uniform_memory_info = BufferInfo(&appdata.dev, appdata.offset_uniform() .. appdata.size());
@@ -309,7 +309,7 @@ fn game_main<WS: WindowServer, IS: InputSystem<LogicalInputTypes>>(engine: Engin
 		DebugLine::Float("CPU Time".to_owned(), &cputime_ms, Some("ms".to_owned())),
 		DebugLine::UnsignedInt("Enemy Count".to_owned(), &enemy_count, None),
 		DebugLine::UnsignedInt("Player Bithash".to_owned(), &player_bithash, None)
-	], &render_pass.object, render_pass.smaa_combine_pass, sc_viewport).or_crash();
+	], &render_pass.object, render_pass.smaa_combine_pass, &sc_viewport).or_crash();
 
 	info!("Recording Rendering Commands...");
 	// Rendering Commands //

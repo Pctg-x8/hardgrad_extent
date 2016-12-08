@@ -1,11 +1,11 @@
 use nalgebra::*;
 
-use interlude::ffi::*;
+use interlude::*;
 use structures;
 
-pub fn setup_parameters(memory_ref: &mut structures::UniformMemory, screen_size: VkExtent2D)
+pub fn setup_parameters(memory_ref: &mut structures::UniformMemory, screen_size: &Size2)
 {
-	let VkExtent2D(width, height) = screen_size;
+	let &Size2(width, height) = screen_size;
 	let (aspect, scaling) = (width as f32 / height as f32, 36.0f32);
 	let (ortho_matrix, pixel_matrix, persp_matrix) = (
 		OrthographicMatrix3::new(-scaling, scaling, 0.0f32, scaling * aspect, -220.0f32, 100.0f32),
