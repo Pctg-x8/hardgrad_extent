@@ -55,7 +55,7 @@ impl PipelineStates
 
 		let mut gps =
 		{
-			let background_ps = GraphicsPipelineBuilder::new(&layouts.wire_pipeline_layout, &passes.object, passes.content_render_pass)
+			let background_ps = GraphicsPipelineBuilder::new(&layouts.wire_pipeline_layout, &passes.normal_render, 0)
 				.vertex_shader(PipelineShaderProgram::unspecialized(&shaderstore.geometry_preinstancing_vsh))
 				.geometry_shader(PipelineShaderProgram::unspecialized(&shaderstore.background_duplication_gsh))
 				.fragment_shader(PipelineShaderProgram::unspecialized(&shaderstore.solid_fsh))
@@ -69,29 +69,29 @@ impl PipelineStates
 				.vertex_shader(PipelineShaderProgram::unspecialized(&shaderstore.erz_preinstancing_vsh))
 				.geometry_shader(PipelineShaderProgram::unspecialized(&shaderstore.enemy_rezonator_duplication_gsh))
 				.primitive_topology(PrimitiveTopology::TriangleList(false));
-			let player_ps = GraphicsPipelineBuilder::new(&layouts.wire_pipeline_layout, &passes.object, passes.content_render_pass)
+			let player_ps = GraphicsPipelineBuilder::new(&layouts.wire_pipeline_layout, &passes.normal_render, 0)
 				.vertex_shader(PipelineShaderProgram::unspecialized(&shaderstore.player_rotate_vsh))
 				.fragment_shader(PipelineShaderProgram::unspecialized(&shaderstore.solid_fsh))
 				.primitive_topology(PrimitiveTopology::LineList(false))
 				.viewport_scissors(&[ViewportWithScissorRect::default_scissor(&swapchain_viewport)])
 				.blend_state(&[AttachmentBlendState::Disabled]);
-			let playerbullet_ps = GraphicsPipelineBuilder::new(&layouts.sprite_layout, &passes.object, passes.content_render_pass)
+			let playerbullet_ps = GraphicsPipelineBuilder::new(&layouts.sprite_layout, &passes.normal_render, 0)
 				.vertex_shader(PipelineShaderProgram(&shaderstore.playerbullet_vsh, vec![(0, ConstantEntry::Float(0.75))]))
 				.fragment_shader(PipelineShaderProgram::unspecialized(&shaderstore.sprite_fsh))
 				.primitive_topology(PrimitiveTopology::TriangleStrip(false))
 				.viewport_scissors(&[ViewportWithScissorRect::default_scissor(&swapchain_viewport)])
 				.blend_state(&[AttachmentBlendState::PremultipliedAlphaBlend]);
-			let lineburst_ps = GraphicsPipelineBuilder::new(&layouts.lineburst_particle_layout, &passes.object, passes.content_render_pass)
+			let lineburst_ps = GraphicsPipelineBuilder::new(&layouts.lineburst_particle_layout, &passes.normal_render, 0)
 				.vertex_shader(PipelineShaderProgram::unspecialized(&shaderstore.lineburst_particle_vsh))
 				.geometry_shader(PipelineShaderProgram::unspecialized(&shaderstore.lineburst_particle_instantiate_gsh))
 				.fragment_shader(PipelineShaderProgram::unspecialized(&shaderstore.solid_fsh))
 				.primitive_topology(PrimitiveTopology::Point)
 				.viewport_scissors(&[ViewportWithScissorRect::default_scissor(&swapchain_viewport)])
 				.blend_state(&[AttachmentBlendState::PremultipliedAlphaBlend]);
-			let tonemapper_ps = GraphicsPipelineBuilder::for_postprocess(engine, &layouts.ainput_require_layout, &passes.object, passes.tonemap_pass,
+			let tonemapper_ps = GraphicsPipelineBuilder::for_postprocess(engine, &layouts.ainput_require_layout, &passes.normal_render, 1,
 				PipelineShaderProgram::unspecialized(&shaderstore.tonemap_fsh), &swapchain_viewport)
 				.vertex_shader(PipelineShaderProgram::unspecialized(&engine.get_postprocess_vsh(false)));
-			let gridrender_ps = GraphicsPipelineBuilder::new(&layouts.gridrender_layout, &passes.object, passes.smaa_combine_pass)
+			let gridrender_ps = GraphicsPipelineBuilder::new(&layouts.gridrender_layout, &passes.smaa_combine, 0)
 				.vertex_shader(PipelineShaderProgram::unspecialized(&shaderstore.gridrender_vsh))
 				.fragment_shader(PipelineShaderProgram::unspecialized(&shaderstore.solid_fsh))
 				.primitive_topology(PrimitiveTopology::LineList(false))
@@ -112,7 +112,7 @@ impl PipelineStates
 
 		let (smaa, descriptor_sets) = if use_smaa
 		{
-			let ps = SMAAPipelineStates::new(engine, &passes.object, passes.smaa_edge_pass, swapchain_viewport);
+			let ps = SMAAPipelineStates::new(engine, &passes, swapchain_viewport);
 			let dslist = Unrecoverable!(engine.preallocate_all_descriptor_sets(&[
 				&layouts.global_uniform_layout, &layouts.texture_layout, &layouts.texture_layout_geom, &layouts.ainput_layout,
 				&ps.descriptor_sets[0], &ps.descriptor_sets[1], &ps.descriptor_sets[2]

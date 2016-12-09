@@ -3,81 +3,88 @@ use interlude::ffi::*;
 
 pub struct RenderPasses
 {
-	pub object: RenderPass,
-	pub content_render_pass: u32,
-	pub tonemap_pass: u32,
-	pub smaa_edge_pass: u32,
-	pub smaa_weight_pass: u32,
-	pub smaa_combine_pass: u32,
-	pub required_image_count: usize
+	pub normal_render: RenderPass, pub smaa_edgedetect: RenderPass, pub smaa_blendweight: RenderPass, pub smaa_combine: RenderPass
 }
 impl RenderPasses
 {
 	pub fn new<Engine: EngineCore>(engine: &Engine, sc_format: VkFormat) -> Self
 	{
 		// Attachment Descriptions //
-		let attachments = [
-			AttachmentDesc
-			{
-				format: VkFormat::R16G16B16A16_SFLOAT, clear_on_load: Some(true), preserve_stored_value: false,
-				initial_layout: VkImageLayout::ColorAttachmentOptimal, final_layout: VkImageLayout::ShaderReadOnlyOptimal,
-				.. Default::default()
-			},
-			AttachmentDesc
-			{
-				format: VkFormat::R8G8B8A8_UNORM, clear_on_load: None, preserve_stored_value: false,
-				initial_layout: VkImageLayout::ColorAttachmentOptimal, final_layout: VkImageLayout::ColorAttachmentOptimal,
-				.. Default::default()
-			},
-			AttachmentDesc
-			{
-				format: VkFormat::R8G8_UNORM, clear_on_load: Some(true), preserve_stored_value: false,
-				initial_layout: VkImageLayout::ColorAttachmentOptimal, final_layout: VkImageLayout::ColorAttachmentOptimal,
-				.. Default::default()
-			},
-			AttachmentDesc
-			{
-				format: VkFormat::R8G8B8A8_UNORM, clear_on_load: Some(true), preserve_stored_value: false,
-				initial_layout: VkImageLayout::ColorAttachmentOptimal, final_layout: VkImageLayout::ColorAttachmentOptimal,
-				.. Default::default()
-			},
-			AttachmentDesc::swapchain_buffer(sc_format)
-		];
-		let ai_sfloat4 = 0;
-		let ai_unorm4f = 1;
-		let ai_unorm2 = 2;
-		let ai_unorm4 = 3;
-		let ai_final = 4;
-		// Pass Descriptions //
-		let passes =  [
-			PassDesc::single_fragment_output(ai_sfloat4),
-			PassDesc { input_attachment_indices: vec![AttachmentRef::input(ai_sfloat4)], color_attachment_indices: vec![AttachmentRef::color(ai_unorm4f)], .. Default::default() },
-			PassDesc { color_attachment_indices: vec![AttachmentRef::color(ai_unorm2)], preserved_attachment_indices: vec![ai_unorm4], .. Default::default() },
-			PassDesc { color_attachment_indices: vec![AttachmentRef::color(ai_unorm4)], preserved_attachment_indices: vec![ai_unorm4], .. Default::default() },
-			PassDesc::single_fragment_output(ai_final)
-		];
-		let p_content = 0;
-		let p_tonemap = 1;
-		let p_smaa_edge = 2;
-		let p_smaa_weight = 3;
-		let p_smaa_combine = 4;
-		// Pass Dependencies //
-		let deps = [
-			PassDependency::fragment_referer(p_content, p_tonemap, true),
-			PassDependency::fragment_referer(p_tonemap, p_smaa_edge, false),
-			PassDependency::fragment_referer(p_smaa_edge, p_smaa_weight, false),
-			PassDependency::fragment_referer(p_tonemap, p_smaa_combine, false),
-			PassDependency::fragment_referer(p_smaa_weight, p_smaa_combine, false)
-		];
+		let a_render = AttachmentDesc
+		{
+			format: VkFormat::R16G16B16A16_SFLOAT, clear_on_load: Some(true), preserve_stored_value: false,
+			initial_layout: VkImageLayout::ColorAttachmentOptimal, final_layout: VkImageLayout::ColorAttachmentOptimal,
+			.. Default::default()
+		};
+		let a_tonemap_out = AttachmentDesc
+		{
+			format: VkFormat::R8G8B8A8_UNORM, clear_on_load: None, preserve_stored_value: true,
+			initial_layout: VkImageLayout::ColorAttachmentOptimal, final_layout: VkImageLayout::ShaderReadOnlyOptimal,
+			.. Default::default()
+		};
+		let a_smaa_edgedetect_out = AttachmentDesc
+		{
+			format: VkFormat::R8G8_UNORM, clear_on_load: Some(true), preserve_stored_value: true,
+			initial_layout: VkImageLayout::ColorAttachmentOptimal, final_layout: VkImageLayout::ShaderReadOnlyOptimal,
+			.. Default::default()
+		};
+		let a_smaa_blendweight_out = AttachmentDesc
+		{
+			format: VkFormat::R8G8B8A8_UNORM, clear_on_load: Some(true), preserve_stored_value: true,
+			initial_layout: VkImageLayout::ColorAttachmentOptimal, final_layout: VkImageLayout::ShaderReadOnlyOptimal,
+			.. Default::default()
+		};
+		let a_swapchain = AttachmentDesc
+		{
+			format: sc_format, clear_on_load: None, preserve_stored_value: true,
+			initial_layout: VkImageLayout::ColorAttachmentOptimal, final_layout: VkImageLayout::PresentSrcKHR,
+			.. Default::default()
+		};
 
-		// Objects //
-		let fullpass = engine.create_render_pass(&attachments, &passes, &deps).or_crash();
-		
+		// Pass Descriptions //
+		let normal_render_pass = PassDesc::single_fragment_output(0);
+		let tonemap_pass = PassDesc { input_attachment_indices: vec![AttachmentRef::input(0)], color_attachment_indices: vec![AttachmentRef::color(1)], .. Default::default() };
+		let smaa_pass = PassDesc::single_fragment_output(0);
+
+		// Pass Dependencies //
+		let rr_tonemap_dep = PassDependency
+		{
+			src: 0, dst: 1,
+			src_stage_mask: VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, dst_stage_mask: VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+			src_access_mask: VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, dst_access_mask: VK_ACCESS_SHADER_READ_BIT,
+			depend_by_region: true
+		};
+
+		// objects //
 		RenderPasses
 		{
-			object: fullpass,
-			content_render_pass: p_content, tonemap_pass: p_tonemap, smaa_edge_pass: p_smaa_edge, smaa_weight_pass: p_smaa_weight, smaa_combine_pass: p_smaa_combine,
-			required_image_count: attachments.len()
+			normal_render: engine.create_render_pass(&[&a_render, &a_tonemap_out], &[&normal_render_pass, &tonemap_pass], &[&rr_tonemap_dep]).or_crash(),
+			smaa_edgedetect: engine.create_render_pass(&[&a_smaa_edgedetect_out], &[&smaa_pass], &[]).or_crash(),
+			smaa_blendweight: engine.create_render_pass(&[&a_smaa_blendweight_out], &[&smaa_pass], &[]).or_crash(),
+			smaa_combine: engine.create_render_pass(&[&a_swapchain], &[&smaa_pass], &[]).or_crash()
+		}
+	}
+}
+
+pub struct Framebuffers
+{
+	pub normal_render: Framebuffer, pub smaa_edgedetect: Framebuffer, pub smaa_blendweight: Framebuffer, pub final_output: Vec<Framebuffer>
+}
+impl Framebuffers
+{
+	pub fn new<Engine: EngineCore>(engine: &Engine, molds: &RenderPasses, nr_view: &ImageView2D, tonemap_out_view: &ImageView2D,
+		smaa_edgedetect_out_view: &ImageView2D, smaa_blendweight_out_view: &ImageView2D, swapchain_views: &[&WindowRenderTarget], size: &Size2) -> Self
+	{
+		let &Size2(w, h) = size;
+		let fsz = Size3(w, h, 1);
+
+		Framebuffers
+		{
+			normal_render: engine.create_framebuffer(&molds.normal_render, &[nr_view, tonemap_out_view], &fsz).or_crash(),
+			smaa_edgedetect: engine.create_framebuffer(&molds.smaa_edgedetect, &[smaa_edgedetect_out_view], &fsz).or_crash(),
+			smaa_blendweight: engine.create_framebuffer(&molds.smaa_blendweight, &[smaa_blendweight_out_view], &fsz).or_crash(),
+			final_output: swapchain_views.into_iter().map(|&v| engine.create_framebuffer(&molds.smaa_combine, &[v], &fsz))
+				.collect::<Result<_, _>>().or_crash()
 		}
 	}
 }

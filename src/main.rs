@@ -119,7 +119,7 @@ pub struct SMAAPipelineStates
 }
 impl SMAAPipelineStates
 {
-	pub fn new<Engine: EngineCore>(engine: &Engine, render_pass: &RenderPass, base_subpass: u32, processing_viewport: &Viewport) -> Self
+	pub fn new<Engine: EngineCore>(engine: &Engine, render_passes: &RenderPasses, processing_viewport: &Viewport) -> Self
 	{
 		let &Viewport(_, _, vw, vh, _, _) = processing_viewport;
 
@@ -147,13 +147,13 @@ impl SMAAPipelineStates
 		];
 		let mut gps =
 		{
-			let eps = GraphicsPipelineBuilder::for_postprocess(engine, &epl, render_pass, base_subpass + 0,
+			let eps = GraphicsPipelineBuilder::for_postprocess(engine, &epl, &render_passes.smaa_edgedetect, 0,
 				PipelineShaderProgram::unspecialized(&esh), processing_viewport)
 				.vertex_shader(PipelineShaderProgram(&evsh, scons_rt_metrics.clone()));
-			let bwps = GraphicsPipelineBuilder::for_postprocess(engine, &bwpl, render_pass, base_subpass + 1,
+			let bwps = GraphicsPipelineBuilder::for_postprocess(engine, &bwpl, &render_passes.smaa_blendweight, 0,
 				PipelineShaderProgram(&bwsh, scons_rt_metrics.clone()), processing_viewport)
 				.vertex_shader(PipelineShaderProgram(&bwvsh, scons_rt_metrics.clone()));
-			let cps = GraphicsPipelineBuilder::for_postprocess(engine, &cpl, render_pass, base_subpass + 2,
+			let cps = GraphicsPipelineBuilder::for_postprocess(engine, &cpl, &render_passes.smaa_combine, 0,
 				PipelineShaderProgram(&csh, scons_rt_metrics.clone()), processing_viewport)
 				.vertex_shader(PipelineShaderProgram(&cvsh, scons_rt_metrics));
 			engine.create_graphics_pipelines(&[&eps, &bwps, &cps]).or_crash()
@@ -230,9 +230,8 @@ fn game_main<WS: WindowServer, IS: InputSystem<LogicalInputTypes>>(engine: Engin
 	let appdata = ApplicationBufferData::new(&engine, &target_extent);
 
 	let render_pass = RenderPasses::new(&engine, target.get_format());
-	let framebuffers = target.get_back_images().iter().map(|&finalbuffer| engine.create_framebuffer(&render_pass.object, &[
-		backbuffer_sfloat4_set, backbuffer_unorm4f_set, backbuffer_unorm2_set, backbuffer_unorm4_set, finalbuffer
-	], &Size3::from(target_extent.clone()))).collect::<Result<Vec<_>, _>>().or_crash();
+	let framebuffers = Framebuffers::new(&engine, &render_pass, backbuffer_sfloat4_set, backbuffer_unorm4f_set,
+		backbuffer_unorm2_set, backbuffer_unorm4_set, &target.get_back_images(), &target_extent);
 
 	// Pipelines //
 	let sc_viewport = Viewport::from(target_extent);
@@ -287,11 +286,14 @@ fn game_main<WS: WindowServer, IS: InputSystem<LogicalInputTypes>>(engine: Engin
 			.map(|x| ImageMemoryBarrier::hold_ownership(*x, ImageSubresourceRange::base_color(),
 				0, VK_ACCESS_MEMORY_READ_BIT, VkImageLayout::Undefined, VkImageLayout::PresentSrcKHR))
 			.chain(vec![
-				ImageMemoryBarrier::hold_ownership(backbuffer_sfloat4_set, ImageSubresourceRange::base_color(), VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_INPUT_ATTACHMENT_READ_BIT | VK_ACCESS_SHADER_READ_BIT,
+				ImageMemoryBarrier::hold_ownership(backbuffer_sfloat4_set, ImageSubresourceRange::base_color(), VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+					VkImageLayout::Preinitialized, VkImageLayout::ColorAttachmentOptimal),
+				ImageMemoryBarrier::hold_ownership(backbuffer_unorm4f_set, ImageSubresourceRange::base_color(), VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT,
 					VkImageLayout::Preinitialized, VkImageLayout::ShaderReadOnlyOptimal),
-				ImageMemoryBarrier::hold_ownership(backbuffer_unorm4f_set, ImageSubresourceRange::base_color(), VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VkImageLayout::Preinitialized, VkImageLayout::ColorAttachmentOptimal),
-				ImageMemoryBarrier::hold_ownership(backbuffer_unorm2_set, ImageSubresourceRange::base_color(), VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VkImageLayout::Preinitialized, VkImageLayout::ColorAttachmentOptimal),
-				ImageMemoryBarrier::hold_ownership(backbuffer_unorm4_set, ImageSubresourceRange::base_color(), VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VkImageLayout::Preinitialized, VkImageLayout::ColorAttachmentOptimal)
+				ImageMemoryBarrier::hold_ownership(backbuffer_unorm2_set, ImageSubresourceRange::base_color(), VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT,
+					VkImageLayout::Preinitialized, VkImageLayout::ShaderReadOnlyOptimal),
+				ImageMemoryBarrier::hold_ownership(backbuffer_unorm4_set, ImageSubresourceRange::base_color(), VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT,
+					VkImageLayout::Preinitialized, VkImageLayout::ShaderReadOnlyOptimal)
 			]).chain(blitted_image_templates_dev.iter().map(|t| t.into_transfer_dst(VK_ACCESS_HOST_WRITE_BIT, VkImageLayout::Preinitialized)))
 			.chain(blitted_image_templates_stg.into_iter().map(|t| t.into_transfer_src(VK_ACCESS_HOST_WRITE_BIT, VkImageLayout::Preinitialized))).collect_vec();
 		let image_memory_barriers_ret = blitted_image_templates_dev.into_iter()
@@ -325,48 +327,48 @@ fn game_main<WS: WindowServer, IS: InputSystem<LogicalInputTypes>>(engine: Engin
 		DebugLine::Float("CPU Time".to_owned(), &cputime_ms, Some("ms".to_owned())),
 		DebugLine::UnsignedInt("Enemy Count".to_owned(), &enemy_count, None),
 		DebugLine::UnsignedInt("Player Bithash".to_owned(), &player_bithash, None)
-	], &render_pass.object, render_pass.smaa_combine_pass, &sc_viewport).or_crash();
+	], &render_pass.smaa_combine, 0, &sc_viewport).or_crash();
 
 	info!("Recording Rendering Commands...");
 	// Rendering Commands //
-	let combine_commands = engine.allocate_bundled_command_buffers(2 * framebuffers.len()).or_crash();
-	for (n, f) in framebuffers.iter().enumerate()
+	let combine_commands = engine.allocate_graphics_command_buffers(target.backimage_count()).or_crash();
+	for (n, f) in framebuffers.final_output.iter().enumerate()
 	{
-		combine_commands.begin(0 + 2 * n, &render_pass.object, render_pass.smaa_combine_pass, f).and_then(|recorder|
+		let presenter_output_barriers = [
+			ImageMemoryBarrier::hold_ownership(target.get_back_images()[n], ImageSubresourceRange::base_color(),
+				VK_ACCESS_MEMORY_READ_BIT, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+				VkImageLayout::PresentSrcKHR, VkImageLayout::ColorAttachmentOptimal)
+		];
+
+		combine_commands.begin(n).and_then(|recorder|
 			recorder
+				.pipeline_barrier(VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, false, &[], &[], &presenter_output_barriers)
+				.begin_render_pass(f, &[], false)
 				.bind_pipeline(&pipelines.smaa.as_ref().unwrap().combine)
 				.bind_descriptor_sets(&pipelines.smaa.as_ref().unwrap().combine_layout, &[pipelines.get_descriptor_set_for_smaa_combine()])
 				.bind_vertex_buffers(&[(&appdata.dev, appdata.offset_ppvbuf())])
 				.draw(4, 1)
-			.end()
-		).or_crash();
-		combine_commands.begin(1 + 2 * n, &render_pass.object, render_pass.smaa_combine_pass, f).and_then(|recorder|
-			recorder.inject_commands(|r| debug_info.inject_render_commands(r))
+				.inject_commands(|r| debug_info.inject_render_commands(r))
+				.end_render_pass()
 			.end()
 		).or_crash();
 	}
-	let framebuffer_commands = engine.allocate_graphics_command_buffers(target.get_back_images().len()).or_crash();
-	framebuffer_commands.begin_all().and_then(|iter| iter.map(|(i, recorder)|
+	let gcommands = engine.allocate_graphics_command_buffers(1).or_crash();
+	gcommands.begin(0).and_then(|recorder|
 	{
-		let clear_values = [
-			AttachmentClearValue::Color(0.0f32, 0.0f32, 0.015625f32, 1.0f32),
-			AttachmentClearValue::Color(0.0f32, 0.0f32, 0.0f32, 0.0f32),	/* unused */
-			AttachmentClearValue::Color(0.0f32, 0.0f32, 0.0f32, 0.0f32),
-			AttachmentClearValue::Color(0.0f32, 0.0f32, 0.0f32, 0.0f32),
-			AttachmentClearValue::Color(0.0f32, 0.0f32, 0.0f32, 0.0f32)
-		];
-		let color_output_barriers = [
-			ImageMemoryBarrier::template(target.get_back_images()[i], interlude::ImageSubresourceRange::base_color())
-				.hold_ownership(VK_ACCESS_MEMORY_READ_BIT, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VkImageLayout::PresentSrcKHR, VkImageLayout::ColorAttachmentOptimal),
-			ImageMemoryBarrier::template(backbuffer_sfloat4_set, interlude::ImageSubresourceRange::base_color())
-				.hold_ownership(VK_ACCESS_INPUT_ATTACHMENT_READ_BIT | VK_ACCESS_SHADER_READ_BIT, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
-				VkImageLayout::ShaderReadOnlyOptimal, VkImageLayout::ColorAttachmentOptimal)
-		];
-
+		let rr_clear_value = AttachmentClearValue::Color(0.0f32, 0.0f32, 0.015625f32, 1.0f32);
+		let pure_clear_value = AttachmentClearValue::Color(0.0f32, 0.0f32, 0.0f32, 0.0f32);
+		let color_output_barriers: Vec<_> = [
+			ImageMemoryBarrier::template(backbuffer_unorm4f_set, ImageSubresourceRange::base_color()),
+			ImageMemoryBarrier::template(backbuffer_unorm2_set, ImageSubresourceRange::base_color()),
+			ImageMemoryBarrier::template(backbuffer_unorm4_set, ImageSubresourceRange::base_color())
+		].into_iter().map(|x| x.hold_ownership(VK_ACCESS_SHADER_READ_BIT, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+			VkImageLayout::ShaderReadOnlyOptimal, VkImageLayout::ColorAttachmentOptimal)).collect();
+		
 		recorder
 			.pipeline_barrier(VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, false, &[], &[], &color_output_barriers)
-			.begin_render_pass(&framebuffers[i], &clear_values, false)
-			// Pass 0 : Render to Buffer //
+			.begin_render_pass(&framebuffers.normal_render, &[rr_clear_value], false)
+			// Normal Render //
 			.bind_descriptor_sets(pipelines.layout_for_wire_render(), &[pipelines.get_descriptor_set_for_uniform_buffer()])
 			.bind_vertex_buffers(&[(&appdata.dev, appdata.offset_vbuf())])
 			.inject_commands(|r| pipelines.background.begin(r, 0.125, 0.5, 0.1875, 0.625))
@@ -399,28 +401,23 @@ fn game_main<WS: WindowServer, IS: InputSystem<LogicalInputTypes>>(engine: Engin
 			.bind_pipeline(&pipelines.tonemapper)
 			.bind_descriptor_sets(&pipelines.layout_for_attachment_input(), &[pipelines.get_descriptor_set_for_tonemap_input()])
 			.draw(4, 1)
-			.next_subpass(false)
+			.end_render_pass().begin_render_pass(&framebuffers.smaa_edgedetect, &[pure_clear_value], false)
 			// Edge Detection(SMAA 1x) //
 			.bind_pipeline(&pipelines.smaa.as_ref().unwrap().edgedetect)
 			.bind_descriptor_sets(&pipelines.smaa.as_ref().unwrap().edgedetect_layout, &[pipelines.get_descriptor_set_for_smaa_edgedetect()])
 			.draw(4, 1)
-			// .pipeline_barrier(VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, false, &[], &[], &[ibar_edgebuffer_end])
-			.next_subpass(false)
+			.end_render_pass().begin_render_pass(&framebuffers.smaa_blendweight, &[pure_clear_value], false)
 			// Blend Weight Calculation(SMAA 1x) //
 			.bind_pipeline(&pipelines.smaa.as_ref().unwrap().blendweight_calc)
 			.bind_descriptor_sets(&pipelines.smaa.as_ref().unwrap().blendweight_layout, &[pipelines.get_descriptor_set_for_smaa_blendweight()])
 			.draw(4, 1)
-			// .pipeline_barrier(VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, false, &[], &[], &[ibar_blendweight_end])
-			.next_subpass(true)
-			// SMAA Combine and Debug Print //
-			.execute_commands(&combine_commands[i * 2 .. i * 2 + 2])
 			.end_render_pass()
 		.end()
-	}).collect::<Result<Vec<_>, _>>()).or_crash();
+	}).or_crash();
 	info!("Recording Transfer Commands...");
 	// Transfer Commands //
-	let update_commands = try!(engine.allocate_transfer_command_buffers(1));
-	try!(update_commands.begin(0).and_then(|recorder|
+	let update_commands = engine.allocate_transfer_command_buffers(1).or_crash();
+	update_commands.begin(0).and_then(|recorder|
 	{
 		let uoffs = appdata.offset_instance();
 		let buffer_barriers = [
@@ -439,7 +436,7 @@ fn game_main<WS: WindowServer, IS: InputSystem<LogicalInputTypes>>(engine: Engin
 			.copy_buffer(&appdata.stg, &appdata.dev, &[interlude::BufferCopyRegion(uoffs, uoffs, appdata.size() - uoffs)])
 			.pipeline_barrier(VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, false, &[], &buffer_barriers_ret, &[])
 		.end()
-	}));
+	}).or_crash();
 
 	info!("Preparing for Render Loop...");
 
@@ -457,15 +454,13 @@ fn game_main<WS: WindowServer, IS: InputSystem<LogicalInputTypes>>(engine: Engin
 		let srv_update = update_event.clone();
 		let update_observer = unsafe { thread_scoped::scoped(move ||
 		{
-			let framebuffer_commands = framebuffer_commands;
+			let final_commands = combine_commands;
 			let update_commands = update_commands;
-			let mut frame_index = Unrecoverable!(
-				target.acquire_next_backbuffer_index(&rendering_order_sem).and_then(|findex|
-					engine.submit_graphics_commands(&framebuffer_commands[findex as usize .. findex as usize + 1],
-						&[(&rendering_order_sem, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT)],
-						None, Some(&execute_next_signal)).map(|()| findex)
-				)
-			);
+			let mut frame_index = target.acquire_next_backbuffer_index(&rendering_order_sem).and_then(|findex|
+				engine.submit_graphics_commands(&[gcommands[0], final_commands[findex as usize]],
+					&[(&rendering_order_sem, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT)],
+					None, Some(&execute_next_signal)).map(|()| findex)
+				).or_crash();
 			while !exit_flag_uo.load(Ordering::Acquire)
 			{
 				execute_next_signal.wait().and_then(|()| execute_next_signal.clear()).or_crash();
@@ -477,7 +472,7 @@ fn game_main<WS: WindowServer, IS: InputSystem<LogicalInputTypes>>(engine: Engin
 				frame_index = target.present(engine.graphics_queue_ref(), frame_index).and_then(|()|
 					target.acquire_next_backbuffer_index(&rendering_order_sem).and_then(|findex|
 					{
-						engine.submit_graphics_commands(&framebuffer_commands[findex as usize .. findex as usize + 1],
+						engine.submit_graphics_commands(&[gcommands[0], final_commands[findex as usize]],
 							&[(&rendering_order_sem, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT)],
 							None, Some(&execute_next_signal)).map(|()| findex)
 					})).or_crash();
