@@ -286,16 +286,12 @@ fn game_main<WS: WindowServer, IS: InputSystem<LogicalInputTypes>>(engine: Engin
 			.map(|x| ImageMemoryBarrier::hold_ownership(*x, ImageSubresourceRange::base_color(),
 				0, VK_ACCESS_MEMORY_READ_BIT, VkImageLayout::Undefined, VkImageLayout::PresentSrcKHR))
 			.chain(vec![
-				ImageMemoryBarrier::hold_ownership(backbuffer_sfloat4_set, ImageSubresourceRange::base_color(), VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
-					VkImageLayout::Preinitialized, VkImageLayout::ColorAttachmentOptimal),
-				ImageMemoryBarrier::hold_ownership(backbuffer_unorm4f_set, ImageSubresourceRange::base_color(), VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT,
-					VkImageLayout::Preinitialized, VkImageLayout::ShaderReadOnlyOptimal),
-				ImageMemoryBarrier::hold_ownership(backbuffer_unorm2_set, ImageSubresourceRange::base_color(), VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT,
-					VkImageLayout::Preinitialized, VkImageLayout::ShaderReadOnlyOptimal),
-				ImageMemoryBarrier::hold_ownership(backbuffer_unorm4_set, ImageSubresourceRange::base_color(), VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT,
-					VkImageLayout::Preinitialized, VkImageLayout::ShaderReadOnlyOptimal)
-			]).chain(blitted_image_templates_dev.iter().map(|t| t.into_transfer_dst(VK_ACCESS_HOST_WRITE_BIT, VkImageLayout::Preinitialized)))
-			.chain(blitted_image_templates_stg.into_iter().map(|t| t.into_transfer_src(VK_ACCESS_HOST_WRITE_BIT, VkImageLayout::Preinitialized))).collect_vec();
+				ImageMemoryBarrier::initialize(backbuffer_sfloat4_set, ImageSubresourceRange::base_color(), VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VkImageLayout::ColorAttachmentOptimal),
+				ImageMemoryBarrier::initialize(backbuffer_unorm4f_set, ImageSubresourceRange::base_color(), VK_ACCESS_SHADER_READ_BIT, VkImageLayout::ShaderReadOnlyOptimal),
+				ImageMemoryBarrier::initialize(backbuffer_unorm2_set, ImageSubresourceRange::base_color(), VK_ACCESS_SHADER_READ_BIT, VkImageLayout::ShaderReadOnlyOptimal),
+				ImageMemoryBarrier::initialize(backbuffer_unorm4_set, ImageSubresourceRange::base_color(), VK_ACCESS_SHADER_READ_BIT, VkImageLayout::ShaderReadOnlyOptimal)
+			]).chain(blitted_image_templates_dev.iter().map(|t| t.into_transfer_dst(0, VkImageLayout::Preinitialized)))
+			.chain(blitted_image_templates_stg.into_iter().map(|t| t.into_transfer_src(0, VkImageLayout::Preinitialized))).collect_vec();
 		let image_memory_barriers_ret = blitted_image_templates_dev.into_iter()
 			.map(|t| t.from_transfer_dst(VK_ACCESS_SHADER_READ_BIT, VkImageLayout::ShaderReadOnlyOptimal)).collect_vec();
 
