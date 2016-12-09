@@ -368,33 +368,7 @@ fn game_main<WS: WindowServer, IS: InputSystem<LogicalInputTypes>>(engine: Engin
 		recorder
 			.pipeline_barrier(VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, false, &[], &[], &color_output_barriers)
 			.begin_render_pass(&framebuffers.normal_render, &[rr_clear_value], false)
-			// Normal Render //
-			.bind_descriptor_sets(pipelines.layout_for_wire_render(), &[pipelines.get_descriptor_set_for_uniform_buffer()])
-			.bind_vertex_buffers(&[(&appdata.dev, appdata.offset_vbuf())])
-			.inject_commands(|r| pipelines.background.begin(r, 0.125, 0.5, 0.1875, 0.625))
-			.bind_vertex_buffers_partial(1, &[(&appdata.dev, appdata.offset_instance() + InstanceMemory::background_offs())])
-			.draw(4, MAX_BK_COUNT as u32)
-			.inject_commands(|r| pipelines.enemy_body.begin(r, 0.25, 0.9875, 1.5, 1.0))
-			.bind_vertex_buffers_partial(1, &[(&appdata.dev, appdata.offset_instance())])
-			.draw(4, MAX_ENEMY_COUNT as u32)
-			.inject_commands(|r| pipelines.player.begin(r, 1.5, 1.25, 0.375, 1.0))
-			.bind_vertex_buffers_partial(1, &[(&appdata.dev, appdata.offset_instance() + InstanceMemory::player_rot_offs())])
-			.bind_index_buffer(&appdata.dev, appdata.offset_ibuf())
-			.draw_indexed(24, 2, 4)
-			.inject_commands(|r| pipelines.enemy_rezonator.begin(r, 1.25, 0.5, 0.625, 1.0))
-			.bind_vertex_buffers(&[(&appdata.dev, appdata.offset_vbuf() + VertexMemoryForWireRender::enemy_rezonator_offs()),
-				(&appdata.dev, appdata.offset_instance() + InstanceMemory::enemy_rez_offs())])
-			.draw(3, MAX_ENEMY_COUNT as u32)
-			.inject_commands(|r| pipelines.playerbullet.begin(r, pipelines.get_descriptor_set_for_playerbullet_texture()))
-			.bind_vertex_buffers(&[
-				(&appdata.dev, appdata.offset_vbuf() + VertexMemoryForWireRender::sprite_plane_offs()),
-				(&appdata.dev, appdata.offset_instance() + InstanceMemory::player_bullet_offs())
-			])
-			.draw(4, MAX_PLAYER_BULLET_COUNT as u32)
-			.bind_pipeline(&pipelines.lineburst)
-			.bind_descriptor_sets_partial(&pipelines.layout_for_lineburst_particle_render(), 1, &[pipelines.get_descriptor_set_for_lineburst_particle_color()])
-			.bind_vertex_buffers(&[(&appdata.dev, appdata.offset_instance() + structures::InstanceMemory::lbparticle_groups_offs())])
-			.draw(MAX_LBPARTICLE_GROUPS as u32, 1)
+			.inject_commands(|r| populate_normal_render_commands(r, &pipelines, &appdata))
 			.next_subpass(false)
 			// Tonemapping //
 			.bind_vertex_buffers(&[(&appdata.dev, appdata.offset_ppvbuf())])
@@ -684,4 +658,37 @@ fn game_main<WS: WindowServer, IS: InputSystem<LogicalInputTypes>>(engine: Engin
 	};
 
 	Ok(())
+}
+
+/// Records some commands for NormalRender
+pub fn populate_normal_render_commands<'a>(recorder: GraphicsCommandRecorder<'a>, pipelines: &PipelineStates, appdata: &ApplicationBufferData)
+	-> GraphicsCommandRecorder<'a>
+{
+	recorder
+		.bind_descriptor_sets(pipelines.layout_for_wire_render(), &[pipelines.get_descriptor_set_for_uniform_buffer()])
+		.bind_vertex_buffers(&[(&appdata.dev, appdata.offset_vbuf())])
+		.inject_commands(|r| pipelines.background.begin(r, 0.125, 0.5, 0.1875, 0.625))
+		.bind_vertex_buffers_partial(1, &[(&appdata.dev, appdata.offset_instance() + InstanceMemory::background_offs())])
+		.draw(4, MAX_BK_COUNT as u32)
+		.inject_commands(|r| pipelines.enemy_body.begin(r, 0.25, 0.9875, 1.5, 1.0))
+		.bind_vertex_buffers_partial(1, &[(&appdata.dev, appdata.offset_instance())])
+		.draw(4, MAX_ENEMY_COUNT as u32)
+		.inject_commands(|r| pipelines.player.begin(r, 1.5, 1.25, 0.375, 1.0))
+		.bind_vertex_buffers_partial(1, &[(&appdata.dev, appdata.offset_instance() + InstanceMemory::player_rot_offs())])
+		.bind_index_buffer(&appdata.dev, appdata.offset_ibuf())
+		.draw_indexed(24, 2, 4)
+		.inject_commands(|r| pipelines.enemy_rezonator.begin(r, 1.25, 0.5, 0.625, 1.0))
+		.bind_vertex_buffers(&[(&appdata.dev, appdata.offset_vbuf() + VertexMemoryForWireRender::enemy_rezonator_offs()),
+			(&appdata.dev, appdata.offset_instance() + InstanceMemory::enemy_rez_offs())])
+		.draw(3, MAX_ENEMY_COUNT as u32)
+		.inject_commands(|r| pipelines.playerbullet.begin(r, pipelines.get_descriptor_set_for_playerbullet_texture()))
+		.bind_vertex_buffers(&[
+			(&appdata.dev, appdata.offset_vbuf() + VertexMemoryForWireRender::sprite_plane_offs()),
+			(&appdata.dev, appdata.offset_instance() + InstanceMemory::player_bullet_offs())
+		])
+		.draw(4, MAX_PLAYER_BULLET_COUNT as u32)
+		.bind_pipeline(&pipelines.lineburst)
+		.bind_descriptor_sets_partial(&pipelines.layout_for_lineburst_particle_render(), 1, &[pipelines.get_descriptor_set_for_lineburst_particle_color()])
+		.bind_vertex_buffers(&[(&appdata.dev, appdata.offset_instance() + structures::InstanceMemory::lbparticle_groups_offs())])
+		.draw(MAX_LBPARTICLE_GROUPS as u32, 1)
 }
