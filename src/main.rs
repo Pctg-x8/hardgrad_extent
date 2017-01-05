@@ -148,13 +148,13 @@ impl SMAAPipelineStates
 		let mut gps =
 		{
 			let eps = GraphicsPipelineBuilder::for_postprocess(engine, &epl, &render_passes.smaa_edgedetect, 0,
-				PipelineShaderProgram::unspecialized(&esh), processing_viewport)
+				PipelineShaderProgram::unspecialized(&esh), processing_viewport).or_crash()
 				.vertex_shader(PipelineShaderProgram(&evsh, scons_rt_metrics.clone()));
 			let bwps = GraphicsPipelineBuilder::for_postprocess(engine, &bwpl, &render_passes.smaa_blendweight, 0,
-				PipelineShaderProgram(&bwsh, scons_rt_metrics.clone()), processing_viewport)
+				PipelineShaderProgram(&bwsh, scons_rt_metrics.clone()), processing_viewport).or_crash()
 				.vertex_shader(PipelineShaderProgram(&bwvsh, scons_rt_metrics.clone()));
 			let cps = GraphicsPipelineBuilder::for_postprocess(engine, &cpl, &render_passes.smaa_combine, 0,
-				PipelineShaderProgram(&csh, scons_rt_metrics.clone()), processing_viewport)
+				PipelineShaderProgram(&csh, scons_rt_metrics.clone()), processing_viewport).or_crash()
 				.vertex_shader(PipelineShaderProgram(&cvsh, scons_rt_metrics));
 			engine.create_graphics_pipelines(&[&eps, &bwps, &cps]).or_crash()
 		};
@@ -439,7 +439,7 @@ fn game_main<WS: WindowServer, IS: InputSystem<LogicalInputTypes>>(engine: Engin
 				copy_completion_sig.wait().and_then(|()| copy_completion_sig.clear()).or_crash();
 				dbg_copy_completion_sig.wait().and_then(|()| dbg_copy_completion_sig.clear()).or_crash();
 				srv_update.set();
-				frame_index = target.present(engine.graphics_queue_ref(), frame_index).and_then(|()|
+				frame_index = target.present(engine.graphics_queue_ref(), frame_index, None).and_then(|()|
 					target.acquire_next_backbuffer_index(&rendering_order_sem).and_then(|findex|
 					{
 						engine.submit_graphics_commands(&[gcommands[0], final_commands[findex as usize]],

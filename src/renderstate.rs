@@ -89,8 +89,8 @@ impl PipelineStates
 				.viewport_scissors(&[ViewportWithScissorRect::default_scissor(&swapchain_viewport)])
 				.blend_state(&[AttachmentBlendState::PremultipliedAlphaBlend]);
 			let tonemapper_ps = GraphicsPipelineBuilder::for_postprocess(engine, &layouts.ainput_require_layout, &passes.normal_render, 1,
-				PipelineShaderProgram::unspecialized(&shaderstore.tonemap_fsh), &swapchain_viewport)
-				.vertex_shader(PipelineShaderProgram::unspecialized(&engine.get_postprocess_vsh(false)));
+				PipelineShaderProgram::unspecialized(&shaderstore.tonemap_fsh), &swapchain_viewport).or_crash()
+				.vertex_shader(PipelineShaderProgram::unspecialized(engine.postprocess_vsh(false).or_crash()));
 			let gridrender_ps = GraphicsPipelineBuilder::new(&layouts.gridrender_layout, &passes.smaa_combine, 0)
 				.vertex_shader(PipelineShaderProgram::unspecialized(&shaderstore.gridrender_vsh))
 				.fragment_shader(PipelineShaderProgram::unspecialized(&shaderstore.solid_fsh))
