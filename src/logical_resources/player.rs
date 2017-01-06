@@ -33,7 +33,7 @@ impl<'a> Player<'a>
 			uniform_memory: uniform_ref, instance_memory: instance_ref, living_secs: 0.0f32
 		}
 	}
-	pub fn update<IS: InputSystem<LogicalInputTypes>>(&mut self, frame_delta: f32, input: &IS) -> u32
+	pub fn update<IS: InputSystem<LogicalInputTypes>>(&mut self, frame_delta: f32, input: &IS, movescale: f32) -> u32
 	{
 		let u_quaternions = [
 			UnitQuaternion::new(Vector3::new(-1.0f32, 0.0f32, 0.75f32).normalize() * (260.0f32 * self.living_secs as f32).to_radians()),
@@ -43,9 +43,9 @@ impl<'a> Player<'a>
 		self.living_secs += frame_delta;
 
 		self.uniform_memory[0] =
-			(self.uniform_memory[0] + input[LogicalInputTypes::Horizontal] * 40.0f32 * frame_delta).max(-PLAYER_HLIMIT).min(PLAYER_HLIMIT);
+			(self.uniform_memory[0] + input[LogicalInputTypes::Horizontal] * 40.0f32 * movescale * frame_delta).max(-PLAYER_HLIMIT).min(PLAYER_HLIMIT);
 		self.uniform_memory[1] =
-			(self.uniform_memory[1] + input[LogicalInputTypes::Vertical] * 40.0f32 * frame_delta).max(PLAYER_SIZE_H).min(PLAYER_VLIMIT);
+			(self.uniform_memory[1] + input[LogicalInputTypes::Vertical] * 40.0f32 * movescale * frame_delta).max(PLAYER_SIZE_H).min(PLAYER_VLIMIT);
 
 		self.instance_memory[0] = quaternions.next().unwrap();
 		self.instance_memory[1] = quaternions.next().unwrap();

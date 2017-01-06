@@ -522,8 +522,9 @@ fn game_main<WS: WindowServer, IS: InputSystem<LogicalInputTypes>>(engine: Engin
 					// normal update
 					let cputime_start = time::PreciseTime::now();
 					input_system.write().unwrap().update();
-					let timescale = (1.0f32 + input_system.read().unwrap()[LogicalInputTypes::Slowdown] * 2.0f32) /
-						(1.0f32 + input_system.read().unwrap()[LogicalInputTypes::Overdrive]);
+					let inputs = input_system.read().unwrap();
+					let timescale = (1.0f32 + inputs[LogicalInputTypes::Slowdown] * 2.0f32) / (1.0f32 + inputs[LogicalInputTypes::Overdrive]);
+					let movescale = 1.0f32 + inputs[LogicalInputTypes::Slowdown] * 0.25f32;
 					let delta_time_sec = (delta_time.num_microseconds().unwrap() as f32 / 1_000_000.0f32) / timescale;
 					secs_from_last_fixed += delta_time_sec;
 					secs_from_last_trigger += delta_time_sec;
@@ -608,7 +609,7 @@ fn game_main<WS: WindowServer, IS: InputSystem<LogicalInputTypes>>(engine: Engin
 						*e = Enemy::Free;
 						*enemy_count.borrow_mut() -= 1;
 					}
-					*player_bithash.borrow_mut() = player.update(delta_time_sec, &*input_system.read().unwrap());
+					*player_bithash.borrow_mut() = player.update(delta_time_sec, &*inputs, movescale);
 					// println!("PlayerBitHashBin: {:08b}", *player_bithash.borrow());
 
 					if !next_particle_spawn.is_empty()
