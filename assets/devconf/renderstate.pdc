@@ -1,0 +1,99 @@
+# RenderState(RenderPass and PipelineState)
+
+# Rust側からは`pdcrs.render_passes["FirstRP"]`で参照できる
+@FirstRP = RenderPass
+{
+	Attachments: 
+	{
+		@Backbuffer = { R16G16B16A16 SFLOAT, ColorAttachmentOptimal -> ColorAttachmentOptimal, clear_on_load },
+		@TonemapResult = { R8G8B8A8 UNORM, ColorAttachmentOptimal -> ShaderReadOnlyOptimal, preserve_content }
+	},
+	Subpasses: 
+	{
+		@StdRender = { ColorAttachment: @Backbuffer },
+		@Tonemap = { ColorAttachment: @TonemapResult, InputAttachment: @Backbuffer }
+	},
+	Dependencies: 
+	{
+		@StdRender -> @Tonemap { ColorAttachmentOutputStage -> FragmentShaderStage, ColorAttachmentWrite -> ShaderRead, ByRegion }
+	}
+}
+@SMAAEdgeDetectRP = SimpleRenderPass
+{
+	R8G8 UNORM, ColorAttachmentOptimal -> ShaderReadOnlyOptimal, clear_on_load / preserve_content
+}
+@SMAABlendWeightRP = SimpleRenderPass
+{
+	R8G8B8A8 UNORM, ColorAttachmentOptimal -> ShaderReadOnlyOptimal, clear_on_load / preserve_content
+}
+@SMAACombineRP = SimpleRenderPass
+{
+	R8G8B8A8 UNORM, ColorAttachmentOptimal -> PresentSrc, preserve_content
+}
+
+# Rust側からは`pdcrs.descriptor_set_layous["GlobalUBDesc"]`で参照できる
+@GlobalUBDesc = DescriptorSetLayout { UniformBuffer { Visibility: Vertex / Geometry } }
+@SpriteTexDesc = DescriptorSetLayout { CombinedSampler { Visibility: Fragment } }
+@ColorRampTexDesc = DescriptorSetLayout { CombinedSampler { Visibility: Geometry } }
+@PrePassRefDesc = DescriptorSetLayout { InputAttachment { Visibility: Fragment } }
+@SMAAEdgeDetectInputDesc = DescriptorSetLayout { CombinedSampler { Visibility: Fragment } }
+@SMAABlendWeightCalcInputDescs = DescriptorSetLayout { CombinedSampler { Count: 3, Visibility: Fragment } }
+@SMAACombineInputDescs = DescriptorSetLayout { CombinedSampler { Count: 2, Visibility: Fragment } }
+
+@WireColorConstants = PushConstantLayout { Range: 0 .. 16, Visibility: Vertex }
+
+@WireRenderLayout = PipelineLayout { Descriptors: { @GlobalUBDesc }, PushConstantLayouts: { @WireColorConstants } }
+@TonemapperLayout = PipelineLayout { Descriptors: { @PrePassRefDesc } }
+@LineburstParticleLayout = PipelineLayout { Descriptors: { @GlobalUBDesc, @ColorRampTexDesc } }
+@SpriteRenderLayout = PipelineLayout { Descriptors: { @GlobalUBDesc, @SpriteTexDesc } }
+
+# Rust側からは`pdcrs.descriptor_sets[0]`で参照できる
+DescriptorSets
+{
+	@GlobalUBDesc, @SpriteTexDesc, @ColorRampTexDesc, @PrePassRefDesc, @SMAAEdgeDetectInputDesc, @SMAABlendWeightCalcInputDescs, @SMAACombineInputDescs
+}
+
+# Rust側からは`pdcrs.pipeline_states["Background"]`で参照できる
+@Background = PipelineState for @FirstRP-@StdRender with @WireRenderLayout
+{
+	PrimitiveTopology: LineList with Adjacent,
+	VertexShader: $shaders.GeometryPreinstancing,			# アセット参照($アセットパス)
+	ViewportScissors: { @ScreenView },
+	GeometryShader: $shaders.BackLineDuplicator,
+	FragmentShader: $shaders.ThroughColor,
+	BlendState: { PremultipliedAlpha }
+}
+@Enemy = PipelineState for @FirstRP-@StdRender with @WireRenderLayout
+{
+	PrimitiveTopology: LineList with Adjacent,
+	VertexShader: $shaders.GeometryPreinstancing,
+	ViewportScissors: { @ScreenView },
+	GeometryShader: $shaders.EnemyDuplicator,
+	FragmentShader: $shaders.ThroughColor,
+	BlendState: { Disabled }
+}
+@EnemyRezonator = PipelineState for @FirstRP-@StdRender with @WireRenderLayout
+{
+	PrimitiveTopology: TriangleList,
+	VertexShader: $shaders.EnemyRezonatorV,
+	ViewportScissors: { @ScreenView },
+	GeometryShader: $shaders.EnemyRezonatorDup,
+	FragmentShader: $shaders.ThroughColor,
+	BlendState: { Disabled }
+}
+@Player = PipelineState for @FirstRP-@StdRender with @WireRenderLayout
+{
+	PrimitiveTopology: LineList,
+	VertexShader: $shaders.PlayerRotor,
+	ViewportScissors: { @ScreenView },
+	FragmentShader: $shaders.ThroughColor,
+	BlendState: { Disabled }
+}
+@PlayerBullet = PipelineState for @FirstRP-@StdRender with @WireRenderLayout
+{
+	PrimitiveTopology: TriangleStrip,
+	VertexShader: $shaders.PlayerBullet { 0 = 0.75 },
+	ViewportScissors: { @ScreenView },
+	FragmentShader: $shaders.SpriteFrag,
+	BlendState: { PremultipliedAlpha }
+}
