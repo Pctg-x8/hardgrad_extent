@@ -43,6 +43,10 @@ Image 1D
 - Format: R16G16B16A16 SFLOAT
 - Extent: 4
 - Usage: Sampled
+Image 1D
+- Format: R8G8B8A8 UNORM
+- Extent: 16
+- Usage: Sampled
 
 # Samplers
 Sampler

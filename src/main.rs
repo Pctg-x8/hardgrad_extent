@@ -173,6 +173,18 @@ impl SMAAPipelineStates
 	}
 }
 
+fn interpolate(a: u8, b: u8, v: f32) -> u8 { (b as f32 * v + a as f32 * (1.0 - v)) as u8 }
+fn gen_bullet_gradient(to: &mut [[u8; 4]; 16])
+{
+	for n in 0 .. 16
+	{
+		to[n] = if n == 0 { [255, 255, 255, 255] }
+			else if n < 6 { [interpolate(64, 255, (n as f32 - 1.0) / 4.0), 255, interpolate(255, 64, (n as f32 - 1.0) / 4.0), 255] }
+			else if n < 12 { [255, interpolate(255, 192, (n as f32 - 6.0) / 5.0), 64, 255] }
+			else { [255, interpolate(192, 128, (n as f32 - 12.0) / 3.0), interpolate(64, 128, (n as f32 - 12.0) / 3.0), 255] }
+	}
+}
+
 fn main() { app_main().or_crash(); }
 fn app_main() -> Result<(), EngineError>
 {
@@ -195,12 +207,14 @@ fn game_main<WS: WindowServer, IS: InputSystem<LogicalInputTypes>>(engine: Engin
 	let ref playerbullet_tex_set = images.images_2d()[6];
 	let ref circle16_tex_set = images.images_2d()[7];
 	let ref lineburst_particle_gradient_tex_set = images.images_1d()[0];
+	let ref bullet_colramp_tex_set = images.images_1d()[1];
 	let ref gbuffer_sampler = images.samplers()[0];
 	let ref lineburst_particle_gradient_tex_stg = images.staging_images()[0];
-	let ref smaa_areatex_stg = images.staging_images()[1];
-	let ref smaa_searchtex_stg = images.staging_images()[2];
-	let ref playerbullet_tex_stg = images.staging_images()[3];
-	let ref circle16_tex_stg = images.staging_images()[4];
+	let ref bullet_colramp_stg = images.staging_images()[1];
+	let ref smaa_areatex_stg = images.staging_images()[2];
+	let ref smaa_searchtex_stg = images.staging_images()[3];
+	let ref playerbullet_tex_stg = images.staging_images()[4];
+	let ref circle16_tex_stg = images.staging_images()[5];
 
 	let playerbullet_image = PhotoshopDocument::open(engine.parse_asset("graphs.playerbullet", "psd")).unwrap();
 	let circle16_image = PhotoshopDocument::open(engine.parse_asset("graphs.circle16", "psd")).unwrap();
@@ -208,9 +222,9 @@ fn game_main<WS: WindowServer, IS: InputSystem<LogicalInputTypes>>(engine: Engin
 		let mapped = images.map_staging_images_memory();
 		let offsets = images.staging_offsets();
 		let areatex_compressed = BC5::compress(&AREATEX_BYTES, (AREATEX_WIDTH, AREATEX_HEIGHT));
-		mapped.map_mut::<[u8; AREATEX_SIZE / 2]>(offsets[1] as usize).copy_from_slice(&areatex_compressed);
+		mapped.map_mut::<[u8; AREATEX_SIZE / 2]>(offsets[2] as usize).copy_from_slice(&areatex_compressed);
 		let searchtex_compressed = BC4::compress(&SEARCHTEX_BYTES, (SEARCHTEX_WIDTH, SEARCHTEX_HEIGHT));
-		mapped.map_mut::<[u8; SEARCHTEX_SIZE / 2]>(offsets[2] as usize).copy_from_slice(&searchtex_compressed);
+		mapped.map_mut::<[u8; SEARCHTEX_SIZE / 2]>(offsets[3] as usize).copy_from_slice(&searchtex_compressed);
 
 		let playerbullet_pixels = BC4::compress(&single(&Size2(playerbullet_image.width as u32, playerbullet_image.height as u32),
 			playerbullet_image.layer_raw_channel_image_data(0, PSDChannelIndices::Alpha)
@@ -218,14 +232,15 @@ fn game_main<WS: WindowServer, IS: InputSystem<LogicalInputTypes>>(engine: Engin
 		let circle16_pixels = BC4::compress(&single(&Size2(circle16_image.width as u32, circle16_image.height as u32),
 			circle16_image.layer_raw_channel_image_data(0, PSDChannelIndices::Alpha)
 		), (circle16_image.width, circle16_image.height));
-		mapped.range_mut::<u8>(offsets[3] as usize, 16 * 16 / 2).copy_from_slice(&playerbullet_pixels);
-		mapped.range_mut::<u8>(offsets[4] as usize, 16 * 16 / 2).copy_from_slice(&circle16_pixels);
+		mapped.range_mut::<u8>(offsets[4] as usize, 16 * 16 / 2).copy_from_slice(&playerbullet_pixels);
+		mapped.range_mut::<u8>(offsets[5] as usize, 16 * 16 / 2).copy_from_slice(&circle16_pixels);
 		mapped.map_mut::<[[f16; 4]; 4]>(offsets[0] as usize).copy_from_slice(&[
 			[f16::from_f64(2.0), f16::from_f64(1.5), f16::from_f64(1.0), f16::from_f64(1.0)],
 			[f16::from_f64(1.5), f16::from_f64(1.0), f16::from_f64(0.25), f16::from_f64(1.0)],
 			[f16::from_f64(1.0), f16::from_f64(0.1875), f16::from_f64(0.125), f16::from_f64(0.875)],
 			[f16::from_f64(0.125), f16::from_f64(0.125), f16::from_f64(0.125), f16::from_f64(0.375)]
 		]);
+		gen_bullet_gradient(mapped.map_mut(offsets[1] as usize));
 	}
 	let appdata = ApplicationBufferData::new(&engine, &target_extent);
 
@@ -238,7 +253,8 @@ fn game_main<WS: WindowServer, IS: InputSystem<LogicalInputTypes>>(engine: Engin
 	let pipelines = PipelineStates::new(&engine, true, &render_pass, &sc_viewport);
 
 	// Descriptor Set //
-	let uniform_memory_info = BufferInfo(&appdata.dev, appdata.offset_uniform() .. appdata.size());
+	let uniform_memory_bt_info = BufferInfo(&appdata.dev, appdata.offset_bullet_translations() .. appdata.size_bullet_translations());
+	let uniform_memory_info = BufferInfo(&appdata.dev, appdata.offset_uniform() .. appdata.offset_uniform() + appdata.size_uniform());
 	let backbuffer_sfloat4_info = ImageInfo(gbuffer_sampler, backbuffer_sfloat4_set, VkImageLayout::ShaderReadOnlyOptimal);
 	let backbuffer_unorm4f_info = ImageInfo(gbuffer_sampler, backbuffer_unorm4f_set, VkImageLayout::ShaderReadOnlyOptimal);
 	let backbuffer_unorm2_info = ImageInfo(gbuffer_sampler, backbuffer_unorm2_set, VkImageLayout::ShaderReadOnlyOptimal);
@@ -248,14 +264,18 @@ fn game_main<WS: WindowServer, IS: InputSystem<LogicalInputTypes>>(engine: Engin
 	let playerbullet_info = ImageInfo(gbuffer_sampler, playerbullet_tex_set, VkImageLayout::ShaderReadOnlyOptimal);
 	let circle16_info = ImageInfo(gbuffer_sampler, circle16_tex_set, VkImageLayout::ShaderReadOnlyOptimal);
 	let lineburst_particle_gradient_tex_info = ImageInfo(gbuffer_sampler, lineburst_particle_gradient_tex_set, VkImageLayout::ShaderReadOnlyOptimal);
+	let bullet_colramp_tex_info = ImageInfo(gbuffer_sampler, bullet_colramp_tex_set, VkImageLayout::ShaderReadOnlyOptimal);
 	engine.update_descriptors(&[
 		DescriptorSetWriteInfo::UniformBuffer(pipelines.get_descriptor_set_for_uniform_buffer(), 0, vec![uniform_memory_info]),
+		DescriptorSetWriteInfo::StorageBuffer(pipelines.get_descriptor_set_for_uniform_buffer(), 1, vec![uniform_memory_bt_info]),
 		DescriptorSetWriteInfo::InputAttachment(pipelines.get_descriptor_set_for_tonemap_input(), 0, vec![backbuffer_sfloat4_info]),
 		DescriptorSetWriteInfo::CombinedImageSampler(pipelines.get_descriptor_set_for_smaa_edgedetect(), 0, vec![backbuffer_unorm4f_info.clone()]),
 		DescriptorSetWriteInfo::CombinedImageSampler(pipelines.get_descriptor_set_for_smaa_blendweight(), 0, vec![backbuffer_unorm2_info, areatex_info, searchtex_info]),
 		DescriptorSetWriteInfo::CombinedImageSampler(pipelines.get_descriptor_set_for_smaa_combine(), 0, vec![backbuffer_unorm4f_info, backbuffer_unorm4_info]),
 		DescriptorSetWriteInfo::CombinedImageSampler(pipelines.get_descriptor_set_for_playerbullet_texture(), 0, vec![playerbullet_info]),
-		DescriptorSetWriteInfo::CombinedImageSampler(pipelines.get_descriptor_set_for_lineburst_particle_color(), 0, vec![lineburst_particle_gradient_tex_info])
+		DescriptorSetWriteInfo::CombinedImageSampler(pipelines.get_descriptor_set_for_lineburst_particle_color(), 0, vec![lineburst_particle_gradient_tex_info]),
+		DescriptorSetWriteInfo::CombinedImageSampler(pipelines.get_descriptor_set_for_bullet_texture(), 0, vec![circle16_info]),
+		DescriptorSetWriteInfo::CombinedImageSampler(pipelines.get_descriptor_set_for_bullet_colramp(), 0, vec![bullet_colramp_tex_info])
 	]);
 
 	// Initial Data Transmission, Layouting for Swapchain Backbuffer Images //
@@ -274,13 +294,17 @@ fn game_main<WS: WindowServer, IS: InputSystem<LogicalInputTypes>>(engine: Engin
 			ImageMemoryBarrier::template(smaa_areatex_set, ImageSubresourceRange::base_color()),
 			ImageMemoryBarrier::template(smaa_searchtex_set, ImageSubresourceRange::base_color()),
 			ImageMemoryBarrier::template(playerbullet_tex_set, ImageSubresourceRange::base_color()),
-			ImageMemoryBarrier::template(lineburst_particle_gradient_tex_set, ImageSubresourceRange::base_color())
+			ImageMemoryBarrier::template(circle16_tex_set, ImageSubresourceRange::base_color()),
+			ImageMemoryBarrier::template(lineburst_particle_gradient_tex_set, ImageSubresourceRange::base_color()),
+			ImageMemoryBarrier::template(bullet_colramp_tex_set, ImageSubresourceRange::base_color())
 		];
 		let blitted_image_templates_stg = vec![
 			ImageMemoryBarrier::template(smaa_areatex_stg, ImageSubresourceRange::base_color()),
 			ImageMemoryBarrier::template(smaa_searchtex_stg, ImageSubresourceRange::base_color()),
 			ImageMemoryBarrier::template(playerbullet_tex_stg, ImageSubresourceRange::base_color()),
-			ImageMemoryBarrier::template(lineburst_particle_gradient_tex_stg, ImageSubresourceRange::base_color())
+			ImageMemoryBarrier::template(circle16_tex_stg, ImageSubresourceRange::base_color()),
+			ImageMemoryBarrier::template(lineburst_particle_gradient_tex_stg, ImageSubresourceRange::base_color()),
+			ImageMemoryBarrier::template(bullet_colramp_stg, ImageSubresourceRange::base_color())
 		];
 		let image_memory_barriers = target.get_back_images().iter()
 			.map(|x| ImageMemoryBarrier::hold_ownership(*x, ImageSubresourceRange::base_color(),
@@ -303,7 +327,10 @@ fn game_main<WS: WindowServer, IS: InputSystem<LogicalInputTypes>>(engine: Engin
 			.copy_image(smaa_searchtex_stg, smaa_searchtex_set, &[ImageCopyRegion::entire_colorbits(VkExtent3D(SEARCHTEX_WIDTH as u32, SEARCHTEX_HEIGHT as u32, 1))])
 			.copy_image(playerbullet_tex_stg, playerbullet_tex_set,
 				&[ImageCopyRegion::entire_colorbits(VkExtent3D(playerbullet_image.width as u32, playerbullet_image.height as u32, 1))])
+			.copy_image(circle16_tex_stg, circle16_tex_set,
+				&[ImageCopyRegion::entire_colorbits(VkExtent3D(circle16_image.width as u32, circle16_image.height as u32, 1))])
 			.copy_image(lineburst_particle_gradient_tex_stg, lineburst_particle_gradient_tex_set, &[ImageCopyRegion::entire_colorbits(VkExtent3D(4, 1, 1))])
+			.copy_image(bullet_colramp_stg, bullet_colramp_tex_set, &[ImageCopyRegion::entire_colorbits(VkExtent3D(16, 1, 1))])
 			.pipeline_barrier(VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, false,
 				&[], &buffer_memory_barriers_ret, &image_memory_barriers_ret)
 			.end()
@@ -389,21 +416,21 @@ fn game_main<WS: WindowServer, IS: InputSystem<LogicalInputTypes>>(engine: Engin
 	let update_commands = engine.allocate_transfer_command_buffers(1).or_crash();
 	update_commands.begin(0).and_then(|recorder|
 	{
-		let uoffs = appdata.offset_instance();
 		let buffer_barriers = [
-			BufferMemoryBarrier::hold_ownership(&appdata.dev, uoffs .. appdata.size(),
+			BufferMemoryBarrier::hold_ownership(&appdata.dev, appdata.range_need_to_update(),
 				VK_ACCESS_INDEX_READ_BIT | VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT | VK_ACCESS_UNIFORM_READ_BIT, VK_ACCESS_TRANSFER_WRITE_BIT),
-			BufferMemoryBarrier::hold_ownership(&appdata.stg, uoffs .. appdata.size(), VK_ACCESS_MEMORY_READ_BIT, VK_ACCESS_TRANSFER_READ_BIT)
+			BufferMemoryBarrier::hold_ownership(&appdata.stg, appdata.range_need_to_update(), VK_ACCESS_MEMORY_READ_BIT, VK_ACCESS_TRANSFER_READ_BIT)
 		];
 		let buffer_barriers_ret = [
-			BufferMemoryBarrier::hold_ownership(&appdata.dev, uoffs .. appdata.size(),
+			BufferMemoryBarrier::hold_ownership(&appdata.dev, appdata.range_need_to_update(),
 				VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_INDEX_READ_BIT | VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT | VK_ACCESS_UNIFORM_READ_BIT),
-			BufferMemoryBarrier::hold_ownership(&appdata.stg, uoffs .. appdata.size(), VK_ACCESS_TRANSFER_READ_BIT, VK_ACCESS_MEMORY_READ_BIT)
+			BufferMemoryBarrier::hold_ownership(&appdata.stg, appdata.range_need_to_update(), VK_ACCESS_TRANSFER_READ_BIT, VK_ACCESS_MEMORY_READ_BIT)
 		];
 
+		let r = appdata.range_need_to_update();
 		recorder
 			.pipeline_barrier(VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, false, &[], &buffer_barriers, &[])
-			.copy_buffer(&appdata.stg, &appdata.dev, &[interlude::BufferCopyRegion(uoffs, uoffs, appdata.size() - uoffs)])
+			.copy_buffer(&appdata.stg, &appdata.dev, &[interlude::BufferCopyRegion(r.start, r.start, r.len())])
 			.pipeline_barrier(VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, false, &[], &buffer_barriers_ret, &[])
 		.end()
 	}).or_crash();
@@ -452,23 +479,26 @@ fn game_main<WS: WindowServer, IS: InputSystem<LogicalInputTypes>>(engine: Engin
 			engine
 		}) };
 
-		let mapped_range = try!(appdata.stg.map());
+		let mapped_range = appdata.stg.map().or_crash();
 		let (uref_enemy, uref_bk, uref_player_center, uref_gametime, uref_particle_infos) =
 		{
 			let mapped = mapped_range.map_mut::<UniformMemory>(appdata.offset_uniform());
 			(&mut mapped.enemy_instance_data, &mut mapped.background_instance_data, &mut mapped.player_center_tf,
 				&mut mapped.gametime, &mut mapped.lineburst_particles)
 		};
-		let (iref_enemy, iref_bk, iref_player, iref_enemy_rez, iref_player_bullet, iref_lineburst_particle_groups) =
+		let ref mut uref_bullet = mapped_range.map_mut::<BulletTranslations>(appdata.offset_bullet_translations()).0;
+		let (iref_enemy, iref_bk, iref_player, iref_enemy_rez, iref_player_bullet, iref_lineburst_particle_groups, iref_bullet) =
 		{
 			let mapped = mapped_range.map_mut::<InstanceMemory>(appdata.offset_instance());
 			(&mut mapped.enemy_instance_mult, &mut mapped.background_instance_mult, &mut mapped.player_rotq,
-				&mut mapped.enemy_rez_instance_data, &mut mapped.player_bullet_offset_sincos, &mut mapped.lineburst_particle_groups)
+				&mut mapped.enemy_rez_instance_data, &mut mapped.player_bullet_offset_sincos, &mut mapped.lineburst_particle_groups,
+				&mut mapped.bullet_instances)
 		};
-		let mut background_datastore = logical_resources::BackgroundDatastore::new(uref_bk, iref_bk);
+		let mut background_datastore = BackgroundDatastore::new(uref_bk, iref_bk);
 		let mut enemy_datastore = EnemyDatastore::new(iref_enemy);
 		let mut pb_memory_manager = utils::MemoryBlockManager::new(MAX_PLAYER_BULLET_COUNT as u32);
 		let mut lineburst_particles = LineBurstParticles::new(iref_lineburst_particle_groups, uref_particle_infos);
+		let mut bullet_datastore = BulletDatastore::new(iref_bullet);
 
 		// double-buffered enemy entity list //
 		let mut enemy_entities: [Enemy; MAX_ENEMY_COUNT] = unsafe { std::mem::uninitialized() };
@@ -476,6 +506,8 @@ fn game_main<WS: WindowServer, IS: InputSystem<LogicalInputTypes>>(engine: Engin
 		let mut player = Player::new(uref_player_center, iref_player);
 		let mut player_bullets: [PlayerBullet; MAX_PLAYER_BULLET_COUNT] = unsafe { std::mem::uninitialized() };
 		for n in 0 .. MAX_PLAYER_BULLET_COUNT { player_bullets[n] = PlayerBullet::Free; }
+		let mut bullets: [Bullet; MAX_BULLETS] = unsafe { std::mem::uninitialized() };
+		for n in 0 .. MAX_BULLETS { bullets[n] = Bullet::Free; }
 
 		let mut secs_from_last_fixed = 0.0f32;
 		input_system.write().and_then(|mut isw|
@@ -592,13 +624,33 @@ fn game_main<WS: WindowServer, IS: InputSystem<LogicalInputTypes>>(engine: Engin
 					}
 					for e in enemy_entities.iter_mut()
 					{
-						if let Some((new_left, new_top)) = e.update(delta_time_sec)
+						if let (Some((new_left, new_top)), fire_req) = e.update(delta_time_sec)
 						{
 							for pb in player_bullets.iter_mut()
 							{
 								if let Some((psx, psy)) = pb.crash(new_left, new_top)
 								{
 									next_particle_spawn.push((particle_spawn_count.ind_sample(&mut randomizer), psx, psy));
+								}
+							}
+							if let Some(f) = fire_req
+							{
+								match f
+								{
+									FireRequest::Linears(vinfo) => for (from, angle, speed) in vinfo
+									{
+										let block_index = bullet_datastore.allocate();
+										if let Some(bindex) = block_index
+										{
+											bullets[bindex as usize] = unsafe
+											{
+												let uref_bullet_ref_ptr = uref_bullet.as_mut_ptr();
+												bullet_datastore.init_lifetime(bindex);
+												Bullet::init_linear(bindex, &mut *uref_bullet_ref_ptr.offset(bindex as isize), &from, angle, speed)
+											};
+										}
+										else { warn!("Bullet Datastore is full!!"); }
+									}
 								}
 							}
 						}
@@ -611,6 +663,13 @@ fn game_main<WS: WindowServer, IS: InputSystem<LogicalInputTypes>>(engine: Engin
 					}
 					*player_bithash.borrow_mut() = player.update(delta_time_sec, &*inputs, movescale);
 					// println!("PlayerBitHashBin: {:08b}", *player_bithash.borrow());
+					bullets.par_iter_mut().for_each(|e| e.update(delta_time_sec));
+					bullet_datastore.increase_all_lifetime(delta_time_sec);
+					for e in bullets.iter_mut().filter(|e| e.is_garbage())
+					{
+						match e { &mut Bullet::Garbage(i) => bullet_datastore.free(i), _ => unreachable!() };
+						*e = Bullet::Free;
+					}
 
 					if !next_particle_spawn.is_empty()
 					{
@@ -678,9 +737,15 @@ pub fn populate_normal_render_commands<'a>(recorder: GraphicsCommandRecorder<'a>
 		.bind_vertex_buffers(&[(&appdata.dev, appdata.offset_vbuf() + VertexMemoryForWireRender::enemy_rezonator_offs()),
 			(&appdata.dev, appdata.offset_instance() + InstanceMemory::enemy_rez_offs())])
 		.draw(3, MAX_ENEMY_COUNT as u32)
-		.inject_commands(|r| pipelines.playerbullet.begin(r, pipelines.get_descriptor_set_for_playerbullet_texture()))
+		.inject_commands(|r| pipelines.bullet.begin(r, pipelines.get_descriptor_set_for_bullet_texture()))
+		.bind_descriptor_sets_partial(pipelines.layout_for_bullet(), 2, &[pipelines.get_descriptor_set_for_bullet_colramp()])
 		.bind_vertex_buffers(&[
 			(&appdata.dev, appdata.offset_vbuf() + VertexMemoryForWireRender::sprite_plane_offs()),
+			(&appdata.dev, appdata.offset_instance() + InstanceMemory::bullet_instances_offs())
+		])
+		.draw(4, MAX_BULLETS as u32)
+		.inject_commands(|r| pipelines.playerbullet.begin(r, pipelines.get_descriptor_set_for_playerbullet_texture()))
+		.bind_vertex_buffers_partial(1, &[
 			(&appdata.dev, appdata.offset_instance() + InstanceMemory::player_bullet_offs())
 		])
 		.draw(4, MAX_PLAYER_BULLET_COUNT as u32)

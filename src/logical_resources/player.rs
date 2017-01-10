@@ -5,12 +5,7 @@ use LogicalInputTypes;
 use interlude::*;
 use std;
 use utils::quadtree::*;
-
-const PLAYER_SIZE_H: f32 = 1.5;
-const SCREEN_HSIZE: f32 = 36.0;
-const SCREEN_VSIZE: f32 = 4.0 * 36.0 / 3.0;
-const PLAYER_HLIMIT: f32 = SCREEN_HSIZE - PLAYER_SIZE_H;
-const PLAYER_VLIMIT: f32 = SCREEN_VSIZE - PLAYER_SIZE_H;
+use constants::*;
 
 pub struct Player<'a>
 {

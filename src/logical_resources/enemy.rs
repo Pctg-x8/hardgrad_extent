@@ -4,6 +4,9 @@ use constants::*;
 use structures::*;
 use nalgebra::*;
 use interlude::*;
+use super::bullet::FireRequest;
+use rand;
+use rand::distributions::*;
 
 fn store_quaternion(to: &mut CVector4, q: &Quaternion<f32>)
 {
@@ -69,10 +72,10 @@ impl <'a> Enemy<'a>
 			left: init_left, living_secs: 0.0f32, rezonator_left: 3
 		}
 	}
-	pub fn update(&mut self, delta_time: f32) -> Option<(f32, f32)>
+	pub fn update(&mut self, delta_time: f32) -> (Option<(f32, f32)>, Option<FireRequest>)
 	{
 		// update values
-		let (died_bi, new_pos) = match self
+		let (died_bi, new_pos, freq) = match self
 		{
 			&mut Enemy::Entity { block_index, ref mut uniform_ref, ref mut rezonator_iref, left: _, ref mut living_secs, rezonator_left } =>
 			{
@@ -92,14 +95,18 @@ impl <'a> Enemy<'a>
 				rezonator_iref[2] += 220.0f32.to_radians() * delta_time;
 				*living_secs += delta_time;
 
-				(if current_y >= 51.5 { rezonator_iref[0] = 0.0; Some(block_index) } else { None }, Some((uniform_ref.center_tf[0], uniform_ref.center_tf[1])))
+				let mut r = rand::thread_rng();
+				let r1 = rand::distributions::Range::new(0, 8);
+				let ra = rand::distributions::Range::new(0.0, 360.0f32);
+				(if current_y >= 51.5 { rezonator_iref[0] = 0.0; Some(block_index) } else { None }, Some((uniform_ref.center_tf[0], uniform_ref.center_tf[1])),
+					if r1.ind_sample(&mut r) == 0 { Some(FireRequest::Linears(vec![(uniform_ref.center_tf, ra.ind_sample(&mut r), 16.0)])) } else { None })
 			},
-			_ => (None, None)
+			_ => (None, None, None)
 		};
 
 		// state change
 		if let Some(bindex) = died_bi { *self = Enemy::Garbage(bindex); }
-		new_pos
+		(new_pos, freq)
 	}
 	pub fn is_garbage(&self) -> bool
 	{

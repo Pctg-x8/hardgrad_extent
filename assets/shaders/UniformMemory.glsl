@@ -5,6 +5,7 @@ const int MAX_BK_COUNT = 64;
 const int MAX_LBPARTICLE_GROUPS = 48;
 const int MAX_LBPARTICLES_PER_GROUP = 8;
 const int MAX_LBPARTICLES = MAX_LBPARTICLE_GROUPS * MAX_LBPARTICLES_PER_GROUP;
+const int MAX_BULLETS = 128 * MAX_ENEMY_COUNT;
 
 struct Matrixes { mat4 ortho, pixel, persp; };
 struct CharacterLocation { vec4 rotq[2], center_tf; };
@@ -19,3 +20,4 @@ layout(std140, set = 0, binding = 0) uniform UniformMemory
 	vec4 player_center_tf; vec4 gametime;
 	LineBurstParticle lb_particle_info[MAX_LBPARTICLES];
 };
+layout(std140, set = 0, binding = 1) buffer BulletTranslations { vec4 bullet_translations[MAX_BULLETS]; };

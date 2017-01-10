@@ -10,19 +10,22 @@ use super::SMAAPipelineStates;
 
 pub struct Layouts
 {
-	pub global_uniform_layout: DescriptorSetLayout, pub texture_layout: DescriptorSetLayout, pub texture_layout_geom: DescriptorSetLayout,
+	pub global_uniform_layout: DescriptorSetLayout,
+	pub texture_layout: DescriptorSetLayout, pub texture_layout_geom: DescriptorSetLayout, pub texture_layout_vert: DescriptorSetLayout,
 	pub ainput_layout: DescriptorSetLayout,
 	pub ainput_require_layout: PipelineLayout,
 	pub wire_pipeline_layout: Rc<PipelineLayout>, pub lineburst_particle_layout: PipelineLayout, pub sprite_layout: Rc<PipelineLayout>,
-	pub gridrender_layout: PipelineLayout
+	pub bullet_layout: Rc<PipelineLayout>
 }
 impl Layouts
 {
 	fn new<Engine: EngineCore>(engine: &Engine) -> Self
 	{
-		let gu_layout = engine.create_descriptor_set_layout(&[Descriptor::Uniform(1, vec![ShaderStage::Vertex, ShaderStage::Geometry])]).or_crash();
+		let gu_layout = engine.create_descriptor_set_layout(&[
+			Descriptor::Uniform(1, vec![ShaderStage::Vertex, ShaderStage::Geometry]), Descriptor::Storage(1, vec![ShaderStage::Vertex])]).or_crash();
 		let t_layout = engine.create_descriptor_set_layout(&[Descriptor::CombinedSampler(1, vec![ShaderStage::Fragment])]).or_crash();
 		let t_layout_g = engine.create_descriptor_set_layout(&[Descriptor::CombinedSampler(1, vec![ShaderStage::Geometry])]).or_crash();
+		let t_layout_v = engine.create_descriptor_set_layout(&[Descriptor::CombinedSampler(1, vec![ShaderStage::Vertex])]).or_crash();
 		let ainput_layout = engine.create_descriptor_set_layout(&[Descriptor::InputAttachment(1, vec![ShaderStage::Fragment])]).or_crash();
 		
 		Layouts
@@ -32,9 +35,9 @@ impl Layouts
 				&[PushConstantDesc(VK_SHADER_STAGE_VERTEX_BIT, 0 .. size_of::<CVector4>() as u32)]).or_crash()),
 			lineburst_particle_layout: engine.create_pipeline_layout(&[&gu_layout, &t_layout_g], &[]).or_crash(),
 			sprite_layout: Rc::new(engine.create_pipeline_layout(&[&gu_layout, &t_layout], &[]).or_crash()),
-			gridrender_layout: engine.create_pipeline_layout(&[&gu_layout],
-				&[PushConstantDesc(VK_SHADER_STAGE_VERTEX_BIT, 0 .. size_of::<f32>() as u32)]).or_crash(),
-			global_uniform_layout: gu_layout, texture_layout: t_layout, texture_layout_geom: t_layout_g, ainput_layout: ainput_layout
+			bullet_layout: Rc::new(engine.create_pipeline_layout(&[&gu_layout, &t_layout, &t_layout_v], &[]).or_crash()),
+			global_uniform_layout: gu_layout, texture_layout: t_layout, texture_layout_geom: t_layout_g, texture_layout_vert: t_layout_v,
+			ainput_layout: ainput_layout
 		}
 	}
 }
@@ -42,7 +45,7 @@ pub struct PipelineStates
 {
 	#[allow(dead_code)] shaderstore: ShaderStore, layouts: Layouts,
 	pub background: WireRender, pub enemy_body: WireRender, pub enemy_rezonator: WireRender, pub player: WireRender,
-	pub playerbullet: SpriteRender, pub lineburst: GraphicsPipeline, pub gridrender: GraphicsPipeline,
+	pub playerbullet: SpriteRender, pub lineburst: GraphicsPipeline, pub bullet: SpriteRender,
 	pub tonemapper: GraphicsPipeline, pub smaa: Option<SMAAPipelineStates>,
 	descriptor_sets: DescriptorSets
 }
@@ -91,16 +94,16 @@ impl PipelineStates
 			let tonemapper_ps = GraphicsPipelineBuilder::for_postprocess(engine, &layouts.ainput_require_layout, &passes.normal_render, 1,
 				PipelineShaderProgram::unspecialized(&shaderstore.tonemap_fsh), &swapchain_viewport).or_crash()
 				.vertex_shader(PipelineShaderProgram::unspecialized(engine.postprocess_vsh(false).or_crash()));
-			let gridrender_ps = GraphicsPipelineBuilder::new(&layouts.gridrender_layout, &passes.smaa_combine, 0)
-				.vertex_shader(PipelineShaderProgram::unspecialized(&shaderstore.gridrender_vsh))
-				.fragment_shader(PipelineShaderProgram::unspecialized(&shaderstore.solid_fsh))
-				.primitive_topology(PrimitiveTopology::LineList(false))
+			let bullet_ps = GraphicsPipelineBuilder::new(&layouts.bullet_layout, &passes.normal_render, 0)
+				.vertex_shader(PipelineShaderProgram(&shaderstore.bullet_vsh, vec![(0, ConstantEntry::Float(0.6875))]))
+				.fragment_shader(PipelineShaderProgram::unspecialized(&shaderstore.colored_sprite_fsh))
+				.primitive_topology(PrimitiveTopology::TriangleStrip(false))
 				.viewport_scissors(&[ViewportWithScissorRect::default_scissor(&swapchain_viewport)])
 				.blend_state(&[AttachmentBlendState::PremultipliedAlphaBlend]);
 			engine.create_graphics_pipelines(&[&background_ps, &enemy_ps, &enemy_rezonator_ps,
-				&player_ps, &playerbullet_ps, &lineburst_ps, &tonemapper_ps, &gridrender_ps]).or_crash()
+				&player_ps, &playerbullet_ps, &lineburst_ps, &tonemapper_ps, &bullet_ps]).or_crash()
 		};
-		let gridrender_ps = gps.pop().unwrap();
+		let bullet_sr = SpriteRender::new(gps.pop().unwrap(), &layouts.bullet_layout);
 		let tonemap_ps = gps.pop().unwrap();
 		let lineburst_ps = gps.pop().unwrap();
 		let playerbullet_sr = SpriteRender::new(gps.pop().unwrap(), &layouts.sprite_layout);
@@ -113,25 +116,25 @@ impl PipelineStates
 		let (smaa, descriptor_sets) = if use_smaa
 		{
 			let ps = SMAAPipelineStates::new(engine, &passes, swapchain_viewport);
-			let dslist = Unrecoverable!(engine.preallocate_all_descriptor_sets(&[
-				&layouts.global_uniform_layout, &layouts.texture_layout, &layouts.texture_layout_geom, &layouts.ainput_layout,
+			engine.preallocate_all_descriptor_sets(&[
+				&layouts.global_uniform_layout, &layouts.texture_layout, &layouts.texture_layout,
+				&layouts.texture_layout_geom, &layouts.texture_layout_vert, &layouts.ainput_layout,
 				&ps.descriptor_sets[0], &ps.descriptor_sets[1], &ps.descriptor_sets[2]
-			]));
-			(Some(ps), dslist)
+			]).map(|dslist| (Some(ps), dslist))
 		}
 		else
 		{
-			let dslist = Unrecoverable!(engine.preallocate_all_descriptor_sets(&[
-				&layouts.global_uniform_layout, &layouts.texture_layout, &layouts.texture_layout_geom, &layouts.ainput_layout
-			]));
-			(None, dslist)
-		};
+			engine.preallocate_all_descriptor_sets(&[
+				&layouts.global_uniform_layout, &layouts.texture_layout, &layouts.texture_layout,
+				&layouts.texture_layout_geom, &layouts.texture_layout_vert, &layouts.ainput_layout
+			]).map(|dslist| (None, dslist))
+		}.or_crash();
 
 		PipelineStates
 		{
 			shaderstore: shaderstore, layouts: layouts,
 			background: background_wr, enemy_body: enemy_wr, enemy_rezonator: enemy_rezonator_wr, player: player_wr, playerbullet: playerbullet_sr,
-			lineburst: lineburst_ps, gridrender: gridrender_ps,
+			lineburst: lineburst_ps, bullet: bullet_sr,
 			tonemapper: tonemap_ps, smaa: smaa, descriptor_sets: descriptor_sets
 		}
 	}
@@ -140,14 +143,16 @@ impl PipelineStates
 	pub fn layout_for_attachment_input(&self) -> &PipelineLayout { &self.layouts.ainput_require_layout }
 	pub fn layout_for_wire_render(&self) -> &PipelineLayout { &self.layouts.wire_pipeline_layout }
 	pub fn layout_for_lineburst_particle_render(&self) -> &PipelineLayout { &self.layouts.lineburst_particle_layout }
-	pub fn layout_for_gridrender(&self) -> &PipelineLayout { &self.layouts.gridrender_layout }
+	pub fn layout_for_bullet(&self) -> &PipelineLayout { &self.layouts.bullet_layout }
 	pub fn get_descriptor_set_for_uniform_buffer(&self) -> VkDescriptorSet { self.descriptor_sets[0] }
 	pub fn get_descriptor_set_for_playerbullet_texture(&self) -> VkDescriptorSet { self.descriptor_sets[1] }
-	pub fn get_descriptor_set_for_lineburst_particle_color(&self) -> VkDescriptorSet { self.descriptor_sets[2] }
-	pub fn get_descriptor_set_for_tonemap_input(&self) -> VkDescriptorSet { self.descriptor_sets[3] }
-	pub fn get_descriptor_set_for_smaa_edgedetect(&self)	-> VkDescriptorSet { self.descriptor_sets[4] }
-	pub fn get_descriptor_set_for_smaa_blendweight(&self)	-> VkDescriptorSet { self.descriptor_sets[5] }
-	pub fn get_descriptor_set_for_smaa_combine(&self)		-> VkDescriptorSet { self.descriptor_sets[6] }
+	pub fn get_descriptor_set_for_bullet_texture(&self) -> VkDescriptorSet { self.descriptor_sets[2] }
+	pub fn get_descriptor_set_for_lineburst_particle_color(&self) -> VkDescriptorSet { self.descriptor_sets[3] }
+	pub fn get_descriptor_set_for_bullet_colramp(&self)		-> VkDescriptorSet { self.descriptor_sets[4] }
+	pub fn get_descriptor_set_for_tonemap_input(&self)		-> VkDescriptorSet { self.descriptor_sets[5] }
+	pub fn get_descriptor_set_for_smaa_edgedetect(&self)	-> VkDescriptorSet { self.descriptor_sets[6] }
+	pub fn get_descriptor_set_for_smaa_blendweight(&self)	-> VkDescriptorSet { self.descriptor_sets[7] }
+	pub fn get_descriptor_set_for_smaa_combine(&self)		-> VkDescriptorSet { self.descriptor_sets[8] }
 }
 
 // Wire Render Wrapper with moving pipeline state object
