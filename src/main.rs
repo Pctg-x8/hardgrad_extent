@@ -339,13 +339,13 @@ fn game_main<WS: WindowServer, IS: InputSystem<LogicalInputTypes>>(engine: Engin
 	}).or_crash();
 
 	// Debug Information //
-	let frames_per_second = RefCell::new(0.0f64);
+	let frames_per_second = RefCell::new(0u32);
 	let frame_time_ms = RefCell::new(0.0f64);
 	let cputime_ms = RefCell::new(0.0f64);
 	let enemy_count = RefCell::new(0u32);
 	let player_bithash = RefCell::new(0u32);
 	let debug_info = DebugInfo::new(&engine, &[
-		DebugLine::Float("FPS".to_owned(), &frames_per_second, None),
+		DebugLine::UnsignedInt("FPS".to_owned(), &frames_per_second, None),
 		DebugLine::Float("Frame Time".to_owned(), &frame_time_ms, Some("ms".to_owned())),
 		DebugLine::Float("CPU Time".to_owned(), &cputime_ms, Some("ms".to_owned())),
 		DebugLine::UnsignedInt("Enemy Count".to_owned(), &enemy_count, None),
@@ -534,6 +534,8 @@ fn game_main<WS: WindowServer, IS: InputSystem<LogicalInputTypes>>(engine: Engin
 		let mut shooting = false;
 		let mut secs_from_last_trigger = 0.0;
 		let mut game_secs = 0.0;
+		let mut prev_fps_period = time::PreciseTime::now();
+		let mut fpscount = 0;
 		let mut next_shoot = false;
 		let mut next_particle_spawn = Vec::new();
 		let particle_spawn_count = rand::distributions::Range::new(1, 8);
@@ -549,7 +551,7 @@ fn game_main<WS: WindowServer, IS: InputSystem<LogicalInputTypes>>(engine: Engin
 					update_event.reset();
 					let delta_time = prev_time.to(time::PreciseTime::now());
 					*frame_time_ms.borrow_mut() = delta_time.num_microseconds().unwrap_or(-1) as f64 / 1000.0f64;
-					*frames_per_second.borrow_mut() = 1000.0f64 / *frame_time_ms.borrow();
+					fpscount += 1;
 
 					// normal update
 					let cputime_start = time::PreciseTime::now();
@@ -705,6 +707,12 @@ fn game_main<WS: WindowServer, IS: InputSystem<LogicalInputTypes>>(engine: Engin
 			{
 				next_shoot = true;
 				secs_from_last_trigger -= 0.0375;
+			}
+			if prev_fps_period.to(time::PreciseTime::now()) >= time::Duration::seconds(1)
+			{
+				*frames_per_second.borrow_mut() = fpscount;
+				fpscount = 0;
+				prev_fps_period = time::PreciseTime::now();
 			}
 		}
 
