@@ -7,6 +7,7 @@ use interlude::ffi::*;
 use assets::*;
 use framebuffer::*;
 use super::SMAAPipelineStates;
+use std::ops::Deref;
 
 pub struct Layouts
 {
@@ -19,23 +20,23 @@ pub struct Layouts
 }
 impl Layouts
 {
-	fn new<Engine: EngineCore>(engine: &Engine) -> Self
+	fn new(engine: &GraphicsInterface) -> Self
 	{
-		let gu_layout = engine.create_descriptor_set_layout(&[
-			Descriptor::Uniform(1, vec![ShaderStage::Vertex, ShaderStage::Geometry]), Descriptor::Storage(1, vec![ShaderStage::Vertex])]).or_crash();
-		let t_layout = engine.create_descriptor_set_layout(&[Descriptor::CombinedSampler(1, vec![ShaderStage::Fragment])]).or_crash();
-		let t_layout_g = engine.create_descriptor_set_layout(&[Descriptor::CombinedSampler(1, vec![ShaderStage::Geometry])]).or_crash();
-		let t_layout_v = engine.create_descriptor_set_layout(&[Descriptor::CombinedSampler(1, vec![ShaderStage::Vertex])]).or_crash();
-		let ainput_layout = engine.create_descriptor_set_layout(&[Descriptor::InputAttachment(1, vec![ShaderStage::Fragment])]).or_crash();
+		let gu_layout = DescriptorSetLayout::new(engine, vec![
+			Descriptor::Uniform(1, ShaderStage::Vertex | ShaderStage::Geometry), Descriptor::Storage(1, ShaderStage::Vertex)].into()).or_crash();
+		let t_layout = DescriptorSetLayout::new(engine, vec![Descriptor::CombinedSampler(1, ShaderStage::Fragment)].into()).or_crash();
+		let t_layout_g = DescriptorSetLayout::new(engine, vec![Descriptor::CombinedSampler(1, ShaderStage::Geometry)].into()).or_crash();
+		let t_layout_v = DescriptorSetLayout::new(engine, vec![Descriptor::CombinedSampler(1, ShaderStage::Vertex)].into()).or_crash();
+		let ainput_layout = DescriptorSetLayout::new(engine, vec![Descriptor::InputAttachment(1, ShaderStage::Fragment)].into()).or_crash();
 		
 		Layouts
 		{
-			ainput_require_layout: engine.create_pipeline_layout(&[&ainput_layout], &[]).or_crash(),
-			wire_pipeline_layout: Rc::new(engine.create_pipeline_layout(&[&gu_layout],
-				&[PushConstantDesc(VK_SHADER_STAGE_VERTEX_BIT, 0 .. size_of::<CVector4>() as u32)]).or_crash()),
-			lineburst_particle_layout: engine.create_pipeline_layout(&[&gu_layout, &t_layout_g], &[]).or_crash(),
-			sprite_layout: Rc::new(engine.create_pipeline_layout(&[&gu_layout, &t_layout], &[]).or_crash()),
-			bullet_layout: Rc::new(engine.create_pipeline_layout(&[&gu_layout, &t_layout, &t_layout_v], &[]).or_crash()),
+			ainput_require_layout: PipelineLayout::new(engine, &[&ainput_layout], &[]).or_crash(),
+			wire_pipeline_layout: Rc::new(PipelineLayout::new(engine, &[&gu_layout],
+				&[&PushConstantDesc(VK_SHADER_STAGE_VERTEX_BIT, 0 .. size_of::<CVector4>() as u32)]).or_crash()),
+			lineburst_particle_layout: PipelineLayout::new(engine, &[&gu_layout, &t_layout_g], &[]).or_crash(),
+			sprite_layout: Rc::new(PipelineLayout::new(engine, &[&gu_layout, &t_layout], &[]).or_crash()),
+			bullet_layout: Rc::new(PipelineLayout::new(engine, &[&gu_layout, &t_layout, &t_layout_v], &[]).or_crash()),
 			global_uniform_layout: gu_layout, texture_layout: t_layout, texture_layout_geom: t_layout_g, texture_layout_vert: t_layout_v,
 			ainput_layout: ainput_layout
 		}
@@ -51,14 +52,16 @@ pub struct PipelineStates
 }
 impl PipelineStates
 {
-	pub fn new<Engine: EngineCore>(engine: &Engine, use_smaa: bool, passes: &RenderPasses, swapchain_viewport: &Viewport) -> Self
+	pub fn new<Engine: AssetProvider + Deref<Target = GraphicsInterface>>(engine: &Engine, use_smaa: bool, passes: &RenderPasses, swapchain_viewport: &Viewport)
+		-> Self
 	{
 		let shaderstore = ShaderStore::new(engine);
 		let layouts = Layouts::new(engine);
+		let normal_render_pass = PreciseRenderPass(&passes.normal_render, 0);
 
 		let mut gps =
 		{
-			let background_ps = GraphicsPipelineBuilder::new(&layouts.wire_pipeline_layout, &passes.normal_render, 0)
+			let background_ps = GraphicsPipelineBuilder::new(&layouts.wire_pipeline_layout, normal_render_pass.clone())
 				.vertex_shader(PipelineShaderProgram::unspecialized(&shaderstore.geometry_preinstancing_vsh))
 				.geometry_shader(PipelineShaderProgram::unspecialized(&shaderstore.background_duplication_gsh))
 				.fragment_shader(PipelineShaderProgram::unspecialized(&shaderstore.solid_fsh))
@@ -72,35 +75,35 @@ impl PipelineStates
 				.vertex_shader(PipelineShaderProgram::unspecialized(&shaderstore.erz_preinstancing_vsh))
 				.geometry_shader(PipelineShaderProgram::unspecialized(&shaderstore.enemy_rezonator_duplication_gsh))
 				.primitive_topology(PrimitiveTopology::TriangleList(false));
-			let player_ps = GraphicsPipelineBuilder::new(&layouts.wire_pipeline_layout, &passes.normal_render, 0)
+			let player_ps = GraphicsPipelineBuilder::new(&layouts.wire_pipeline_layout, normal_render_pass.clone())
 				.vertex_shader(PipelineShaderProgram::unspecialized(&shaderstore.player_rotate_vsh))
 				.fragment_shader(PipelineShaderProgram::unspecialized(&shaderstore.solid_fsh))
 				.primitive_topology(PrimitiveTopology::LineList(false))
 				.viewport_scissors(&[ViewportWithScissorRect::default_scissor(&swapchain_viewport)])
 				.blend_state(&[AttachmentBlendState::Disabled]);
-			let playerbullet_ps = GraphicsPipelineBuilder::new(&layouts.sprite_layout, &passes.normal_render, 0)
+			let playerbullet_ps = GraphicsPipelineBuilder::new(&layouts.sprite_layout, normal_render_pass.clone())
 				.vertex_shader(PipelineShaderProgram(&shaderstore.playerbullet_vsh, vec![(0, ConstantEntry::Float(0.75))]))
 				.fragment_shader(PipelineShaderProgram::unspecialized(&shaderstore.sprite_fsh))
 				.primitive_topology(PrimitiveTopology::TriangleStrip(false))
 				.viewport_scissors(&[ViewportWithScissorRect::default_scissor(&swapchain_viewport)])
 				.blend_state(&[AttachmentBlendState::PremultipliedAlphaBlend]);
-			let lineburst_ps = GraphicsPipelineBuilder::new(&layouts.lineburst_particle_layout, &passes.normal_render, 0)
+			let lineburst_ps = GraphicsPipelineBuilder::new(&layouts.lineburst_particle_layout, normal_render_pass.clone())
 				.vertex_shader(PipelineShaderProgram::unspecialized(&shaderstore.lineburst_particle_vsh))
 				.geometry_shader(PipelineShaderProgram::unspecialized(&shaderstore.lineburst_particle_instantiate_gsh))
 				.fragment_shader(PipelineShaderProgram::unspecialized(&shaderstore.solid_fsh))
 				.primitive_topology(PrimitiveTopology::Point)
 				.viewport_scissors(&[ViewportWithScissorRect::default_scissor(&swapchain_viewport)])
 				.blend_state(&[AttachmentBlendState::PremultipliedAlphaBlend]);
-			let tonemapper_ps = GraphicsPipelineBuilder::for_postprocess(engine, &layouts.ainput_require_layout, &passes.normal_render, 1,
+			let tonemapper_ps = GraphicsPipelineBuilder::for_postprocess(engine, &layouts.ainput_require_layout, PreciseRenderPass(&passes.normal_render, 1),
 				PipelineShaderProgram::unspecialized(&shaderstore.tonemap_fsh), &swapchain_viewport).or_crash()
 				.vertex_shader(PipelineShaderProgram::unspecialized(engine.postprocess_vsh(false).or_crash()));
-			let bullet_ps = GraphicsPipelineBuilder::new(&layouts.bullet_layout, &passes.normal_render, 0)
+			let bullet_ps = GraphicsPipelineBuilder::new(&layouts.bullet_layout, normal_render_pass.clone())
 				.vertex_shader(PipelineShaderProgram(&shaderstore.bullet_vsh, vec![(0, ConstantEntry::Float(0.6875))]))
 				.fragment_shader(PipelineShaderProgram::unspecialized(&shaderstore.colored_sprite_fsh))
 				.primitive_topology(PrimitiveTopology::TriangleStrip(false))
 				.viewport_scissors(&[ViewportWithScissorRect::default_scissor(&swapchain_viewport)])
 				.blend_state(&[AttachmentBlendState::PremultipliedAlphaBlend]);
-			engine.create_graphics_pipelines(&[&background_ps, &enemy_ps, &enemy_rezonator_ps,
+			GraphicsPipelines::new(engine, &[&background_ps, &enemy_ps, &enemy_rezonator_ps,
 				&player_ps, &playerbullet_ps, &lineburst_ps, &tonemapper_ps, &bullet_ps]).or_crash()
 		};
 		let bullet_sr = SpriteRender::new(gps.pop().unwrap(), &layouts.bullet_layout);
@@ -116,7 +119,7 @@ impl PipelineStates
 		let (smaa, descriptor_sets) = if use_smaa
 		{
 			let ps = SMAAPipelineStates::new(engine, &passes, swapchain_viewport);
-			engine.preallocate_all_descriptor_sets(&[
+			DescriptorSets::preallocate(engine, &[
 				&layouts.global_uniform_layout, &layouts.texture_layout, &layouts.texture_layout,
 				&layouts.texture_layout_geom, &layouts.texture_layout_vert, &layouts.ainput_layout,
 				&ps.descriptor_sets[0], &ps.descriptor_sets[1], &ps.descriptor_sets[2]
@@ -124,7 +127,7 @@ impl PipelineStates
 		}
 		else
 		{
-			engine.preallocate_all_descriptor_sets(&[
+			DescriptorSets::preallocate(engine, &[
 				&layouts.global_uniform_layout, &layouts.texture_layout, &layouts.texture_layout,
 				&layouts.texture_layout_geom, &layouts.texture_layout_vert, &layouts.ainput_layout
 			]).map(|dslist| (None, dslist))
@@ -169,7 +172,7 @@ impl WireRender
 	pub fn begin<RecorderT>(&self, comrec: RecorderT, wirecolor_r: f32, wirecolor_g: f32, wirecolor_b: f32, wirecolor_a: f32) -> RecorderT
 		where RecorderT: DrawingCommandRecorder
 	{
-		comrec.bind_pipeline(&self.renderstate).push_constants(&self.layout_ref, &[ShaderStage::Vertex],
+		comrec.bind_pipeline(&self.renderstate).push_constants(&self.layout_ref, ShaderStage::Vertex,
 			0 .. size_of::<CVector4>() as u32, &[wirecolor_r, wirecolor_g, wirecolor_b, wirecolor_a])
 	}
 }

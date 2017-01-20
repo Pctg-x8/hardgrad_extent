@@ -38,8 +38,9 @@ use smaa_extra_textures::*;
 
 use rayon::prelude::*;
 
+use std::ops::Deref;
 use std::cell::RefCell;
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 use std::sync::atomic::*;
 
 // For InputSystem
@@ -119,25 +120,25 @@ pub struct SMAAPipelineStates
 }
 impl SMAAPipelineStates
 {
-	pub fn new<Engine: EngineCore>(engine: &Engine, render_passes: &RenderPasses, processing_viewport: &Viewport) -> Self
+	pub fn new<Engine: AssetProvider + Deref<Target = GraphicsInterface>>(engine: &Engine, render_passes: &RenderPasses, processing_viewport: &Viewport) -> Self
 	{
 		let &Viewport(_, _, vw, vh, _, _) = processing_viewport;
 
-		let evsh = engine.create_postprocess_vertex_shader_from_asset("shaders.smaa.EdgeDetectionV", "main").or_crash();
-		let bwvsh = engine.create_postprocess_vertex_shader_from_asset("shaders.smaa.BlendWeightCalcV", "main").or_crash();
-		let cvsh = engine.create_postprocess_vertex_shader_from_asset("shaders.smaa.CombineV", "main").or_crash();
-		let esh = engine.create_fragment_shader_from_asset("shaders.smaa.EdgeDetection", "main").or_crash();
-		let bwsh = engine.create_fragment_shader_from_asset("shaders.smaa.BlendWeightCalc", "main").or_crash();
-		let csh = engine.create_fragment_shader_from_asset("shaders.smaa.Combine", "main").or_crash();
+		let evsh = ShaderProgram::new_postprocess_vertex_from_asset(engine, "shaders.smaa.EdgeDetectionV", "main").or_crash();
+		let bwvsh = ShaderProgram::new_postprocess_vertex_from_asset(engine, "shaders.smaa.BlendWeightCalcV", "main").or_crash();
+		let cvsh = ShaderProgram::new_postprocess_vertex_from_asset(engine, "shaders.smaa.CombineV", "main").or_crash();
+		let esh = ShaderProgram::new_fragment_from_asset(engine, "shaders.smaa.EdgeDetection", "main").or_crash();
+		let bwsh = ShaderProgram::new_fragment_from_asset(engine, "shaders.smaa.BlendWeightCalc", "main").or_crash();
+		let csh = ShaderProgram::new_fragment_from_asset(engine, "shaders.smaa.Combine", "main").or_crash();
 
 		let dss = [
-			engine.create_descriptor_set_layout(&[Descriptor::CombinedSampler(1, vec![ShaderStage::Fragment])]).or_crash(),
-			engine.create_descriptor_set_layout(&[Descriptor::CombinedSampler(3, vec![ShaderStage::Fragment])]).or_crash(),
-			engine.create_descriptor_set_layout(&[Descriptor::CombinedSampler(2, vec![ShaderStage::Fragment])]).or_crash()
+			DescriptorSetLayout::new(engine, vec![Descriptor::CombinedSampler(1, ShaderStage::Fragment)].into()).or_crash(),
+			DescriptorSetLayout::new(engine, vec![Descriptor::CombinedSampler(3, ShaderStage::Fragment)].into()).or_crash(),
+			DescriptorSetLayout::new(engine, vec![Descriptor::CombinedSampler(2, ShaderStage::Fragment)].into()).or_crash()
 		];
-		let epl = engine.create_pipeline_layout(&[&dss[0]], &[]).or_crash();
-		let bwpl = engine.create_pipeline_layout(&[&dss[1]], &[]).or_crash();
-		let cpl = engine.create_pipeline_layout(&[&dss[2]], &[]).or_crash();
+		let epl = PipelineLayout::new(engine, &[&dss[0]], &[]).or_crash();
+		let bwpl = PipelineLayout::new(engine, &[&dss[1]], &[]).or_crash();
+		let cpl = PipelineLayout::new(engine, &[&dss[2]], &[]).or_crash();
 
 		let scons_rt_metrics = vec![
 			(0, ConstantEntry::Float(vw)),
@@ -147,16 +148,16 @@ impl SMAAPipelineStates
 		];
 		let mut gps =
 		{
-			let eps = GraphicsPipelineBuilder::for_postprocess(engine, &epl, &render_passes.smaa_edgedetect, 0,
+			let eps = GraphicsPipelineBuilder::for_postprocess(engine, &epl, PreciseRenderPass(&render_passes.smaa_edgedetect, 0),
 				PipelineShaderProgram::unspecialized(&esh), processing_viewport).or_crash()
 				.vertex_shader(PipelineShaderProgram(&evsh, scons_rt_metrics.clone()));
-			let bwps = GraphicsPipelineBuilder::for_postprocess(engine, &bwpl, &render_passes.smaa_blendweight, 0,
+			let bwps = GraphicsPipelineBuilder::for_postprocess(engine, &bwpl, PreciseRenderPass(&render_passes.smaa_blendweight, 0),
 				PipelineShaderProgram(&bwsh, scons_rt_metrics.clone()), processing_viewport).or_crash()
 				.vertex_shader(PipelineShaderProgram(&bwvsh, scons_rt_metrics.clone()));
-			let cps = GraphicsPipelineBuilder::for_postprocess(engine, &cpl, &render_passes.smaa_combine, 0,
+			let cps = GraphicsPipelineBuilder::for_postprocess(engine, &cpl, PreciseRenderPass(&render_passes.smaa_combine, 0),
 				PipelineShaderProgram(&csh, scons_rt_metrics.clone()), processing_viewport).or_crash()
 				.vertex_shader(PipelineShaderProgram(&cvsh, scons_rt_metrics));
-			engine.create_graphics_pipelines(&[&eps, &bwps, &cps]).or_crash()
+			GraphicsPipelines::new(engine, &[&eps, &bwps, &cps]).or_crash()
 		};
 		let cpso = gps.pop().unwrap();
 		let bwpso = gps.pop().unwrap();
@@ -173,30 +174,27 @@ impl SMAAPipelineStates
 	}
 }
 
-fn interpolate(a: u8, b: u8, v: f32) -> u8 { (b as f32 * v + a as f32 * (1.0 - v)) as u8 }
 fn gen_bullet_gradient(to: &mut [[u8; 4]; 16])
 {
+	fn interpolate(a: u8, b: u8, v: f32) -> u8 { (b as f32 * v + a as f32 * (1.0 - v)) as u8 }
+
 	for n in 0 .. 16
 	{
 		to[n] = if n == 0 { [255, 255, 255, 255] }
-			else if n < 6 { [interpolate(64, 255, (n as f32 - 1.0) / 4.0), 255, interpolate(255, 64, (n as f32 - 1.0) / 4.0), 255] }
+			else if n < 6 { [interpolate(64, 255, n as f32 / 5.0), 255, interpolate(255, 64, n as f32 / 5.0), 255] }
 			else if n < 12 { [255, interpolate(255, 192, (n as f32 - 6.0) / 5.0), 64, 255] }
 			else { [255, interpolate(192, 128, (n as f32 - 12.0) / 3.0), interpolate(64, 128, (n as f32 - 12.0) / 3.0), 255] }
 	}
 }
 
-fn main() { app_main().or_crash(); }
-fn app_main() -> Result<(), EngineError>
+fn main()
 {
-	let engine = try!(Engine::new("hardgrad_extend", 0x01, Some(std::env::current_dir().unwrap()), DeviceFeatures::new().enable_block_texture_compression()));
-	let main_frame = try!(engine.create_render_window(&Size2(640, 480), "HardGrad -> Extend"));
-	let size = main_frame.size();
-	game_main(engine, main_frame, size)
-}
-fn game_main<WS: WindowServer, IS: InputSystem<LogicalInputTypes>>(engine: Engine<WS, IS, LogicalInputTypes>, target: Box<RenderWindow>, target_extent: Size2) -> Result<(), EngineError>
-{
+	let engine = EngineBuilder::new("hardgrad_extend".into(), (0, 0, 1), "HardGrad -> Extend".into(), &Size2(640, 480))
+		.asset_base(std::env::current_dir().unwrap().into()).device_feature_block_texture_compression().launch().or_crash();
+	let target_format = engine.render_window().format();
+
 	// Resources //
-	let images = DevConfImages::from_file(&engine, "devconf.images", &target_extent, target.get_format()).ensure_has_staging();
+	let images = DevConfImages::from_file(&engine, "devconf.images", engine.render_window().size(), target_format).ensure_has_staging();
 	// Reference Bindings //
 	let ref backbuffer_sfloat4_set = images.images_2d()[0];
 	let ref backbuffer_unorm4f_set = images.images_2d()[1];
@@ -242,14 +240,14 @@ fn game_main<WS: WindowServer, IS: InputSystem<LogicalInputTypes>>(engine: Engin
 		]);
 		gen_bullet_gradient(mapped.map_mut(offsets[1] as usize));
 	}
-	let appdata = ApplicationBufferData::new(&engine, &target_extent);
+	let appdata = ApplicationBufferData::new(&engine, engine.render_window().size());
 
-	let render_pass = RenderPasses::new(&engine, target.get_format());
+	let render_pass = RenderPasses::new(&engine, target_format);
 	let framebuffers = Framebuffers::new(&engine, &render_pass, backbuffer_sfloat4_set, backbuffer_unorm4f_set,
-		backbuffer_unorm2_set, backbuffer_unorm4_set, &target.get_back_images(), &target_extent);
+		backbuffer_unorm2_set, backbuffer_unorm4_set, engine.render_window().render_targets(), engine.render_window().size());
 
 	// Pipelines //
-	let sc_viewport = Viewport::from(target_extent);
+	let sc_viewport = Viewport::from(engine.render_window().size().clone());
 	let pipelines = PipelineStates::new(&engine, true, &render_pass, &sc_viewport);
 
 	// Descriptor Set //
@@ -279,7 +277,7 @@ fn game_main<WS: WindowServer, IS: InputSystem<LogicalInputTypes>>(engine: Engin
 	]);
 
 	// Initial Data Transmission, Layouting for Swapchain Backbuffer Images //
-	engine.allocate_transient_transfer_command_buffers(1).and_then(|setup_commands|
+	TransientTransferCommandBuffers::allocate(&engine, 1).and_then(|setup_commands|
 	{
 		let buffer_memory_barriers = [
 			BufferMemoryBarrier::hold_ownership(&appdata.stg, 0 .. appdata.size(), 0, VK_ACCESS_TRANSFER_READ_BIT),
@@ -306,8 +304,8 @@ fn game_main<WS: WindowServer, IS: InputSystem<LogicalInputTypes>>(engine: Engin
 			ImageMemoryBarrier::template(lineburst_particle_gradient_tex_stg, ImageSubresourceRange::base_color()),
 			ImageMemoryBarrier::template(bullet_colramp_stg, ImageSubresourceRange::base_color())
 		];
-		let image_memory_barriers = target.get_back_images().iter()
-			.map(|x| ImageMemoryBarrier::hold_ownership(*x, ImageSubresourceRange::base_color(),
+		let image_memory_barriers = engine.render_window().render_targets().iter()
+			.map(|x| ImageMemoryBarrier::hold_ownership(x, ImageSubresourceRange::base_color(),
 				0, VK_ACCESS_MEMORY_READ_BIT, VkImageLayout::Undefined, VkImageLayout::PresentSrcKHR))
 			.chain(vec![
 				ImageMemoryBarrier::initialize(backbuffer_sfloat4_set, ImageSubresourceRange::base_color(), VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VkImageLayout::ColorAttachmentOptimal),
@@ -354,11 +352,11 @@ fn game_main<WS: WindowServer, IS: InputSystem<LogicalInputTypes>>(engine: Engin
 
 	info!("Recording Rendering Commands...");
 	// Rendering Commands //
-	let combine_commands = engine.allocate_graphics_command_buffers(target.backimage_count()).or_crash();
+	let combine_commands = GraphicsCommandBuffers::allocate(&engine, engine.render_window().render_targets().len()).or_crash();
 	for (n, f) in framebuffers.final_output.iter().enumerate()
 	{
 		let presenter_output_barriers = [
-			ImageMemoryBarrier::hold_ownership(target.get_back_images()[n], ImageSubresourceRange::base_color(),
+			ImageMemoryBarrier::hold_ownership(&engine.render_window().render_targets()[n], ImageSubresourceRange::base_color(),
 				VK_ACCESS_MEMORY_READ_BIT, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
 				VkImageLayout::PresentSrcKHR, VkImageLayout::ColorAttachmentOptimal)
 		];
@@ -376,7 +374,7 @@ fn game_main<WS: WindowServer, IS: InputSystem<LogicalInputTypes>>(engine: Engin
 			.end()
 		).or_crash();
 	}
-	let gcommands = engine.allocate_graphics_command_buffers(1).or_crash();
+	let gcommands = GraphicsCommandBuffers::allocate(&engine, 1).or_crash();
 	gcommands.begin(0).and_then(|recorder|
 	{
 		let rr_clear_value = AttachmentClearValue::Color(0.0f32, 0.0f32, 0.015625f32, 1.0f32);
@@ -398,7 +396,7 @@ fn game_main<WS: WindowServer, IS: InputSystem<LogicalInputTypes>>(engine: Engin
 			.bind_pipeline(&pipelines.tonemapper)
 			.bind_descriptor_sets(&pipelines.layout_for_attachment_input(), &[pipelines.get_descriptor_set_for_tonemap_input()])
 			.draw(4, 1)
-			.end_render_pass().begin_render_pass(&framebuffers.smaa_edgedetect, &[pure_clear_value], false)
+			.end_render_pass().begin_render_pass(&framebuffers.smaa_edgedetect, &[pure_clear_value.clone()], false)
 			// Edge Detection(SMAA 1x) //
 			.bind_pipeline(&pipelines.smaa.as_ref().unwrap().edgedetect)
 			.bind_descriptor_sets(&pipelines.smaa.as_ref().unwrap().edgedetect_layout, &[pipelines.get_descriptor_set_for_smaa_edgedetect()])
@@ -413,7 +411,7 @@ fn game_main<WS: WindowServer, IS: InputSystem<LogicalInputTypes>>(engine: Engin
 	}).or_crash();
 	info!("Recording Transfer Commands...");
 	// Transfer Commands //
-	let update_commands = engine.allocate_transfer_command_buffers(1).or_crash();
+	let update_commands = TransferCommandBuffers::allocate(&engine, 1).or_crash();
 	update_commands.begin(0).and_then(|recorder|
 	{
 		let buffer_barriers = [
@@ -438,14 +436,14 @@ fn game_main<WS: WindowServer, IS: InputSystem<LogicalInputTypes>>(engine: Engin
 	info!("Preparing for Render Loop...");
 
 	let _/*engine*/ = {
-		let window_system = engine.window_system_ref().clone();
+		let window_system = engine.render_window().clone();
 		let input_system = engine.input_system_ref().clone();
 		let exit_flag = Arc::new(AtomicBool::new(false));
 		let exit_flag_uo = exit_flag.clone();
-		let execute_next_signal = Unrecoverable!(engine.create_fence());
-		let copy_completion_sig = Unrecoverable!(engine.create_fence());
-		let dbg_copy_completion_sig = Unrecoverable!(engine.create_fence());
-		let rendering_order_sem = Unrecoverable!(engine.create_queue_fence());
+		let execute_next_signal = Fence::new(&engine).or_crash();
+		let copy_completion_sig = Fence::new(&engine).or_crash();
+		let dbg_copy_completion_sig = Fence::new(&engine).or_crash();
+		let rendering_order_sem = QueueFence::new(&engine).or_crash();
 		let debug_transfer_commands = debug_info.get_transfer_commands();
 		let update_event = interlude::Event::new("Update Event").or_crash();
 		let srv_update = update_event.clone();
@@ -453,7 +451,7 @@ fn game_main<WS: WindowServer, IS: InputSystem<LogicalInputTypes>>(engine: Engin
 		{
 			let final_commands = combine_commands;
 			let update_commands = update_commands;
-			let mut frame_index = target.acquire_next_backbuffer_index(&rendering_order_sem).and_then(|findex|
+			let mut frame_index = engine.render_window().acquire_next_target_index(&rendering_order_sem).and_then(|findex|
 				engine.submit_graphics_commands(&[gcommands[0], final_commands[findex as usize]],
 					&[(&rendering_order_sem, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT)],
 					None, Some(&execute_next_signal)).map(|()| findex)
@@ -466,8 +464,8 @@ fn game_main<WS: WindowServer, IS: InputSystem<LogicalInputTypes>>(engine: Engin
 				copy_completion_sig.wait().and_then(|()| copy_completion_sig.clear()).or_crash();
 				dbg_copy_completion_sig.wait().and_then(|()| dbg_copy_completion_sig.clear()).or_crash();
 				srv_update.set();
-				frame_index = target.present(engine.graphics_queue_ref(), frame_index, None).and_then(|()|
-					target.acquire_next_backbuffer_index(&rendering_order_sem).and_then(|findex|
+				frame_index = engine.render_window().present(&engine, frame_index, None).and_then(|()|
+					engine.render_window().acquire_next_target_index(&rendering_order_sem).and_then(|findex|
 					{
 						engine.submit_graphics_commands(&[gcommands[0], final_commands[findex as usize]],
 							&[(&rendering_order_sem, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT)],
@@ -509,6 +507,7 @@ fn game_main<WS: WindowServer, IS: InputSystem<LogicalInputTypes>>(engine: Engin
 		let mut bullets: [Bullet; MAX_BULLETS] = unsafe { std::mem::uninitialized() };
 		for n in 0 .. MAX_BULLETS { bullets[n] = Bullet::Free; }
 
+		let mut frequest_queue = Vec::<FireRequest>::new();
 		let mut secs_from_last_fixed = 0.0f32;
 		input_system.write().and_then(|mut isw|
 		{
@@ -550,6 +549,7 @@ fn game_main<WS: WindowServer, IS: InputSystem<LogicalInputTypes>>(engine: Engin
 					// update
 					update_event.reset();
 					let delta_time = prev_time.to(time::PreciseTime::now());
+					prev_time = time::PreciseTime::now();
 					*frame_time_ms.borrow_mut() = delta_time.num_microseconds().unwrap_or(-1) as f64 / 1000.0f64;
 					fpscount += 1;
 
@@ -624,35 +624,17 @@ fn game_main<WS: WindowServer, IS: InputSystem<LogicalInputTypes>>(engine: Engin
 						else { warn!("Enemy Datastore is full!!"); }
 						enemy_next_appear = false;
 					}
+					frequest_queue.clear();
 					for e in enemy_entities.iter_mut()
 					{
-						if let (Some((new_left, new_top)), fire_req) = e.update(delta_time_sec)
+						let op = e.update(delta_time_sec, &mut frequest_queue);
+						if let Some((new_left, new_top)) = op
 						{
 							for pb in player_bullets.iter_mut()
 							{
 								if let Some((psx, psy)) = pb.crash(new_left, new_top)
 								{
 									next_particle_spawn.push((particle_spawn_count.ind_sample(&mut randomizer), psx, psy));
-								}
-							}
-							if let Some(f) = fire_req
-							{
-								match f
-								{
-									FireRequest::Linears(vinfo) => for (from, angle, speed) in vinfo
-									{
-										let block_index = bullet_datastore.allocate();
-										if let Some(bindex) = block_index
-										{
-											bullets[bindex as usize] = unsafe
-											{
-												let uref_bullet_ref_ptr = uref_bullet.as_mut_ptr();
-												bullet_datastore.init_lifetime(bindex);
-												Bullet::init_linear(bindex, &mut *uref_bullet_ref_ptr.offset(bindex as isize), &from, angle, speed)
-											};
-										}
-										else { warn!("Bullet Datastore is full!!"); }
-									}
 								}
 							}
 						}
@@ -672,6 +654,26 @@ fn game_main<WS: WindowServer, IS: InputSystem<LogicalInputTypes>>(engine: Engin
 						match e { &mut Bullet::Garbage(i) => bullet_datastore.free(i), _ => unreachable!() };
 						*e = Bullet::Free;
 					}
+					for f in &frequest_queue
+					{
+						match f
+						{
+							&FireRequest::Linears(ref vinfo) => for &(from, angle, speed) in vinfo
+							{
+								let block_index = bullet_datastore.allocate();
+								if let Some(bindex) = block_index
+								{
+									bullets[bindex as usize] = unsafe
+									{
+										let uref_bullet_ref_ptr = uref_bullet.as_mut_ptr();
+										bullet_datastore.init_lifetime(bindex);
+										Bullet::init_linear(bindex, &mut *uref_bullet_ref_ptr.offset(bindex as isize), &from, angle, speed)
+									};
+								}
+								else { warn!("Bullet Datastore is full!!"); }
+							}
+						}
+					}
 
 					if !next_particle_spawn.is_empty()
 					{
@@ -684,7 +686,6 @@ fn game_main<WS: WindowServer, IS: InputSystem<LogicalInputTypes>>(engine: Engin
 					lineburst_particles = lineburst_particles.garbage_collect(game_secs);
 
 					background_next_appear = false;
-					prev_time = time::PreciseTime::now();
 					*cputime_ms.borrow_mut() = cputime_start.to(time::PreciseTime::now()).num_microseconds().unwrap_or(0) as f64 / 1000.0f64;
 					debug_info.update();
 				},
@@ -716,12 +717,9 @@ fn game_main<WS: WindowServer, IS: InputSystem<LogicalInputTypes>>(engine: Engin
 			}
 		}
 
-		info!("Terminating Threads...");
 		exit_flag.store(true, Ordering::Release);
 		update_observer.join()
 	};
-
-	Ok(())
 }
 
 /// Records some commands for NormalRender

@@ -7,7 +7,7 @@ pub struct RenderPasses
 }
 impl RenderPasses
 {
-	pub fn new<Engine: EngineCore>(engine: &Engine, sc_format: VkFormat) -> Self
+	pub fn new(engine: &GraphicsInterface, sc_format: VkFormat) -> Self
 	{
 		// Attachment Descriptions //
 		let a_render = AttachmentDesc
@@ -58,10 +58,10 @@ impl RenderPasses
 		// objects //
 		RenderPasses
 		{
-			normal_render: engine.create_render_pass(&[&a_render, &a_tonemap_out], &[&normal_render_pass, &tonemap_pass], &[&rr_tonemap_dep]).or_crash(),
-			smaa_edgedetect: engine.create_render_pass(&[&a_smaa_edgedetect_out], &[&smaa_pass], &[]).or_crash(),
-			smaa_blendweight: engine.create_render_pass(&[&a_smaa_blendweight_out], &[&smaa_pass], &[]).or_crash(),
-			smaa_combine: engine.create_render_pass(&[&a_swapchain], &[&smaa_pass], &[]).or_crash()
+			normal_render: RenderPass::new(engine, &[&a_render, &a_tonemap_out], &[&normal_render_pass, &tonemap_pass], &[&rr_tonemap_dep]).or_crash(),
+			smaa_edgedetect: RenderPass::new(engine, &[&a_smaa_edgedetect_out], &[&smaa_pass], &[]).or_crash(),
+			smaa_blendweight: RenderPass::new(engine, &[&a_smaa_blendweight_out], &[&smaa_pass], &[]).or_crash(),
+			smaa_combine: RenderPass::new(engine, &[&a_swapchain], &[&smaa_pass], &[]).or_crash()
 		}
 	}
 }
@@ -72,18 +72,18 @@ pub struct Framebuffers
 }
 impl Framebuffers
 {
-	pub fn new<Engine: EngineCore>(engine: &Engine, molds: &RenderPasses, nr_view: &ImageView2D, tonemap_out_view: &ImageView2D,
-		smaa_edgedetect_out_view: &ImageView2D, smaa_blendweight_out_view: &ImageView2D, swapchain_views: &[&WindowRenderTarget], size: &Size2) -> Self
+	pub fn new(engine: &GraphicsInterface, molds: &RenderPasses, nr_view: &ImageView2D, tonemap_out_view: &ImageView2D,
+		smaa_edgedetect_out_view: &ImageView2D, smaa_blendweight_out_view: &ImageView2D, swapchain_views: &[WindowRenderTargetView], size: &Size2) -> Self
 	{
 		let &Size2(w, h) = size;
 		let fsz = Size3(w, h, 1);
 
 		Framebuffers
 		{
-			normal_render: engine.create_framebuffer(&molds.normal_render, &[nr_view, tonemap_out_view], &fsz).or_crash(),
-			smaa_edgedetect: engine.create_framebuffer(&molds.smaa_edgedetect, &[smaa_edgedetect_out_view], &fsz).or_crash(),
-			smaa_blendweight: engine.create_framebuffer(&molds.smaa_blendweight, &[smaa_blendweight_out_view], &fsz).or_crash(),
-			final_output: swapchain_views.into_iter().map(|&v| engine.create_framebuffer(&molds.smaa_combine, &[v], &fsz))
+			normal_render: Framebuffer::new(engine, &molds.normal_render, &[nr_view, tonemap_out_view], &fsz).or_crash(),
+			smaa_edgedetect: Framebuffer::new(engine, &molds.smaa_edgedetect, &[smaa_edgedetect_out_view], &fsz).or_crash(),
+			smaa_blendweight: Framebuffer::new(engine, &molds.smaa_blendweight, &[smaa_blendweight_out_view], &fsz).or_crash(),
+			final_output: swapchain_views.into_iter().map(|v| Framebuffer::new(engine, &molds.smaa_combine, &[v], &fsz))
 				.collect::<Result<_, _>>().or_crash()
 		}
 	}

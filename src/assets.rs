@@ -6,6 +6,7 @@ use interlude::ffi::*;
 use std::mem::size_of;
 use structures::*;
 use logical_resources::*;
+use std::ops::Deref;
 
 pub struct ShaderStore
 {
@@ -30,61 +31,61 @@ pub struct ShaderStore
 }
 impl ShaderStore
 {
-	pub fn new<Engine: EngineCore>(engine: &Engine) -> Self
+	pub fn new<Engine: AssetProvider + Deref<Target = GraphicsInterface>>(engine: &Engine) -> Self
 	{
 		ShaderStore
 		{
-			geometry_preinstancing_vsh: Unrecoverable!(engine.create_vertex_shader_from_asset("shaders.GeometryPreinstancing", "main", &[
+			geometry_preinstancing_vsh: ShaderProgram::new_vertex_from_asset(engine, "shaders.GeometryPreinstancing", "main", &[
 				VertexBinding::PerVertex(size_of::<CVector4>() as u32),
 				VertexBinding::PerInstance(size_of::<u32>() as u32)
 			], &[
 				VertexAttribute(0, VkFormat::R32G32B32A32_SFLOAT, 0),
 				VertexAttribute(1, VkFormat::R32_UINT, 0)
-			])),
-			erz_preinstancing_vsh: Unrecoverable!(engine.create_vertex_shader_from_asset("shaders.EnemyRezonatorV", "main", &[
+			]).or_crash(),
+			erz_preinstancing_vsh: ShaderProgram::new_vertex_from_asset(engine, "shaders.EnemyRezonatorV", "main", &[
 				VertexBinding::PerVertex(size_of::<CVector4>() as u32),
 				VertexBinding::PerInstance(size_of::<CVector4>() as u32)
 			], &[
 				VertexAttribute(0, VkFormat::R32G32B32A32_SFLOAT, 0),
 				VertexAttribute(1, VkFormat::R32G32B32A32_SFLOAT, 0)
-			])),
-			player_rotate_vsh: Unrecoverable!(engine.create_vertex_shader_from_asset("shaders.PlayerRotor", "main", &[
+			]).or_crash(),
+			player_rotate_vsh: ShaderProgram::new_vertex_from_asset(engine, "shaders.PlayerRotor", "main", &[
 				VertexBinding::PerVertex(size_of::<CVector4>() as u32),
 				VertexBinding::PerInstance(size_of::<CVector4>() as u32)
 			], &[
 				VertexAttribute(0, VkFormat::R32G32B32A32_SFLOAT, 0),
 				VertexAttribute(1, VkFormat::R32G32B32A32_SFLOAT, 0)
-			])),
-			playerbullet_vsh: Unrecoverable!(engine.create_vertex_shader_from_asset("shaders.PlayerBullet", "main", &[
+			]).or_crash(),
+			playerbullet_vsh: ShaderProgram::new_vertex_from_asset(engine, "shaders.PlayerBullet", "main", &[
 				VertexBinding::PerVertex(size_of::<CVector4>() as u32),
 				VertexBinding::PerInstance(size_of::<CVector4>() as u32)
 			], &[
 				VertexAttribute(0, VkFormat::R32G32B32A32_SFLOAT, 0),
 				VertexAttribute(1, VkFormat::R32G32B32A32_SFLOAT, 0)
-			])),
-			lineburst_particle_vsh: Unrecoverable!(engine.create_vertex_shader_from_asset("shaders.LineBurstParticleVert", "main", &[
+			]).or_crash(),
+			lineburst_particle_vsh: ShaderProgram::new_vertex_from_asset(engine, "shaders.LineBurstParticleVert", "main", &[
 				VertexBinding::PerVertex(size_of::<LineBurstParticleGroup>() as u32)
 			], &[
 				VertexAttribute(0, VkFormat::R32_UINT, 0),
 				VertexAttribute(0, VkFormat::R32G32_SFLOAT, size_of::<u32>() as u32)
-			])),
-			bullet_vsh: engine.create_vertex_shader_from_asset("shaders.BulletVert", "main", &[
+			]).or_crash(),
+			bullet_vsh: ShaderProgram::new_vertex_from_asset(engine, "shaders.BulletVert", "main", &[
 				VertexBinding::PerVertex(size_of::<CVector4>() as u32),
 				VertexBinding::PerInstance(size_of::<CVector2>() as u32)
 			], &[
 				VertexAttribute(0, VkFormat::R32G32B32A32_SFLOAT, 0),
 				VertexAttribute(1, VkFormat::R32G32_SFLOAT, 0)
 			]).or_crash(),
-			gridrender_vsh: engine.create_vertex_shader_from_asset("shaders.GridRenderV", "main",
+			gridrender_vsh: ShaderProgram::new_vertex_from_asset(engine, "shaders.GridRenderV", "main",
 				&[VertexBinding::PerVertex(size_of::<Position>() as u32)], &[VertexAttribute(0, VkFormat::R32G32B32A32_SFLOAT, 0)]).or_crash(),
-			enemy_duplication_gsh: Unrecoverable!(engine.create_geometry_shader_from_asset("shaders.EnemyDuplicator", "main")),
-			background_duplication_gsh: Unrecoverable!(engine.create_geometry_shader_from_asset("shaders.BackLineDuplicator", "main")),
-			enemy_rezonator_duplication_gsh: Unrecoverable!(engine.create_geometry_shader_from_asset("shaders.EnemyRezonatorDup", "main")),
-			lineburst_particle_instantiate_gsh: Unrecoverable!(engine.create_geometry_shader_from_asset("shaders.LineBurstParticleInstantiate", "main")),
-			solid_fsh: Unrecoverable!(engine.create_fragment_shader_from_asset("shaders.ThroughColor", "main")),
-			sprite_fsh: Unrecoverable!(engine.create_fragment_shader_from_asset("shaders.SpriteFrag", "main")),
-			tonemap_fsh: engine.create_fragment_shader_from_asset("shaders.SaturatingToneMap", "main").or_crash(),
-			colored_sprite_fsh: engine.create_fragment_shader_from_asset("shaders.ColoredSpriteFrag", "main").or_crash()
+			enemy_duplication_gsh: ShaderProgram::new_geometry_from_asset(engine, "shaders.EnemyDuplicator", "main").or_crash(),
+			background_duplication_gsh: ShaderProgram::new_geometry_from_asset(engine, "shaders.BackLineDuplicator", "main").or_crash(),
+			enemy_rezonator_duplication_gsh: ShaderProgram::new_geometry_from_asset(engine, "shaders.EnemyRezonatorDup", "main").or_crash(),
+			lineburst_particle_instantiate_gsh: ShaderProgram::new_geometry_from_asset(engine, "shaders.LineBurstParticleInstantiate", "main").or_crash(),
+			solid_fsh: ShaderProgram::new_fragment_from_asset(engine, "shaders.ThroughColor", "main").or_crash(),
+			sprite_fsh: ShaderProgram::new_fragment_from_asset(engine, "shaders.SpriteFrag", "main").or_crash(),
+			tonemap_fsh: ShaderProgram::new_fragment_from_asset(engine, "shaders.SaturatingToneMap", "main").or_crash(),
+			colored_sprite_fsh: ShaderProgram::new_fragment_from_asset(engine, "shaders.ColoredSpriteFrag", "main").or_crash()
 		}
 	}
 }
@@ -92,23 +93,23 @@ impl ShaderStore
 // Application specified buffer data
 pub struct ApplicationBufferData
 {
-	alloc_bp: BufferPreallocator,
+	alloc_bp: BufferOffsets,
 	pub dev: DeviceBuffer, pub stg: StagingBuffer
 }
 impl ApplicationBufferData
 {
-	pub fn new<Engine: EngineCore>(engine: &Engine, target_extent: &Size2) -> Self
+	pub fn new(engine: &GraphicsInterface, target_extent: &Size2) -> Self
 	{
-		let application_buffer_prealloc = engine.buffer_preallocate(&[
-			(size_of::<BulletTranslations>(), BufferDataType::Storage),
-			(size_of::<UniformMemory>(), BufferDataType::Uniform),
-			(size_of::<InstanceMemory>(), BufferDataType::Vertex),
-			(size_of::<[PosUV; 4]>(), BufferDataType::Vertex),
-			(size_of::<VertexMemoryForWireRender>(), BufferDataType::Vertex),
-			(size_of::<IndexMemory>(), BufferDataType::Index)
+		let application_buffer_prealloc = BufferPreallocator::new(engine, &[
+			BufferContent::Storage(size_of::<BulletTranslations>()),
+			BufferContent::Uniform(size_of::<UniformMemory>()),
+			BufferContent::Vertex(size_of::<InstanceMemory>()),
+			BufferContent::Vertex(size_of::<[PosUV; 4]>()),
+			BufferContent::Vertex(size_of::<VertexMemoryForWireRender>()),
+			BufferContent::Index(size_of::<IndexMemory>())
 		]);
-		let (application_data, appdata_stage) = engine.create_double_buffer(&application_buffer_prealloc).or_crash();
-		let this = ApplicationBufferData { alloc_bp: application_buffer_prealloc, dev: application_data, stg: appdata_stage };
+		let (application_data, appdata_stage) = application_buffer_prealloc.instantiate().or_crash();
+		let this = ApplicationBufferData { alloc_bp: application_buffer_prealloc.independence(), dev: application_data, stg: appdata_stage };
 		this.initialize(target_extent);
 		this
 	}
