@@ -1,5 +1,4 @@
 
-use std;
 use utils::*;
 use constants::*;
 use structures::*;
@@ -7,9 +6,7 @@ use nalgebra::*;
 use interlude::*;
 use rand;
 use rand::distributions::*;
-use std::sync::mpsc::*;
 use super::bullet::*;
-use time;
 
 fn store_quaternion(to: &mut CVector4, q: &Quaternion<f32>)
 {
@@ -97,7 +94,7 @@ impl<'a> Enemy<'a>
 		// update values
 		let (gb_index, np) = match self
 		{
-			&mut Enemy::Entity { block_index, ref mut uniform_ref, ref mut rezonator_iref, left, ref mut living_secs, rezonator_left, ref mut next, ref mut next_raised } =>
+			&mut Enemy::Entity { block_index, ref mut uniform_ref, ref mut rezonator_iref, ref mut living_secs, rezonator_left, ref mut next, ref mut next_raised, .. } =>
 			{
 				let current_y = if *living_secs < 0.875f32
 				{

@@ -4,8 +4,6 @@ use constants::*;
 use structures::*;
 use interlude::CVector4;
 use rayon::prelude::*;
-use std;
-use thread_scoped;
 
 pub struct BulletDatastore<'a>
 {
@@ -92,30 +90,3 @@ pub enum FireRequest
 }
 unsafe impl Send for FireRequest {}
 unsafe impl Sync for FireRequest {}
-
-pub struct BulletSpawner<'a>
-{
-	handle: thread_scoped::JoinGuard<'a, ()>, cancel_bus: std::sync::mpsc::Sender<()>
-}
-impl<'a> Drop for BulletSpawner<'a>
-{
-	fn drop(&mut self)
-	{
-		self.cancel_bus.send(()).unwrap();
-		std::mem::replace(&mut self.handle, unsafe { std::mem::uninitialized() }).join();
-	}
-}
-impl<'a> BulletSpawner<'a>
-{
-	pub fn new<F>(func: F) -> Self where F: FnOnce(std::sync::mpsc::Receiver<()>) + Send + 'a
-	{
-		let (send, recv) = std::sync::mpsc::channel();
-
-		BulletSpawner
-		{
-			handle: unsafe { thread_scoped::scoped(move || func(recv)) }, cancel_bus: send
-		}
-	}
-	pub fn cancel(mut self) { std::mem::drop(self); }
-	pub fn detach(self) { std::mem::forget(self); }
-}

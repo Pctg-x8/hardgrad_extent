@@ -42,13 +42,26 @@ impl Layouts
 		}
 	}
 }
+pub struct DescriptorSetBindings
+{
+	#[allow(dead_code)] sets: DescriptorSets,
+	pub global_uniform: VkDescriptorSet,
+	pub playerbullet_texture: VkDescriptorSet,
+	pub bullet_texture: VkDescriptorSet,
+	pub lineburst_particle_color: VkDescriptorSet,
+	pub bullet_color: VkDescriptorSet,
+	pub tonemap_input: VkDescriptorSet,
+	pub smaa_edgedetect: VkDescriptorSet,
+	pub smaa_blendweight: VkDescriptorSet,
+	pub smaa_combine: VkDescriptorSet
+}
 pub struct PipelineStates
 {
 	#[allow(dead_code)] shaderstore: ShaderStore, layouts: Layouts,
 	pub background: WireRender, pub enemy_body: WireRender, pub enemy_rezonator: WireRender, pub player: WireRender,
 	pub playerbullet: SpriteRender, pub lineburst: GraphicsPipeline, pub bullet: SpriteRender,
 	pub tonemapper: GraphicsPipeline, pub smaa: Option<SMAAPipelineStates>,
-	descriptor_sets: DescriptorSets
+	pub descriptor_sets: DescriptorSetBindings
 }
 impl PipelineStates
 {
@@ -138,7 +151,19 @@ impl PipelineStates
 			shaderstore: shaderstore, layouts: layouts,
 			background: background_wr, enemy_body: enemy_wr, enemy_rezonator: enemy_rezonator_wr, player: player_wr, playerbullet: playerbullet_sr,
 			lineburst: lineburst_ps, bullet: bullet_sr,
-			tonemapper: tonemap_ps, smaa: smaa, descriptor_sets: descriptor_sets
+			tonemapper: tonemap_ps, smaa: smaa, descriptor_sets: DescriptorSetBindings
+			{
+				global_uniform: descriptor_sets[0],
+				playerbullet_texture: descriptor_sets[1],
+				bullet_texture: descriptor_sets[2],
+				lineburst_particle_color: descriptor_sets[3],
+				bullet_color: descriptor_sets[4],
+				tonemap_input: descriptor_sets[5],
+				smaa_edgedetect: descriptor_sets[6],
+				smaa_blendweight: descriptor_sets[7],
+				smaa_combine: descriptor_sets[8],
+				sets: descriptor_sets
+			}
 		}
 	}
 	
@@ -147,15 +172,6 @@ impl PipelineStates
 	pub fn layout_for_wire_render(&self) -> &PipelineLayout { &self.layouts.wire_pipeline_layout }
 	pub fn layout_for_lineburst_particle_render(&self) -> &PipelineLayout { &self.layouts.lineburst_particle_layout }
 	pub fn layout_for_bullet(&self) -> &PipelineLayout { &self.layouts.bullet_layout }
-	pub fn get_descriptor_set_for_uniform_buffer(&self) -> VkDescriptorSet { self.descriptor_sets[0] }
-	pub fn get_descriptor_set_for_playerbullet_texture(&self) -> VkDescriptorSet { self.descriptor_sets[1] }
-	pub fn get_descriptor_set_for_bullet_texture(&self) -> VkDescriptorSet { self.descriptor_sets[2] }
-	pub fn get_descriptor_set_for_lineburst_particle_color(&self) -> VkDescriptorSet { self.descriptor_sets[3] }
-	pub fn get_descriptor_set_for_bullet_colramp(&self)		-> VkDescriptorSet { self.descriptor_sets[4] }
-	pub fn get_descriptor_set_for_tonemap_input(&self)		-> VkDescriptorSet { self.descriptor_sets[5] }
-	pub fn get_descriptor_set_for_smaa_edgedetect(&self)	-> VkDescriptorSet { self.descriptor_sets[6] }
-	pub fn get_descriptor_set_for_smaa_blendweight(&self)	-> VkDescriptorSet { self.descriptor_sets[7] }
-	pub fn get_descriptor_set_for_smaa_combine(&self)		-> VkDescriptorSet { self.descriptor_sets[8] }
 }
 
 // Wire Render Wrapper with moving pipeline state object

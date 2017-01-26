@@ -40,7 +40,7 @@ use rayon::prelude::*;
 
 use std::ops::Deref;
 use std::cell::RefCell;
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 use std::sync::atomic::*;
 
 // For InputSystem
@@ -50,6 +50,7 @@ pub enum LogicalInputTypes
 	Horizontal, Vertical, Shoot, Slowdown, Overdrive
 }
 
+/*
 fn pack_color(canvas_size: &Size2, red: DecompressedChannelImageData, green: DecompressedChannelImageData,
 	blue: DecompressedChannelImageData, alpha: DecompressedChannelImageData) -> Vec<u8>
 {
@@ -89,6 +90,7 @@ fn pack_color(canvas_size: &Size2, red: DecompressedChannelImageData, green: Dec
 	}
 	color_pixels
 }
+*/
 fn single(canvas_size: &Size2, v: DecompressedChannelImageData) -> Vec<u8>
 {
 	let &Size2(cwidth, cheight) = canvas_size;
@@ -187,6 +189,30 @@ fn gen_bullet_gradient(to: &mut [[u8; 4]; 16])
 	}
 }
 
+struct StagingPair1<'d> { stage: &'d LinearImage2D, device: &'d ImageView1D }
+struct StagingPair2<'d> { stage: &'d LinearImage2D, device: &'d ImageView2D }
+impl<'d> StagingPair1<'d>
+{
+	fn copy_entire_region<'a: 'd>(&self, recorder: TransferCommandRecorder<'a>) -> TransferCommandRecorder<'a>
+	{
+		recorder.copy_image(self.stage, self.device.deref(), &[ImageCopyRegion::entire_colorbits(VkExtent3D(*self.device.size(), 1, 1))])
+	}
+}
+impl<'d> StagingPair2<'d>
+{
+	fn copy_entire_region<'a: 'd>(&self, recorder: TransferCommandRecorder<'a>) -> TransferCommandRecorder<'a>
+	{
+		recorder.copy_image(self.stage, self.device.deref(), &[ImageCopyRegion::entire_colorbits(VkExtent3D(self.device.size().0, self.device.size().1, 1))])
+	}
+}
+struct DevConfImageBindings<'d>
+{
+	bb_sfloat4: &'d ImageView2D, bb_unorm4f: &'d ImageView2D, bb_unorm2: &'d ImageView2D, bb_unorm4: &'d ImageView2D,
+	smaa_areatex: StagingPair2<'d>, smaa_searchtex: StagingPair2<'d>, playerbullet_tex: StagingPair2<'d>, circle16_tex: StagingPair2<'d>,
+	lineparticle_colortex: StagingPair1<'d>, bullet_colortex: StagingPair1<'d>,
+	linear_sampler: &'d Sampler
+}
+
 fn main()
 {
 	let engine = EngineBuilder::new("hardgrad_extend".into(), (0, 0, 1), "HardGrad -> Extend".into(), &Size2(640, 480))
@@ -196,23 +222,17 @@ fn main()
 	// Resources //
 	let images = DevConfImages::from_file(&engine, "devconf.images", engine.render_window().size(), target_format).ensure_has_staging();
 	// Reference Bindings //
-	let ref backbuffer_sfloat4_set = images.images_2d()[0];
-	let ref backbuffer_unorm4f_set = images.images_2d()[1];
-	let ref backbuffer_unorm2_set = images.images_2d()[2];
-	let ref backbuffer_unorm4_set = images.images_2d()[3];
-	let ref smaa_areatex_set = images.images_2d()[4];
-	let ref smaa_searchtex_set = images.images_2d()[5];
-	let ref playerbullet_tex_set = images.images_2d()[6];
-	let ref circle16_tex_set = images.images_2d()[7];
-	let ref lineburst_particle_gradient_tex_set = images.images_1d()[0];
-	let ref bullet_colramp_tex_set = images.images_1d()[1];
-	let ref gbuffer_sampler = images.samplers()[0];
-	let ref lineburst_particle_gradient_tex_stg = images.staging_images()[0];
-	let ref bullet_colramp_stg = images.staging_images()[1];
-	let ref smaa_areatex_stg = images.staging_images()[2];
-	let ref smaa_searchtex_stg = images.staging_images()[3];
-	let ref playerbullet_tex_stg = images.staging_images()[4];
-	let ref circle16_tex_stg = images.staging_images()[5];
+	let image_names = DevConfImageBindings
+	{
+		bb_sfloat4: &images.images_2d()[0], bb_unorm4f: &images.images_2d()[1], bb_unorm2: &images.images_2d()[2], bb_unorm4: &images.images_2d()[3],
+		smaa_areatex: StagingPair2 { stage: &images.staging_images()[2], device: &images.images_2d()[4] },
+		smaa_searchtex: StagingPair2 { stage: &images.staging_images()[3], device: &images.images_2d()[5] },
+		playerbullet_tex: StagingPair2 { stage: &images.staging_images()[4], device: &images.images_2d()[6] },
+		circle16_tex: StagingPair2 { stage: &images.staging_images()[5], device: &images.images_2d()[7] },
+		lineparticle_colortex: StagingPair1 { stage: &images.staging_images()[0], device: &images.images_1d()[0] },
+		bullet_colortex: StagingPair1 { stage: &images.staging_images()[1], device: &images.images_1d()[1] },
+		linear_sampler: &images.samplers()[0]
+	};
 
 	let playerbullet_image = PhotoshopDocument::open(engine.parse_asset("graphs.playerbullet", "psd")).unwrap();
 	let circle16_image = PhotoshopDocument::open(engine.parse_asset("graphs.circle16", "psd")).unwrap();
@@ -243,38 +263,15 @@ fn main()
 	let appdata = ApplicationBufferData::new(&engine, engine.render_window().size());
 
 	let render_pass = RenderPasses::new(&engine, target_format);
-	let framebuffers = Framebuffers::new(&engine, &render_pass, backbuffer_sfloat4_set, backbuffer_unorm4f_set,
-		backbuffer_unorm2_set, backbuffer_unorm4_set, engine.render_window().render_targets(), engine.render_window().size());
+	let framebuffers = Framebuffers::new(&engine, &render_pass, image_names.bb_sfloat4, image_names.bb_unorm4f, image_names.bb_unorm2, image_names.bb_unorm4,
+		engine.render_window().render_targets(), engine.render_window().size());
 
 	// Pipelines //
 	let sc_viewport = Viewport::from(engine.render_window().size().clone());
 	let pipelines = PipelineStates::new(&engine, true, &render_pass, &sc_viewport);
 
 	// Descriptor Set //
-	let uniform_memory_bt_info = BufferInfo(&appdata.dev, appdata.offset_bullet_translations() .. appdata.size_bullet_translations());
-	let uniform_memory_info = BufferInfo(&appdata.dev, appdata.offset_uniform() .. appdata.offset_uniform() + appdata.size_uniform());
-	let backbuffer_sfloat4_info = ImageInfo(gbuffer_sampler, backbuffer_sfloat4_set, VkImageLayout::ShaderReadOnlyOptimal);
-	let backbuffer_unorm4f_info = ImageInfo(gbuffer_sampler, backbuffer_unorm4f_set, VkImageLayout::ShaderReadOnlyOptimal);
-	let backbuffer_unorm2_info = ImageInfo(gbuffer_sampler, backbuffer_unorm2_set, VkImageLayout::ShaderReadOnlyOptimal);
-	let backbuffer_unorm4_info = ImageInfo(gbuffer_sampler, backbuffer_unorm4_set, VkImageLayout::ShaderReadOnlyOptimal);
-	let areatex_info = ImageInfo(gbuffer_sampler, smaa_areatex_set, VkImageLayout::ShaderReadOnlyOptimal);
-	let searchtex_info = ImageInfo(gbuffer_sampler, smaa_searchtex_set, VkImageLayout::ShaderReadOnlyOptimal);
-	let playerbullet_info = ImageInfo(gbuffer_sampler, playerbullet_tex_set, VkImageLayout::ShaderReadOnlyOptimal);
-	let circle16_info = ImageInfo(gbuffer_sampler, circle16_tex_set, VkImageLayout::ShaderReadOnlyOptimal);
-	let lineburst_particle_gradient_tex_info = ImageInfo(gbuffer_sampler, lineburst_particle_gradient_tex_set, VkImageLayout::ShaderReadOnlyOptimal);
-	let bullet_colramp_tex_info = ImageInfo(gbuffer_sampler, bullet_colramp_tex_set, VkImageLayout::ShaderReadOnlyOptimal);
-	engine.update_descriptors(&[
-		DescriptorSetWriteInfo::UniformBuffer(pipelines.get_descriptor_set_for_uniform_buffer(), 0, vec![uniform_memory_info]),
-		DescriptorSetWriteInfo::StorageBuffer(pipelines.get_descriptor_set_for_uniform_buffer(), 1, vec![uniform_memory_bt_info]),
-		DescriptorSetWriteInfo::InputAttachment(pipelines.get_descriptor_set_for_tonemap_input(), 0, vec![backbuffer_sfloat4_info]),
-		DescriptorSetWriteInfo::CombinedImageSampler(pipelines.get_descriptor_set_for_smaa_edgedetect(), 0, vec![backbuffer_unorm4f_info.clone()]),
-		DescriptorSetWriteInfo::CombinedImageSampler(pipelines.get_descriptor_set_for_smaa_blendweight(), 0, vec![backbuffer_unorm2_info, areatex_info, searchtex_info]),
-		DescriptorSetWriteInfo::CombinedImageSampler(pipelines.get_descriptor_set_for_smaa_combine(), 0, vec![backbuffer_unorm4f_info, backbuffer_unorm4_info]),
-		DescriptorSetWriteInfo::CombinedImageSampler(pipelines.get_descriptor_set_for_playerbullet_texture(), 0, vec![playerbullet_info]),
-		DescriptorSetWriteInfo::CombinedImageSampler(pipelines.get_descriptor_set_for_lineburst_particle_color(), 0, vec![lineburst_particle_gradient_tex_info]),
-		DescriptorSetWriteInfo::CombinedImageSampler(pipelines.get_descriptor_set_for_bullet_texture(), 0, vec![circle16_info]),
-		DescriptorSetWriteInfo::CombinedImageSampler(pipelines.get_descriptor_set_for_bullet_colramp(), 0, vec![bullet_colramp_tex_info])
-	]);
+	initialize_descriptor_sets(&engine, &appdata, &pipelines.descriptor_sets, &image_names);
 
 	// Initial Data Transmission, Layouting for Swapchain Backbuffer Images //
 	TransientTransferCommandBuffers::allocate(&engine, 1).and_then(|setup_commands|
@@ -289,29 +286,29 @@ fn main()
 				VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT | VK_ACCESS_INDEX_READ_BIT | VK_ACCESS_UNIFORM_READ_BIT)
 		];
 		let blitted_image_templates_dev = vec![
-			ImageMemoryBarrier::template(smaa_areatex_set, ImageSubresourceRange::base_color()),
-			ImageMemoryBarrier::template(smaa_searchtex_set, ImageSubresourceRange::base_color()),
-			ImageMemoryBarrier::template(playerbullet_tex_set, ImageSubresourceRange::base_color()),
-			ImageMemoryBarrier::template(circle16_tex_set, ImageSubresourceRange::base_color()),
-			ImageMemoryBarrier::template(lineburst_particle_gradient_tex_set, ImageSubresourceRange::base_color()),
-			ImageMemoryBarrier::template(bullet_colramp_tex_set, ImageSubresourceRange::base_color())
+			ImageMemoryBarrier::template(&**image_names.smaa_areatex.device, ImageSubresourceRange::base_color()),
+			ImageMemoryBarrier::template(&**image_names.smaa_searchtex.device, ImageSubresourceRange::base_color()),
+			ImageMemoryBarrier::template(&**image_names.playerbullet_tex.device, ImageSubresourceRange::base_color()),
+			ImageMemoryBarrier::template(&**image_names.circle16_tex.device, ImageSubresourceRange::base_color()),
+			ImageMemoryBarrier::template(&**image_names.lineparticle_colortex.device, ImageSubresourceRange::base_color()),
+			ImageMemoryBarrier::template(&**image_names.bullet_colortex.device, ImageSubresourceRange::base_color())
 		];
 		let blitted_image_templates_stg = vec![
-			ImageMemoryBarrier::template(smaa_areatex_stg, ImageSubresourceRange::base_color()),
-			ImageMemoryBarrier::template(smaa_searchtex_stg, ImageSubresourceRange::base_color()),
-			ImageMemoryBarrier::template(playerbullet_tex_stg, ImageSubresourceRange::base_color()),
-			ImageMemoryBarrier::template(circle16_tex_stg, ImageSubresourceRange::base_color()),
-			ImageMemoryBarrier::template(lineburst_particle_gradient_tex_stg, ImageSubresourceRange::base_color()),
-			ImageMemoryBarrier::template(bullet_colramp_stg, ImageSubresourceRange::base_color())
+			ImageMemoryBarrier::template(image_names.smaa_areatex.stage, ImageSubresourceRange::base_color()),
+			ImageMemoryBarrier::template(image_names.smaa_searchtex.stage, ImageSubresourceRange::base_color()),
+			ImageMemoryBarrier::template(image_names.playerbullet_tex.stage, ImageSubresourceRange::base_color()),
+			ImageMemoryBarrier::template(image_names.circle16_tex.stage, ImageSubresourceRange::base_color()),
+			ImageMemoryBarrier::template(image_names.lineparticle_colortex.stage, ImageSubresourceRange::base_color()),
+			ImageMemoryBarrier::template(image_names.bullet_colortex.stage, ImageSubresourceRange::base_color())
 		];
 		let image_memory_barriers = engine.render_window().render_targets().iter()
 			.map(|x| ImageMemoryBarrier::hold_ownership(x, ImageSubresourceRange::base_color(),
 				0, VK_ACCESS_MEMORY_READ_BIT, VkImageLayout::Undefined, VkImageLayout::PresentSrcKHR))
 			.chain(vec![
-				ImageMemoryBarrier::initialize(backbuffer_sfloat4_set, ImageSubresourceRange::base_color(), VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VkImageLayout::ColorAttachmentOptimal),
-				ImageMemoryBarrier::initialize(backbuffer_unorm4f_set, ImageSubresourceRange::base_color(), VK_ACCESS_SHADER_READ_BIT, VkImageLayout::ShaderReadOnlyOptimal),
-				ImageMemoryBarrier::initialize(backbuffer_unorm2_set, ImageSubresourceRange::base_color(), VK_ACCESS_SHADER_READ_BIT, VkImageLayout::ShaderReadOnlyOptimal),
-				ImageMemoryBarrier::initialize(backbuffer_unorm4_set, ImageSubresourceRange::base_color(), VK_ACCESS_SHADER_READ_BIT, VkImageLayout::ShaderReadOnlyOptimal)
+				ImageMemoryBarrier::initialize(&**image_names.bb_sfloat4, ImageSubresourceRange::base_color(), VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VkImageLayout::ColorAttachmentOptimal),
+				ImageMemoryBarrier::initialize(&**image_names.bb_unorm4f, ImageSubresourceRange::base_color(), VK_ACCESS_SHADER_READ_BIT, VkImageLayout::ShaderReadOnlyOptimal),
+				ImageMemoryBarrier::initialize(&**image_names.bb_unorm2, ImageSubresourceRange::base_color(), VK_ACCESS_SHADER_READ_BIT, VkImageLayout::ShaderReadOnlyOptimal),
+				ImageMemoryBarrier::initialize(&**image_names.bb_unorm4, ImageSubresourceRange::base_color(), VK_ACCESS_SHADER_READ_BIT, VkImageLayout::ShaderReadOnlyOptimal)
 			]).chain(blitted_image_templates_dev.iter().map(|t| t.into_transfer_dst(0, VkImageLayout::Preinitialized)))
 			.chain(blitted_image_templates_stg.into_iter().map(|t| t.into_transfer_src(0, VkImageLayout::Preinitialized))).collect_vec();
 		let image_memory_barriers_ret = blitted_image_templates_dev.into_iter()
@@ -321,14 +318,12 @@ fn main()
 			.pipeline_barrier(VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, false,
 				&[], &buffer_memory_barriers, &image_memory_barriers)
 			.copy_buffer(&appdata.stg, &appdata.dev, &[BufferCopyRegion(0, 0, appdata.size())])
-			.copy_image(smaa_areatex_stg, smaa_areatex_set, &[ImageCopyRegion::entire_colorbits(VkExtent3D(AREATEX_WIDTH as u32, AREATEX_HEIGHT as u32, 1))])
-			.copy_image(smaa_searchtex_stg, smaa_searchtex_set, &[ImageCopyRegion::entire_colorbits(VkExtent3D(SEARCHTEX_WIDTH as u32, SEARCHTEX_HEIGHT as u32, 1))])
-			.copy_image(playerbullet_tex_stg, playerbullet_tex_set,
-				&[ImageCopyRegion::entire_colorbits(VkExtent3D(playerbullet_image.width as u32, playerbullet_image.height as u32, 1))])
-			.copy_image(circle16_tex_stg, circle16_tex_set,
-				&[ImageCopyRegion::entire_colorbits(VkExtent3D(circle16_image.width as u32, circle16_image.height as u32, 1))])
-			.copy_image(lineburst_particle_gradient_tex_stg, lineburst_particle_gradient_tex_set, &[ImageCopyRegion::entire_colorbits(VkExtent3D(4, 1, 1))])
-			.copy_image(bullet_colramp_stg, bullet_colramp_tex_set, &[ImageCopyRegion::entire_colorbits(VkExtent3D(16, 1, 1))])
+			.inject_commands(|r| image_names.smaa_areatex.copy_entire_region(r))
+			.inject_commands(|r| image_names.smaa_searchtex.copy_entire_region(r))
+			.inject_commands(|r| image_names.playerbullet_tex.copy_entire_region(r))
+			.inject_commands(|r| image_names.circle16_tex.copy_entire_region(r))
+			.inject_commands(|r| image_names.lineparticle_colortex.copy_entire_region(r))
+			.inject_commands(|r| image_names.bullet_colortex.copy_entire_region(r))
 			.pipeline_barrier(VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, false,
 				&[], &buffer_memory_barriers_ret, &image_memory_barriers_ret)
 			.end()
@@ -366,7 +361,7 @@ fn main()
 				.pipeline_barrier(VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, false, &[], &[], &presenter_output_barriers)
 				.begin_render_pass(f, &[], false)
 				.bind_pipeline(&pipelines.smaa.as_ref().unwrap().combine)
-				.bind_descriptor_sets(&pipelines.smaa.as_ref().unwrap().combine_layout, &[pipelines.get_descriptor_set_for_smaa_combine()])
+				.bind_descriptor_sets(&pipelines.smaa.as_ref().unwrap().combine_layout, &[pipelines.descriptor_sets.smaa_combine])
 				.bind_vertex_buffers(&[(&appdata.dev, appdata.offset_ppvbuf())])
 				.draw(4, 1)
 				.inject_commands(|r| debug_info.inject_render_commands(r))
@@ -380,9 +375,9 @@ fn main()
 		let rr_clear_value = AttachmentClearValue::Color(0.0f32, 0.0f32, 0.015625f32, 1.0f32);
 		let pure_clear_value = AttachmentClearValue::Color(0.0f32, 0.0f32, 0.0f32, 0.0f32);
 		let color_output_barriers: Vec<_> = [
-			ImageMemoryBarrier::template(backbuffer_unorm4f_set, ImageSubresourceRange::base_color()),
-			ImageMemoryBarrier::template(backbuffer_unorm2_set, ImageSubresourceRange::base_color()),
-			ImageMemoryBarrier::template(backbuffer_unorm4_set, ImageSubresourceRange::base_color())
+			ImageMemoryBarrier::template(&**image_names.bb_unorm4f, ImageSubresourceRange::base_color()),
+			ImageMemoryBarrier::template(&**image_names.bb_unorm2, ImageSubresourceRange::base_color()),
+			ImageMemoryBarrier::template(&**image_names.bb_unorm4, ImageSubresourceRange::base_color())
 		].into_iter().map(|x| x.hold_ownership(VK_ACCESS_SHADER_READ_BIT, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
 			VkImageLayout::ShaderReadOnlyOptimal, VkImageLayout::ColorAttachmentOptimal)).collect();
 		
@@ -394,17 +389,17 @@ fn main()
 			// Tonemapping //
 			.bind_vertex_buffers(&[(&appdata.dev, appdata.offset_ppvbuf())])
 			.bind_pipeline(&pipelines.tonemapper)
-			.bind_descriptor_sets(&pipelines.layout_for_attachment_input(), &[pipelines.get_descriptor_set_for_tonemap_input()])
+			.bind_descriptor_sets(&pipelines.layout_for_attachment_input(), &[pipelines.descriptor_sets.tonemap_input])
 			.draw(4, 1)
 			.end_render_pass().begin_render_pass(&framebuffers.smaa_edgedetect, &[pure_clear_value.clone()], false)
 			// Edge Detection(SMAA 1x) //
 			.bind_pipeline(&pipelines.smaa.as_ref().unwrap().edgedetect)
-			.bind_descriptor_sets(&pipelines.smaa.as_ref().unwrap().edgedetect_layout, &[pipelines.get_descriptor_set_for_smaa_edgedetect()])
+			.bind_descriptor_sets(&pipelines.smaa.as_ref().unwrap().edgedetect_layout, &[pipelines.descriptor_sets.smaa_edgedetect])
 			.draw(4, 1)
 			.end_render_pass().begin_render_pass(&framebuffers.smaa_blendweight, &[pure_clear_value], false)
 			// Blend Weight Calculation(SMAA 1x) //
 			.bind_pipeline(&pipelines.smaa.as_ref().unwrap().blendweight_calc)
-			.bind_descriptor_sets(&pipelines.smaa.as_ref().unwrap().blendweight_layout, &[pipelines.get_descriptor_set_for_smaa_blendweight()])
+			.bind_descriptor_sets(&pipelines.smaa.as_ref().unwrap().blendweight_layout, &[pipelines.descriptor_sets.smaa_blendweight])
 			.draw(4, 1)
 			.end_render_pass()
 		.end()
@@ -445,7 +440,7 @@ fn main()
 		let dbg_copy_completion_sig = Fence::new(&engine).or_crash();
 		let rendering_order_sem = QueueFence::new(&engine).or_crash();
 		let debug_transfer_commands = debug_info.get_transfer_commands();
-		let update_event = interlude::Event::new("Update Event").or_crash();
+		let update_event = Event::new("Update Event").or_crash();
 		let srv_update = update_event.clone();
 		let update_observer = unsafe { thread_scoped::scoped(move ||
 		{
@@ -660,8 +655,7 @@ fn main()
 						{
 							&FireRequest::Linears(ref vinfo) => for &(from, angle, speed) in vinfo
 							{
-								let block_index = bullet_datastore.allocate();
-								if let Some(bindex) = block_index
+								if let Some(bindex) = bullet_datastore.allocate()
 								{
 									bullets[bindex as usize] = unsafe
 									{
@@ -722,12 +716,40 @@ fn main()
 	};
 }
 
+/// Initializes content in all Descriptor Sets
+fn initialize_descriptor_sets(engine: &GraphicsInterface, appdata: &ApplicationBufferData, descriptor_sets: &DescriptorSetBindings, images: &DevConfImageBindings)
+{
+	let uniform_memory_bt_info	= BufferInfo(&appdata.dev, appdata.offset_bullet_translations() .. appdata.size_bullet_translations());
+	let uniform_memory_info		= BufferInfo(&appdata.dev, appdata.offset_uniform() .. appdata.offset_uniform() + appdata.size_uniform());
+	let backbuffer_sfloat4_info = ImageInfo(images.linear_sampler, images.bb_sfloat4, VkImageLayout::ShaderReadOnlyOptimal);
+	let backbuffer_unorm4f_info = ImageInfo(images.linear_sampler, images.bb_unorm4f, VkImageLayout::ShaderReadOnlyOptimal);
+	let backbuffer_unorm2_info	= ImageInfo(images.linear_sampler, images.bb_unorm2, VkImageLayout::ShaderReadOnlyOptimal);
+	let backbuffer_unorm4_info	= ImageInfo(images.linear_sampler, images.bb_unorm4, VkImageLayout::ShaderReadOnlyOptimal);
+	let areatex_info			= ImageInfo(images.linear_sampler, images.smaa_areatex.device, VkImageLayout::ShaderReadOnlyOptimal);
+	let searchtex_info			= ImageInfo(images.linear_sampler, images.smaa_searchtex.device, VkImageLayout::ShaderReadOnlyOptimal);
+	let playerbullet_info		= ImageInfo(images.linear_sampler, images.playerbullet_tex.device, VkImageLayout::ShaderReadOnlyOptimal);
+	let circle16_info			= ImageInfo(images.linear_sampler, images.circle16_tex.device, VkImageLayout::ShaderReadOnlyOptimal);
+	let lineburst_particle_gradient_tex_info = ImageInfo(images.linear_sampler, images.lineparticle_colortex.device, VkImageLayout::ShaderReadOnlyOptimal);
+	let bullet_colramp_tex_info	= ImageInfo(images.linear_sampler, images.bullet_colortex.device, VkImageLayout::ShaderReadOnlyOptimal);
+	engine.update_descriptors(&[
+		DescriptorSetWriteInfo::UniformBuffer(descriptor_sets.global_uniform, 0, vec![uniform_memory_info]),
+		DescriptorSetWriteInfo::StorageBuffer(descriptor_sets.global_uniform, 1, vec![uniform_memory_bt_info]),
+		DescriptorSetWriteInfo::InputAttachment(descriptor_sets.tonemap_input, 0, vec![backbuffer_sfloat4_info]),
+		DescriptorSetWriteInfo::CombinedImageSampler(descriptor_sets.smaa_edgedetect, 0, vec![backbuffer_unorm4f_info.clone()]),
+		DescriptorSetWriteInfo::CombinedImageSampler(descriptor_sets.smaa_blendweight, 0, vec![backbuffer_unorm2_info, areatex_info, searchtex_info]),
+		DescriptorSetWriteInfo::CombinedImageSampler(descriptor_sets.smaa_combine, 0, vec![backbuffer_unorm4f_info, backbuffer_unorm4_info]),
+		DescriptorSetWriteInfo::CombinedImageSampler(descriptor_sets.playerbullet_texture, 0, vec![playerbullet_info]),
+		DescriptorSetWriteInfo::CombinedImageSampler(descriptor_sets.lineburst_particle_color, 0, vec![lineburst_particle_gradient_tex_info]),
+		DescriptorSetWriteInfo::CombinedImageSampler(descriptor_sets.bullet_texture, 0, vec![circle16_info]),
+		DescriptorSetWriteInfo::CombinedImageSampler(descriptor_sets.bullet_color, 0, vec![bullet_colramp_tex_info])
+	]);
+}
 /// Records some commands for NormalRender
 pub fn populate_normal_render_commands<'a>(recorder: GraphicsCommandRecorder<'a>, pipelines: &PipelineStates, appdata: &ApplicationBufferData)
 	-> GraphicsCommandRecorder<'a>
 {
 	recorder
-		.bind_descriptor_sets(pipelines.layout_for_wire_render(), &[pipelines.get_descriptor_set_for_uniform_buffer()])
+		.bind_descriptor_sets(pipelines.layout_for_wire_render(), &[pipelines.descriptor_sets.global_uniform])
 		.bind_vertex_buffers(&[(&appdata.dev, appdata.offset_vbuf())])
 		.inject_commands(|r| pipelines.background.begin(r, 0.125, 0.5, 0.1875, 0.625))
 		.bind_vertex_buffers_partial(1, &[(&appdata.dev, appdata.offset_instance() + InstanceMemory::background_offs())])
@@ -743,20 +765,20 @@ pub fn populate_normal_render_commands<'a>(recorder: GraphicsCommandRecorder<'a>
 		.bind_vertex_buffers(&[(&appdata.dev, appdata.offset_vbuf() + VertexMemoryForWireRender::enemy_rezonator_offs()),
 			(&appdata.dev, appdata.offset_instance() + InstanceMemory::enemy_rez_offs())])
 		.draw(3, MAX_ENEMY_COUNT as u32)
-		.inject_commands(|r| pipelines.bullet.begin(r, pipelines.get_descriptor_set_for_bullet_texture()))
-		.bind_descriptor_sets_partial(pipelines.layout_for_bullet(), 2, &[pipelines.get_descriptor_set_for_bullet_colramp()])
+		.inject_commands(|r| pipelines.bullet.begin(r, pipelines.descriptor_sets.bullet_texture))
+		.bind_descriptor_sets_partial(pipelines.layout_for_bullet(), 2, &[pipelines.descriptor_sets.bullet_color])
 		.bind_vertex_buffers(&[
 			(&appdata.dev, appdata.offset_vbuf() + VertexMemoryForWireRender::sprite_plane_offs()),
 			(&appdata.dev, appdata.offset_instance() + InstanceMemory::bullet_instances_offs())
 		])
 		.draw(4, MAX_BULLETS as u32)
-		.inject_commands(|r| pipelines.playerbullet.begin(r, pipelines.get_descriptor_set_for_playerbullet_texture()))
+		.inject_commands(|r| pipelines.playerbullet.begin(r, pipelines.descriptor_sets.playerbullet_texture))
 		.bind_vertex_buffers_partial(1, &[
 			(&appdata.dev, appdata.offset_instance() + InstanceMemory::player_bullet_offs())
 		])
 		.draw(4, MAX_PLAYER_BULLET_COUNT as u32)
 		.bind_pipeline(&pipelines.lineburst)
-		.bind_descriptor_sets_partial(&pipelines.layout_for_lineburst_particle_render(), 1, &[pipelines.get_descriptor_set_for_lineburst_particle_color()])
+		.bind_descriptor_sets_partial(&pipelines.layout_for_lineburst_particle_render(), 1, &[pipelines.descriptor_sets.lineburst_particle_color])
 		.bind_vertex_buffers(&[(&appdata.dev, appdata.offset_instance() + structures::InstanceMemory::lbparticle_groups_offs())])
 		.draw(MAX_LBPARTICLE_GROUPS as u32, 1)
 }
