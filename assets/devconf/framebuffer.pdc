@@ -1,0 +1,17 @@
+# Framebuffers
+
+# Rust側からは`ImageView2D["16bppTarget4"] = ...`みたいな感じで指定する
+$RawRenderTarget: Extern ImageView 2D "16bppTarget4"
+$TonemapStore: Extern ImageView 2D "8bppTarget4"
+$SMAAEdgeDetectStore: Extern ImageView 2D "8bppTarget2"
+$SMAABlendWeightCalcStore: Extern ImageView 2D "8bppTarget4"
+$SMAACombineStore: Extern SwapChainViews
+
+# Rust側からは`pdcrs.framebuffers["RawRender"]`で参照できる
+$RawRenderFrame: Framebuffer<$FirstRP> [$RawRenderTarget, $TonemapStore]
+$SMAAEdgeDetectFrame: SimpleFramebuffer $SMAAEdgeDetectStore
+- ClearMode: OnLoad
+$SMAABlendWeightFrame: SimpleFramebuffer $SMAABlendWeightStore
+- ClearMode: OnLoad
+$SMAACombineFrame: PresentedFramebuffer $SMAACombineStore
+#- ClearMode: None
