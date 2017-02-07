@@ -144,3 +144,63 @@ impl<'a> Enemy<'a>
 		match self { &Enemy::Garbage(_) => true, _ => false }
 	}
 }
+
+pub enum Continuous2<Args>
+{
+	Term, Cont(f32, Box<Fn(Args) -> Continuous2<Args>>)
+}
+pub trait EnemyGroupStrategy
+{
+	type CArgs;
+	fn begin(&self) -> Continuous2<Self::CArgs>;
+}
+pub struct RandomFall(pub f32, pub u32);
+impl EnemyGroupStrategy for RandomFall
+{
+	type CArgs = ();
+	fn begin(&self) -> Continuous2<()>
+	{
+		fn recursive(wait: f32, counter: u32) -> Continuous2<()>
+		{
+			if counter > 0
+			{
+				println!("Enemy::Fall");
+				Continuous2::Cont(wait, Box::new(move |_| recursive(wait, counter - 1)))
+			}
+			else { Continuous2::Term }
+		}
+		let &RandomFall(w, c) = self;
+		Continuous2::Cont(0.0, Box::new(move |_| recursive(w, c)))
+	}
+}
+pub struct Coroutine<CArgs>(f32, Continuous2<CArgs>);
+impl<CArgs> Coroutine<CArgs>
+{
+	fn new(c: Continuous2<CArgs>) -> Self { Coroutine(0.0, c) }
+	fn update(&mut self, delta_time: f32, args: CArgs)
+	{
+		self.0 += delta_time;
+		let newcont = if let Continuous2::Cont(d, ref f) = self.1
+		{
+			if self.0 >= d { Some(f(args)) } else { None }
+		}
+		else { None };
+		if let Some(nc) = newcont
+		{
+			self.0 = 0.0;
+			self.1 = nc;
+		}
+	}
+}
+pub struct EnemyGroup(Vec<u32>, Coroutine<()>);
+impl EnemyGroup
+{
+	pub fn new<Strategy: EnemyGroupStrategy<CArgs = ()>>(st: Strategy) -> Self
+	{
+		EnemyGroup(Vec::new(), Coroutine::new(st.begin()))
+	}
+	pub fn update(&mut self, delta_time: f32)
+	{
+		self.1.update(delta_time, ());
+	}
+}

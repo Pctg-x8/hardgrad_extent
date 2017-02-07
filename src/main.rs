@@ -7,7 +7,6 @@ extern crate glob;
 extern crate rayon;
 #[macro_use] extern crate log;
 extern crate itertools;
-#[macro_use] extern crate lazy_static;
 extern crate half;
 
 #[macro_use] extern crate interlude;
@@ -502,6 +501,8 @@ fn main()
 		let mut bullets: [Bullet; MAX_BULLETS] = unsafe { std::mem::uninitialized() };
 		for n in 0 .. MAX_BULLETS { bullets[n] = Bullet::Free; }
 
+		let mut eg = EnemyGroup::new(RandomFall(0.25, 10));
+
 		let mut frequest_queue = Vec::<FireRequest>::new();
 		let mut secs_from_last_fixed = 0.0f32;
 		input_system.write().and_then(|mut isw|
@@ -601,6 +602,7 @@ fn main()
 						*e = PlayerBullet::Free;
 					}
 
+					eg.update(delta_time_sec);
 					if enemy_next_appear
 					{
 						let block_index = enemy_datastore.allocate_block();

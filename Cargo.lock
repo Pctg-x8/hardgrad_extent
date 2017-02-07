@@ -79,7 +79,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 [[package]]
 name = "interlude"
 version = "0.1.0"
-source = "git+https://github.com/Pctg-x8/interlude.git#69811bba96173b888e05bc0aefaf509e23bbfcee"
+source = "git+https://github.com/Pctg-x8/interlude.git#c76c97627b4b036b204fdc5604a96468531f052d"
 dependencies = [
  "ansi_term 0.9.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "freetype-sys 0.4.0 (registry+https://github.com/rust-lang/crates.io-index)",
