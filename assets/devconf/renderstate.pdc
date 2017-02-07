@@ -1,6 +1,6 @@
 # RenderState(RenderPass and PipelineState)
 
-# 記号<->名前: ->=To <-=From @=At /=And
+# 記号<->名前: ->=To <-=From @=At
 
 # Rust側からは`pdcrs.render_passes["FirstRP"]`で参照できる
 $FirstRP: RenderPass
@@ -65,39 +65,52 @@ DescriptorSets:
 - $SMAABlendWeightCalcInput: $SMAABlendWeightcalcInputDescs
 - $SMAACombine: $SMAACombineInputDescs
 
+# Rust側からは参照できない(シェーダモジュール定義)
+$SmallPlayerBulletVsh: VertexShader !shaders.PlayerBullet
+- Constant 0: 0.625
+
 # Rust側からは`pdcrs.pipeline_states["Background"]`で参照できる
 # !はアセット参照
 $Background: PipelineState for $FirstRP.$StdRender with $WireRenderLayout
-- PrimitiveTopology: LineList with Adjacent
+- PrimitiveTopology: LineList with Adjacency
 - VertexShader: !shaders.GeometryPreinstancing
 - ViewportScissors: [ScreenView]
 - GeometryShader: !shaders.BackLineDuplicator
 - FragmentShader: !shaders.ThroughColor
-- BlendState: [PremultipliedAlpha]
+- BlendStates: [PremultipliedAlpha]
 $Enemy: PipelineState for $FirstRP.$StdRender with $WireRenderLayout
-- PrimitiveTopology: LineList with Adjacent
+- PrimitiveTopology: LineList with Adjacency
 - VertexShader: !shaders.GeometryPreinstancing
 - ViewportScissors: [ScreenView]
 - GeometryShader: !shaders.EnemyDuplicator
 - FragmentShader: !shaders.ThroughColor
-- BlendState: [Disabled]
+- BlendStates: [Disabled]
 $EnemyRezonator: PipelineState for $FirstRP.$StdRender with $WireRenderLayout
 - PrimitiveTopology: TriangleList
 - VertexShader: !shaders.EnemyRezonatorV
 - ViewportScissors: [ScreenView]
 - GeometryShader: !shaders.EnemyRezonatorDup
 - FragmentShader: !shaders.ThroughColor
-- BlendState: [Disabled]
+- BlendStates: [Disabled]
 $Player: PipelineState for $FirstRP.$StdRender with $WireRenderLayout
 - PrimitiveTopology: LineList
 - VertexShader: !shaders.PlayerRotor
 - ViewportScissors: [ScreenView]
-- FragmentSHader: !shaders.ThroughColor
-- BlendState: [Disabled]
+- FragmentShader: !shaders.ThroughColor
+- BlendStates: [Disabled]
 $PlayerBullet: PipelineState for $FirstRP.$StdRender with $WireRenderLayout
 - PrimitiveTopology: TriangleStrip
 - VertexShader: !shaders.PlayerBullet
 -- Constant 0: 0.75
 - ViewportScissors: [ScreenView]
 - FragmentShader: !shaders.SpriteFrag
-- BlendState: [PremultipliedAlpha]
+- BlendStates: [PremultipliedAlpha]
+$TestPS: PipelineState for $FirstRP.$StdRender with $WireRenderLayout
+- PrimitiveTopology: TriangleFan
+- VertexShader: $SmallPlayerBulletVsh
+- FragmentShader: !shaders.SpriteFrag
+# (0, 0) to (640, 480) (depth 0 to 1), (0, 0) to (640, 480) (depth 0 to 1) (ScissorRect (0, 0) to (320, 240))
+- ViewportScissors:
+-- (0, 0, 0)-(640, 480, 1)
+-- (0, 0, 0)-(640, 480, 1):(0, 0)-(320, 240)
+- BlendStates: [PremultipliedAlpha]

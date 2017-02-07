@@ -16,7 +16,7 @@ itertools = "0.5.2"
 lazy_static = "0.2.1"
 half = "0.1.0"
 
-interlude = { path = "./interlude" }
-postludium = { path = "./postludium" }
+interlude = { git = "https://github.com/Pctg-x8/interlude.git" }
+postludium = { git = "https://github.com/Pctg-x8/postludium.git" }
 texture_compression = { path = "./texture_compression" }
 psdloader = { path = "./psdloader" }

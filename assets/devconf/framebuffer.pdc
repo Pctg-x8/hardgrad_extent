@@ -9,9 +9,9 @@ $SMAACombineStore: Extern SwapChainViews
 
 # Rust側からは`pdcrs.framebuffers["RawRender"]`で参照できる
 $RawRenderFrame: Framebuffer<$FirstRP> [$RawRenderTarget, $TonemapStore]
-$SMAAEdgeDetectFrame: SimpleFramebuffer $SMAAEdgeDetectStore
+$SMAAEdgeDetectFrame: Framebuffer $SMAAEdgeDetectStore
 - ClearMode: OnLoad
-$SMAABlendWeightFrame: SimpleFramebuffer $SMAABlendWeightStore
+$SMAABlendWeightFrame: Framebuffer $SMAABlendWeightStore
 - ClearMode: OnLoad
-$SMAACombineFrame: PresentedFramebuffer $SMAACombineStore
+$SMAACombineFrame: Framebuffer<Presented> $SMAACombineStore
 #- ClearMode: None
