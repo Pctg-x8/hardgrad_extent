@@ -25,6 +25,7 @@ mod structures;
 use structures::*;
 mod logical_resources;
 use logical_resources::*;
+use logical_resources::enemy::*;
 mod utils;
 use rand::distributions::*;
 use half::f16;
@@ -501,7 +502,7 @@ fn main()
 		let mut bullets: [Bullet; MAX_BULLETS] = unsafe { std::mem::uninitialized() };
 		for n in 0 .. MAX_BULLETS { bullets[n] = Bullet::Free; }
 
-		let mut eg = EnemyGroup::new(RandomFall(0.25, 10));
+		let mut eg = EnemyGroup::new(spawn_group::strategies::RandomFall(0.1, 10));
 
 		let mut frequest_queue = Vec::<FireRequest>::new();
 		let mut secs_from_last_fixed = 0.0f32;
@@ -602,8 +603,19 @@ fn main()
 						*e = PlayerBullet::Free;
 					}
 
-					eg.update(delta_time_sec);
-					if enemy_next_appear
+					eg.update(delta_time_sec, |x, y, lref, manage_index| if let Some(bindex) = enemy_datastore.allocate_block()
+					{
+						let bindexi = bindex as isize;
+						enemy_entities[bindex as usize] = unsafe
+						{
+							let ref mut uref_enemy_ptr = *uref_enemy.as_mut_ptr().offset(bindexi);
+							let ref mut iref_enemy_rez_ptr = *iref_enemy_rez.as_mut_ptr().offset(bindexi);
+							Enemy::init(x, bindex, lref, manage_index, uref_enemy_ptr, iref_enemy_rez_ptr)
+						};
+						*enemy_count.borrow_mut() += 1;
+						Some(bindex)
+					} else { None });
+					/*if enemy_next_appear
 					{
 						let block_index = enemy_datastore.allocate_block();
 						if let Some(bindex) = block_index
@@ -620,7 +632,7 @@ fn main()
 						}
 						else { warn!("Enemy Datastore is full!!"); }
 						enemy_next_appear = false;
-					}
+					}*/
 					frequest_queue.clear();
 					for e in enemy_entities.iter_mut()
 					{
@@ -692,7 +704,7 @@ fn main()
 			{
 				// fixed update
 				background_next_appear = background_appear_rate.ind_sample(&mut randomizer) == 0;
-				enemy_next_appear = enemy_appear_rate.ind_sample(&mut randomizer) == 0;
+				// enemy_next_appear = enemy_appear_rate.ind_sample(&mut randomizer) == 0;
 				/*if particle_spawn_rate.ind_sample(&mut randomizer) == 0
 				{
 					next_particle_spawn = Some((particle_spawn_count.ind_sample(&mut randomizer),

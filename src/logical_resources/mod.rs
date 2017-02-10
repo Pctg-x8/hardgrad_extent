@@ -1,5 +1,4 @@
 pub mod enemy;
-pub use self::enemy::*;
 pub mod background_datastore;
 pub use self::background_datastore::BackgroundDatastore;
 pub mod projection_matrixes;
