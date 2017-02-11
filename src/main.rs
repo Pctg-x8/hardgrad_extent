@@ -535,10 +535,7 @@ fn main()
 		}).unwrap();
 		let mut randomizer = rand::thread_rng();
 		let background_appear_rate = rand::distributions::Range::new(0, 6);
-		let enemy_appear_rate = rand::distributions::Range::new(0, 40);
-		let enemy_left_range = rand::distributions::Range::new(-25.0f32, 25.0f32);
 		let mut background_next_appear = false;
-		let mut enemy_next_appear = false;
 		let mut prev_time = time::PreciseTime::now();
 		let mut shooting = false;
 		let mut secs_from_last_trigger = 0.0;
@@ -632,24 +629,6 @@ fn main()
 						*enemy_count.borrow_mut() += 1;
 						Some(bindex)
 					} else { None });
-					/*if enemy_next_appear
-					{
-						let block_index = enemy_datastore.allocate_block();
-						if let Some(bindex) = block_index
-						{
-							let bindex = bindex as usize;
-							enemy_entities[bindex] = unsafe
-							{
-								let uref_enemy_ptr = uref_enemy.as_mut_ptr();
-								let iref_enemy_rez_ptr = iref_enemy_rez.as_mut_ptr();
-								Enemy::init(enemy_left_range.ind_sample(&mut randomizer), bindex as u32,
-									&mut *uref_enemy_ptr.offset(bindex as isize), &mut *iref_enemy_rez_ptr.offset(bindex as isize))
-							};
-							*enemy_count.borrow_mut() += 1;
-						}
-						else { warn!("Enemy Datastore is full!!"); }
-						enemy_next_appear = false;
-					}*/
 					frequest_queue.clear();
 					for e in enemy_entities.iter_mut()
 					{
@@ -721,12 +700,6 @@ fn main()
 			{
 				// fixed update
 				background_next_appear = background_appear_rate.ind_sample(&mut randomizer) == 0;
-				// enemy_next_appear = enemy_appear_rate.ind_sample(&mut randomizer) == 0;
-				/*if particle_spawn_rate.ind_sample(&mut randomizer) == 0
-				{
-					next_particle_spawn = Some((particle_spawn_count.ind_sample(&mut randomizer),
-						particle_spawn_wrange.ind_sample(&mut randomizer), particle_spawn_hrange.ind_sample(&mut randomizer)));
-				}*/
 				secs_from_last_fixed -= 1.0 / 60.0;
 			}
 			if shooting && secs_from_last_trigger >= 0.0375

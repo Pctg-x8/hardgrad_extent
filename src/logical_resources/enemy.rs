@@ -296,7 +296,7 @@ pub use self::spawn_group::EnemyGroup;
 pub type ManagerExecuteFn = Box<Fn(&mut EnemySquads, &mut GameUpdateArgs) -> ManagerExecuteState>;
 pub enum ManagerExecuteState
 {
-	Terminated, Update(ManagerExecuteFn), Delay(GameTime, ManagerExecuteFn), WaitForAllSquads(ManagerExecuteFn)
+	Update(ManagerExecuteFn), Delay(GameTime, ManagerExecuteFn), WaitForAllSquads(ManagerExecuteFn)
 }
 pub struct ManagerEngine(ManagerExecuteState);
 impl ManagerEngine
@@ -305,7 +305,7 @@ impl ManagerEngine
 	{
 		ManagerEngine(s)
 	}
-	fn update(&mut self, update_args: &mut GameUpdateArgs, squads: &mut EnemySquads) -> bool
+	fn update(&mut self, update_args: &mut GameUpdateArgs, squads: &mut EnemySquads)
 	{
 		let next = match &mut self.0
 		{
@@ -318,15 +318,12 @@ impl ManagerEngine
 			&mut ManagerExecuteState::WaitForAllSquads(ref f) => if squads.left == 0
 			{
 				Some(f(squads, update_args))
-			} else { None },
-			_ => None
+			} else { None }
 		};
 		if let Some(n) = next
 		{
-			if let ManagerExecuteState::Terminated = n { println!("Execution Terminated"); }
 			self.0 = n;
 		}
-		if let ManagerExecuteState::Terminated = self.0 { false } else { true }
 	}
 }
 
@@ -393,7 +390,7 @@ impl EnemyManager
 				yield Delay(2.5);
 			}
 		*/
-		fn eternal_loop(mgr: &mut EnemySquads, args: &mut GameUpdateArgs) -> ManagerExecuteState
+		fn eternal_loop(mgr: &mut EnemySquads, _: &mut GameUpdateArgs) -> ManagerExecuteState
 		{
 			mgr.spawn_squad(spawn_group::strategies::RandomFall(0.1, 10));
 			ManagerExecuteState::WaitForAllSquads(Box::new(|_, _| ManagerExecuteState::Delay(2.5, Box::new(eternal_loop))))
