@@ -213,6 +213,18 @@ struct DevConfImageBindings<'d>
 	linear_sampler: &'d Sampler
 }
 
+/// in real secs
+pub type GameTime = f32;
+/// An updating util sets incl. Immutable Reference to Random Generator
+pub struct GameUpdateArgs<'a>
+{
+	/// A global random generator
+	pub randomizer: &'a mut rand::Rng,
+	/// The delta time from previous frame, in seconds
+	pub delta_time: GameTime
+}
+unsafe impl<'a> Sync for GameUpdateArgs<'a> {}
+
 fn main()
 {
 	let engine = EngineBuilder::new("hardgrad_extend".into(), (0, 0, 1), "HardGrad -> Extend".into(), &Size2(640, 480))
@@ -502,7 +514,8 @@ fn main()
 		let mut bullets: [Bullet; MAX_BULLETS] = unsafe { std::mem::uninitialized() };
 		for n in 0 .. MAX_BULLETS { bullets[n] = Bullet::Free; }
 
-		let mut eg = EnemyGroup::new(spawn_group::strategies::RandomFall(0.1, 10));
+		let mut mgr = EnemyManager::new();
+		// let mut eg = EnemyGroup::new(spawn_group::strategies::RandomFall(0.1, 10));
 
 		let mut frequest_queue = Vec::<FireRequest>::new();
 		let mut secs_from_last_fixed = 0.0f32;
@@ -556,18 +569,22 @@ fn main()
 					let inputs = input_system.read().unwrap();
 					let timescale = (1.0f32 + inputs[LogicalInputTypes::Slowdown] * 2.0f32) / (1.0f32 + inputs[LogicalInputTypes::Overdrive]);
 					let movescale = 1.0f32 + inputs[LogicalInputTypes::Slowdown] * 0.25f32;
-					let delta_time_sec = (delta_time.num_microseconds().unwrap() as f32 / 1_000_000.0f32) / timescale;
-					secs_from_last_fixed += delta_time_sec;
-					secs_from_last_trigger += delta_time_sec;
-					game_secs += delta_time_sec;
+					let mut update_args = GameUpdateArgs
+					{
+						delta_time: (delta_time.num_microseconds().unwrap() as f32 / 1_000_000.0) / timescale,
+						randomizer: &mut randomizer
+					};
+					secs_from_last_fixed += update_args.delta_time;
+					secs_from_last_trigger += update_args.delta_time;
+					game_secs += update_args.delta_time;
 					uref_gametime[0] = game_secs;
-					background_datastore.update(&mut randomizer, delta_time_sec, background_next_appear);
+					background_datastore.update(&mut update_args, background_next_appear);
 
 					let new_shooting = input_system.read().unwrap()[LogicalInputTypes::Shoot] > 0.0;
 					next_shoot = if !shooting && new_shooting
 					{
 						// start timer
-						secs_from_last_trigger = delta_time_sec;
+						secs_from_last_trigger = update_args.delta_time;
 						shooting = true;
 						true
 					} else if shooting && !new_shooting
@@ -596,14 +613,14 @@ fn main()
 						}
 						next_shoot = false;
 					}
-					player_bullets.par_iter_mut().for_each(|e| e.update(delta_time_sec));
+					player_bullets.par_iter_mut().for_each(|e| e.update(&update_args));
 					for e in player_bullets.iter_mut().filter(|e| e.is_garbage())
 					{
 						match e { &mut PlayerBullet::Garbage(bindex) => pb_memory_manager.free(bindex), _ => unreachable!() };
 						*e = PlayerBullet::Free;
 					}
 
-					eg.update(delta_time_sec, |x, y, lref, manage_index| if let Some(bindex) = enemy_datastore.allocate_block()
+					mgr.update(&mut update_args, |x, y, lref, manage_index| if let Some(bindex) = enemy_datastore.allocate_block()
 					{
 						let bindexi = bindex as isize;
 						enemy_entities[bindex as usize] = unsafe
@@ -636,14 +653,14 @@ fn main()
 					frequest_queue.clear();
 					for e in enemy_entities.iter_mut()
 					{
-						let op = e.update(delta_time_sec, &mut frequest_queue);
+						let op = e.update(&update_args, &mut frequest_queue);
 						if let Some((new_left, new_top)) = op
 						{
 							for pb in player_bullets.iter_mut()
 							{
 								if let Some((psx, psy)) = pb.crash(new_left, new_top)
 								{
-									next_particle_spawn.push((particle_spawn_count.ind_sample(&mut randomizer), psx, psy));
+									next_particle_spawn.push((particle_spawn_count.ind_sample(&mut update_args.randomizer), psx, psy));
 								}
 							}
 						}
@@ -654,10 +671,10 @@ fn main()
 						*e = Enemy::Free;
 						*enemy_count.borrow_mut() -= 1;
 					}
-					*player_bithash.borrow_mut() = player.update(delta_time_sec, &*inputs, movescale);
+					*player_bithash.borrow_mut() = player.update(&update_args, &*inputs, movescale);
 					// println!("PlayerBitHashBin: {:08b}", *player_bithash.borrow());
-					bullets.par_iter_mut().for_each(|e| e.update(delta_time_sec));
-					bullet_datastore.increase_all_lifetime(delta_time_sec);
+					bullets.par_iter_mut().for_each(|e| e.update(&update_args));
+					bullet_datastore.increase_all_lifetime(update_args.delta_time);
 					for e in bullets.iter_mut().filter(|e| e.is_garbage())
 					{
 						match e { &mut Bullet::Garbage(i) => bullet_datastore.free(i), _ => unreachable!() };

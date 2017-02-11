@@ -1,6 +1,7 @@
 // Memory Block Manager
 
 use std;
+use std::collections::LinkedList;
 
 type BlockIndexRange = std::ops::Range<u32>;
 enum FreeOperation
@@ -12,14 +13,14 @@ enum FreeOperation
 
 pub struct MemoryBlockManager
 {
-	block_count: u32, freelist: std::collections::LinkedList<BlockIndexRange>
+	block_count: u32, freelist: LinkedList<BlockIndexRange>
 }
 impl MemoryBlockManager
 {
 	pub fn new(block_count: u32) -> Self
 	{
-		let mut fl = std::collections::LinkedList::<BlockIndexRange>::new();
-		fl.push_back(0 .. block_count - 1);
+		let mut fl = LinkedList::<BlockIndexRange>::new();
+		if block_count >= 1 { fl.push_back(0 .. block_count - 1); }
 
 		MemoryBlockManager { block_count: block_count, freelist: fl }
 	}
@@ -38,8 +39,7 @@ impl MemoryBlockManager
 	}
 	pub fn free(&mut self, index: u32)
 	{
-		let search = { self.free_search(index) };
-		match search
+		match self.free_search(index)
 		{
 			FreeOperation::ConcatenateBlock(i) =>
 			{

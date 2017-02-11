@@ -3,6 +3,7 @@ use rand;
 use rand::distributions::*;
 use structures;
 use constants::*;
+use GameUpdateArgs;
 
 pub struct BackgroundDatastore<'a>
 {
@@ -19,7 +20,7 @@ impl <'a> BackgroundDatastore<'a>
 			instance_data: instance_data_ref
 		}
 	}
-	pub fn update(&mut self, mut randomizer: &mut rand::Rng, delta_time: f32, appear: bool)
+	pub fn update(&mut self, update_args: &mut GameUpdateArgs, appear: bool)
 	{
 		let mut require_appear = appear;
 		let mut left_range = rand::distributions::Range::new(-14.0f32, 14.0f32);
@@ -32,16 +33,17 @@ impl <'a> BackgroundDatastore<'a>
 				// instantiate randomly
 				if require_appear
 				{
-					let scale = scale_range.sample(&mut randomizer);
+					let scale = scale_range.sample(&mut update_args.randomizer);
 					*m = 1;
-					self.buffer_data[i].offset = [left_range.sample(&mut randomizer), -20.0f32, -20.0f32, count_range.sample(&mut randomizer) as f32];
+					self.buffer_data[i].offset = [left_range.sample(&mut update_args.randomizer), -20.0f32, -20.0f32,
+						count_range.sample(&mut update_args.randomizer) as f32];
 					self.buffer_data[i].scale = [scale, scale, 1.0f32, 1.0f32];
 					require_appear = false;
 				}
 			}
 			else
 			{
-				self.buffer_data[i].offset[1] += delta_time * 22.0f32;
+				self.buffer_data[i].offset[1] += update_args.delta_time * 22.0f32;
 				*m = if self.buffer_data[i].offset[1] >= 20.0f32 { 0 } else { 1 };
 			}
 		}

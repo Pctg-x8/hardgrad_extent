@@ -6,6 +6,7 @@ use interlude::*;
 use std;
 use utils::quadtree::*;
 use constants::*;
+use GameUpdateArgs;
 
 pub struct Player<'a>
 {
@@ -28,19 +29,19 @@ impl<'a> Player<'a>
 			uniform_memory: uniform_ref, instance_memory: instance_ref, living_secs: 0.0f32
 		}
 	}
-	pub fn update(&mut self, frame_delta: f32, input: &Input<LogicalInputTypes>, movescale: f32) -> u32
+	pub fn update(&mut self, update_args: &GameUpdateArgs, input: &Input<LogicalInputTypes>, movescale: f32) -> u32
 	{
 		let u_quaternions = [
 			UnitQuaternion::new(Vector3::new(-1.0f32, 0.0f32, 0.75f32).normalize() * (260.0f32 * self.living_secs as f32).to_radians()),
 			UnitQuaternion::new(Vector3::new(1.0f32, -1.0f32, 0.5f32).normalize() * (-260.0f32 * self.living_secs as f32 + 13.0f32).to_radians())
 		];
 		let mut quaternions = u_quaternions.iter().map(|x| x.quaternion()).map(|q| [q.i, q.j, q.k, q.w]);
-		self.living_secs += frame_delta;
+		self.living_secs += update_args.delta_time;
 
 		self.uniform_memory[0] =
-			(self.uniform_memory[0] + input[LogicalInputTypes::Horizontal] * 40.0f32 * movescale * frame_delta).max(-PLAYER_HLIMIT).min(PLAYER_HLIMIT);
+			(self.uniform_memory[0] + input[LogicalInputTypes::Horizontal] * 40.0f32 * movescale * update_args.delta_time).max(-PLAYER_HLIMIT).min(PLAYER_HLIMIT);
 		self.uniform_memory[1] =
-			(self.uniform_memory[1] + input[LogicalInputTypes::Vertical] * 40.0f32 * movescale * frame_delta).max(PLAYER_SIZE_H).min(PLAYER_VLIMIT);
+			(self.uniform_memory[1] + input[LogicalInputTypes::Vertical] * 40.0f32 * movescale * update_args.delta_time).max(PLAYER_SIZE_H).min(PLAYER_VLIMIT);
 
 		self.instance_memory[0] = quaternions.next().unwrap();
 		self.instance_memory[1] = quaternions.next().unwrap();
@@ -67,14 +68,14 @@ impl<'a> PlayerBullet<'a>
 
 		PlayerBullet::Entity { block_index: block_index, offs_sincos_ref: offs_sincos_ref }
 	}
-	pub fn update(&mut self, delta_time: f32)
+	pub fn update(&mut self, update_args: &GameUpdateArgs)
 	{
 		let died_index = match self
 		{
 			&mut PlayerBullet::Entity { block_index: block, offs_sincos_ref: ref mut offs_sincos } =>
 			{
-				offs_sincos[0] += offs_sincos[2] * 8.0 * 14.0 * delta_time;
-				offs_sincos[1] -= offs_sincos[3] * 8.0 * 14.0 * delta_time;
+				offs_sincos[0] += offs_sincos[2] * 8.0 * 14.0 * update_args.delta_time;
+				offs_sincos[1] -= offs_sincos[3] * 8.0 * 14.0 * update_args.delta_time;
 				if offs_sincos[0].abs() > SCREEN_HSIZE || !(0.0 <= offs_sincos[1] && offs_sincos[1] <= SCREEN_VSIZE)
 				{
 					offs_sincos[0] = std::f32::MAX;

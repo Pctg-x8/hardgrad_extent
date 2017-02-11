@@ -4,6 +4,7 @@ use constants::*;
 use structures::*;
 use interlude::CVector4;
 use rayon::prelude::*;
+use GameUpdateArgs;
 
 pub struct BulletDatastore<'a>
 {
@@ -60,15 +61,15 @@ impl<'a> Bullet<'a>
 			movec: [s * speed, c * speed]
 		}
 	}
-	pub fn update(&mut self, delta_time: f32)
+	pub fn update(&mut self, update_args: &GameUpdateArgs)
 	{
 		let died_index = match self
 		{
 			&mut Bullet::Linear { block_index, movec, ref mut translation } =>
 			{
 				// Linear motion
-				translation[0] += movec[0] * delta_time;
-				translation[1] += movec[1] * delta_time;
+				translation[0] += movec[0] * update_args.delta_time;
+				translation[1] += movec[1] * update_args.delta_time;
 				if translation[0].abs() * 0.9 > SCREEN_HSIZE || !(-1.0 <= translation[1] && translation[1] <= SCREEN_VSIZE + 1.0)
 				{
 					Some(block_index)

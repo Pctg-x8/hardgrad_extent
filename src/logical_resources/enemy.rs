@@ -7,9 +7,9 @@ use interlude::*;
 use rand;
 use rand::distributions::*;
 use super::bullet::*;
-use std;
-use std::cell::RefCell;
 use std::rc::*;
+use utils;
+use {GameTime, GameUpdateArgs};
 
 fn store_quaternion(to: &mut CVector4, q: &Quaternion<f32>)
 {
@@ -62,7 +62,7 @@ pub enum Enemy<'a>
 	Free, Entity
 	{
 		block_index: u32, spawngroup: SpawnGroupRef, uniform_ref: &'a mut CharacterLocation, rezonator_iref: &'a mut CVector4,
-		left: f32, living_secs: f32, rezonator_left: u32, next: Continuous, next_raised: f32
+		left: f32, living_secs: GameTime, rezonator_left: u32, next: Continuous, next_raised: f32
 	}, Garbage(u32)
 }
 unsafe impl<'a> Send for Enemy<'a> {}
@@ -80,7 +80,7 @@ impl<'a> Enemy<'a>
 		Enemy::Entity
 		{
 			block_index: block_index, spawngroup: SpawnGroupRef { livings: Rc::downgrade(livings), local_index: sglx }, uniform_ref: uref, rezonator_iref: iref_rez,
-			left: init_left, living_secs: 0.0f32, rezonator_left: 3, next: Continuous::Cont(0.0, Box::new(|pos, fq|
+			left: init_left, living_secs: 0.0, rezonator_left: 3, next: Continuous::Cont(0.0, Box::new(|pos, fq|
 			{
 				fn sec1(pos: (f32, f32), fq: &mut Vec<FireRequest>) -> Continuous
 				{
@@ -94,7 +94,7 @@ impl<'a> Enemy<'a>
 			})), next_raised: 0.0
 		}
 	}
-	pub fn update(&mut self, delta_time: f32, frequest_queue: &mut Vec<FireRequest>) -> Option<(f32, f32)>
+	pub fn update(&mut self, update_args: &GameUpdateArgs, frequest_queue: &mut Vec<FireRequest>) -> Option<(f32, f32)>
 	{
 		// update values
 		let (gb_index, np) = match self
@@ -117,7 +117,7 @@ impl<'a> Enemy<'a>
 					rezonator_iref[0] = 0.0;
 					if let Some(lv) = spawngroup.livings.upgrade()
 					{
-						println!("dead... {}", spawngroup.local_index);
+						// println!("dead... {}", spawngroup.local_index);
 						lv.zako_mut().die(spawngroup.local_index);
 					}
 					(Some(block_index), None)
@@ -128,9 +128,9 @@ impl<'a> Enemy<'a>
 					store_quaternion(&mut uniform_ref.rotq[0], UnitQuaternion::new(Vector3::new(-1.0, 0.0, 0.75).normalize() * (260.0 * *living_secs).to_radians()).quaternion());
 					store_quaternion(&mut uniform_ref.rotq[1], UnitQuaternion::new(Vector3::new(1.0, -1.0, 0.5).normalize() * (-260.0 * *living_secs + 13.0).to_radians()).quaternion());
 					rezonator_iref[0] = rezonator_left as f32;
-					rezonator_iref[1] -= 130.0f32.to_radians() * delta_time;
-					rezonator_iref[2] += 220.0f32.to_radians() * delta_time;
-					*living_secs += delta_time;
+					rezonator_iref[1] -= 130.0f32.to_radians() * update_args.delta_time;
+					rezonator_iref[2] += 220.0f32.to_radians() * update_args.delta_time;
+					*living_secs += update_args.delta_time;
 					let newpos = (uniform_ref.center_tf[0], uniform_ref.center_tf[1]);
 
 					let nx = if let &mut Continuous::Cont(n, ref f) = next
@@ -164,70 +164,79 @@ impl<'a> Enemy<'a>
 /// Enemy Spawn Group
 pub mod spawn_group
 {
+	use super::{GameTime, GameUpdateArgs};
 	use std::cell::*;
 	use std::rc::Rc;
 	use std::mem::transmute;
 
 	/// fn (x, y, livings, local_index) -> Option<block_index>
 	pub type UnsafeAppearFnRef = *mut FnMut(f32, f32, &Rc<EntityLivings>, usize) -> Option<u32>;
-	pub type ExecuteBoxFn = Box<Fn(&Rc<EntityLivings>, UnsafeAppearFnRef) -> ExecuteState>;
+	pub type ExecuteBoxFn = Box<Fn(&Rc<EntityLivings>, &mut GameUpdateArgs, UnsafeAppearFnRef) -> ExecuteState>;
 	/// An execution state of Enemy Spawning Group
 	pub enum ExecuteState
 	{
 		Term,
 		Update(ExecuteBoxFn),
-		Delay(f32, ExecuteBoxFn), WaitForAll(ExecuteBoxFn)
+		Delay(GameTime, ExecuteBoxFn), WaitForAll(ExecuteBoxFn)
+	}
+	macro_rules! AdditionalArgsBoxed
+	{
+		($f: expr => $($a: expr),*) => {Box::new(|a, b, c| $f(a, b, c $(, $a)*))};
+		(mv $f: expr => $($a: expr),*) => {Box::new(move |a, b, c| $f(a, b, c $(, $a)*))}
 	}
 
 	/// Enemy Spawning Strategies
 	pub mod strategies
 	{
+		use rand;
+		use rand::distributions::*;
 		use std::rc::Rc;
-		use super::{EntityLivings, UnsafeAppearFnRef, ExecuteState};
+		use super::{EntityLivings, UnsafeAppearFnRef, ExecuteState, GameTime, GameUpdateArgs};
 		pub trait Strategy { fn begin(&self) -> ExecuteState; }
 
-		pub struct RandomFall(pub f32, pub u32);
+		pub struct RandomFall(pub GameTime, pub u32);
 		impl Strategy for RandomFall
 		{
 			fn begin(&self) -> ExecuteState
 			{
 				use super::ExecuteState::*;
 
-				fn recursive(l: &Rc<EntityLivings>, fun: UnsafeAppearFnRef, wait: f32, counter: u32) -> ExecuteState
+				fn recursive(l: &Rc<EntityLivings>, ua: &mut GameUpdateArgs, fun: UnsafeAppearFnRef, wait: GameTime, counter: u32) -> ExecuteState
 				{
+					let mut spawn_hrange = rand::distributions::Range::new(-25.0, 25.0);
 					if counter > 0
 					{
 						// println!("Enemy::Fall");
 						let next_index = l.zako.borrow().nextlife();
-						if let Some(b) = unsafe { (&mut *fun)(0.0, 0.0, l, next_index) }
+						if let Some(b) = unsafe { (&mut *fun)(spawn_hrange.sample(&mut ua.randomizer), 0.0, l, next_index) }
 						{
 							l.zako.borrow_mut().newlife(b);
 						}
-						Delay(wait, Box::new(move |l, f| recursive(l, f, wait, counter - 1)))
+						Delay(wait, AdditionalArgsBoxed!(mv recursive => wait, counter - 1))
 					}
-					else { WaitForAll(Box::new(|_, _| Term)) }
+					else { WaitForAll(Box::new(|_, _, _| Term)) }
 				}
 				let &RandomFall(w, c) = self;
-				Update(Box::new(move |l, f| recursive(l, f, w, c)))
+				Update(AdditionalArgsBoxed!(mv recursive => w, c))
 			}
 		}
 	}
 	pub use self::strategies::Strategy as SpawnStrategy;
 
-	pub struct EnemySpawnGroupExecute(f32, ExecuteState);
+	pub struct EnemySpawnGroupExecute(GameTime, ExecuteState);
 	impl EnemySpawnGroupExecute
 	{
 		fn new(c: ExecuteState) -> Self { EnemySpawnGroupExecute(0.0, c) }
-		fn update(&mut self, delta_time: f32, livings: &Rc<EntityLivings>, args: UnsafeAppearFnRef) -> bool
+		fn update(&mut self, update_args: &mut GameUpdateArgs, livings: &Rc<EntityLivings>, args: UnsafeAppearFnRef) -> bool
 		{
 			use self::ExecuteState::*;
 
-			self.0 += delta_time;
+			self.0 += update_args.delta_time;
 			let newcont = match self.1
 			{
-				Update(ref f) => Some(f(livings, args)),
-				Delay(d, ref f) => if self.0 >= d { Some(f(livings, args)) } else { None },
-				WaitForAll(ref f) => if livings.zako.borrow().lefts == 0 { Some(f(livings, args)) } else { None },
+				Update(ref f) => Some(f(livings, update_args, args)),
+				Delay(d, ref f) => if self.0 >= d { Some(f(livings, update_args, args)) } else { None },
+				WaitForAll(ref f) => if livings.zako.borrow().lefts == 0 { Some(f(livings, update_args, args)) } else { None },
 				_ => None
 			};
 			if let Some(nc) = newcont
@@ -271,16 +280,135 @@ pub mod spawn_group
 				})
 			}
 		}
-		pub fn update<F: FnMut(f32, f32, &Rc<EntityLivings>, usize) -> Option<u32>>(&mut self, delta_time: f32, mut appear: F) -> bool
+		pub fn update(&mut self, update_args: &mut GameUpdateArgs, appear: &mut FnMut(f32, f32, &Rc<EntityLivings>, usize) -> Option<u32>) -> bool
 		{
-			let cont = self.engine.update(delta_time, &self.livings,
-				unsafe { transmute::<&mut FnMut(f32, f32, &Rc<EntityLivings>, usize) -> Option<u32>, _>(&mut appear) });
-			if !cont
+			let cont = self.engine.update(update_args, &self.livings, unsafe { transmute(appear) });
+			/*if !cont
 			{
 				println!("End of Execution");
-			}
+			}*/
 			cont
 		}
 	}
 }
 pub use self::spawn_group::EnemyGroup;
+
+pub type ManagerExecuteFn = Box<Fn(&mut EnemySquads, &mut GameUpdateArgs) -> ManagerExecuteState>;
+pub enum ManagerExecuteState
+{
+	Terminated, Update(ManagerExecuteFn), Delay(GameTime, ManagerExecuteFn), WaitForAllSquads(ManagerExecuteFn)
+}
+pub struct ManagerEngine(ManagerExecuteState);
+impl ManagerEngine
+{
+	fn begin(s: ManagerExecuteState) -> Self
+	{
+		ManagerEngine(s)
+	}
+	fn update(&mut self, update_args: &mut GameUpdateArgs, squads: &mut EnemySquads) -> bool
+	{
+		let next = match &mut self.0
+		{
+			&mut ManagerExecuteState::Update(ref f) => Some(f(squads, update_args)),
+			&mut ManagerExecuteState::Delay(ref mut d, ref f) =>
+			{
+				*d -= update_args.delta_time;
+				if *d <= 0.0 { Some(f(squads, update_args)) } else { None }
+			},
+			&mut ManagerExecuteState::WaitForAllSquads(ref f) => if squads.left == 0
+			{
+				Some(f(squads, update_args))
+			} else { None },
+			_ => None
+		};
+		if let Some(n) = next
+		{
+			if let ManagerExecuteState::Terminated = n { println!("Execution Terminated"); }
+			self.0 = n;
+		}
+		if let ManagerExecuteState::Terminated = self.0 { false } else { true }
+	}
+}
+
+const INITIAL_SQUADS_LIMIT: usize = 32;
+pub struct EnemySquads
+{
+	objects: Vec<Option<EnemyGroup>>, freelist: utils::MemoryBlockManager, left: usize
+}
+impl EnemySquads
+{
+	fn new() -> Self
+	{
+		EnemySquads
+		{
+			objects: Vec::with_capacity(INITIAL_SQUADS_LIMIT), freelist: utils::MemoryBlockManager::new(0), left: 0
+		}
+	}
+	fn spawn_squad<Strategy: spawn_group::SpawnStrategy>(&mut self, strategy: Strategy)
+	{
+		if let Some(n) = self.freelist.allocate()
+		{
+			self.objects[n as usize] = Some(EnemyGroup::new(strategy));
+		}
+		else
+		{
+			self.objects.push(Some(EnemyGroup::new(strategy)));
+		}
+		self.left += 1;
+	}
+	fn update_all(&mut self, update_args: &mut GameUpdateArgs, appear: &mut FnMut(f32, f32, &Rc<spawn_group::EntityLivings>, usize) -> Option<u32>)
+	{
+		for (n, gi) in self.objects.iter_mut().enumerate()
+		{
+			let emptiness = if let &mut Some(ref mut g) = gi
+			{
+				if !g.update(update_args, appear)
+				{
+					self.freelist.free(n as u32); true
+				}
+				else { false }
+			}
+			else { false };
+			if emptiness { *gi = None; self.left -= 1; }
+		}
+	}
+}
+/// Top of all enemy squads
+pub struct EnemyManager
+{
+	squads: EnemySquads, engine: ManagerEngine
+}
+impl EnemyManager
+{
+	pub fn new() -> Self
+	{
+		/*
+			extern mgr: &mut EnemySquads;
+			extern args: &GameUpdateArgs;
+
+			loop
+			{
+				mgr.spawn_squad(spawn_group::strategies::RandomFall(0.1, 10));
+				yield WaitForAllSquads;
+				yield Delay(2.5);
+			}
+		*/
+		fn eternal_loop(mgr: &mut EnemySquads, args: &mut GameUpdateArgs) -> ManagerExecuteState
+		{
+			mgr.spawn_squad(spawn_group::strategies::RandomFall(0.1, 10));
+			ManagerExecuteState::WaitForAllSquads(Box::new(|_, _| ManagerExecuteState::Delay(2.5, Box::new(eternal_loop))))
+		}
+		let executions = ManagerExecuteState::Update(Box::new(eternal_loop));
+
+		EnemyManager
+		{
+			squads: EnemySquads::new(), engine: ManagerEngine::begin(executions)
+		}
+	}
+	pub fn update<AppearFn>(&mut self, update_args: &mut GameUpdateArgs, mut appear: AppearFn)
+		where AppearFn: FnMut(f32, f32, &Rc<spawn_group::EntityLivings>, usize) -> Option<u32>
+	{
+		self.engine.update(update_args, &mut self.squads);
+		self.squads.update_all(update_args, &mut appear);
+	}
+}
