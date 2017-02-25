@@ -1,4 +1,5 @@
 
 # ほかファイルのインクルード(プリプロセッサではなくて事後処理してシンボルを辿れるようにする)
+Include "images.pdc"
 Include "renderstate.pdc"
 Include "framebuffer.pdc"

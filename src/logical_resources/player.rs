@@ -39,9 +39,9 @@ impl<'a> Player<'a>
 		self.living_secs += update_args.delta_time;
 
 		self.uniform_memory[0] =
-			(self.uniform_memory[0] + input[LogicalInputTypes::Horizontal] * 40.0f32 * movescale * update_args.delta_time).max(-PLAYER_HLIMIT).min(PLAYER_HLIMIT);
+			(self.uniform_memory[0] + input[LogicalInputTypes::Horizontal] * 40.0f32 * movescale * update_args.delta_time).max(-PLAYER_LIMIT).min(PLAYER_LIMIT);
 		self.uniform_memory[1] =
-			(self.uniform_memory[1] + input[LogicalInputTypes::Vertical] * 40.0f32 * movescale * update_args.delta_time).max(PLAYER_SIZE_H).min(PLAYER_VLIMIT);
+			(self.uniform_memory[1] + input[LogicalInputTypes::Vertical] * 40.0f32 * movescale * update_args.delta_time).max(PLAYER_SIZE).min(PLAYER_VLIMIT);
 
 		self.instance_memory[0] = quaternions.next().unwrap();
 		self.instance_memory[1] = quaternions.next().unwrap();
@@ -76,7 +76,7 @@ impl<'a> PlayerBullet<'a>
 			{
 				offs_sincos[0] += offs_sincos[2] * 8.0 * 14.0 * update_args.delta_time;
 				offs_sincos[1] -= offs_sincos[3] * 8.0 * 14.0 * update_args.delta_time;
-				if offs_sincos[0].abs() > SCREEN_HSIZE || !(0.0 <= offs_sincos[1] && offs_sincos[1] <= SCREEN_VSIZE)
+				if offs_sincos[0].abs() > SCREEN_SIZE || !(0.0 <= offs_sincos[1] && offs_sincos[1] <= SCREEN_SIZE * 2.0)
 				{
 					offs_sincos[0] = std::f32::MAX;
 					offs_sincos[1] = std::f32::MAX;

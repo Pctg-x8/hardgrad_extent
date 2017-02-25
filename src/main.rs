@@ -9,7 +9,7 @@ extern crate rayon;
 extern crate itertools;
 extern crate half;
 
-#[macro_use] extern crate interlude;
+extern crate interlude;
 extern crate postludium;
 extern crate texture_compression;
 extern crate psdloader;
@@ -111,71 +111,6 @@ mod renderstate;
 use framebuffer::*;
 use renderstate::*;
 
-#[allow(dead_code)]
-pub struct SMAAPipelineStates
-{
-	edgedetect_vshader: ShaderProgram, blendweight_vshader: ShaderProgram, combine_vshader: ShaderProgram,
-	edgedetect_shader: ShaderProgram, blendweight_shader: ShaderProgram, combine_shader: ShaderProgram,
-	descriptor_sets: [DescriptorSetLayout; 3],
-	pub edgedetect_layout: PipelineLayout, pub blendweight_layout: PipelineLayout, pub combine_layout: PipelineLayout,
-	pub edgedetect: GraphicsPipeline, pub blendweight_calc: GraphicsPipeline, pub combine: GraphicsPipeline
-}
-impl SMAAPipelineStates
-{
-	pub fn new<Engine: AssetProvider + Deref<Target = GraphicsInterface>>(engine: &Engine, render_passes: &RenderPasses, processing_viewport: &Viewport) -> Self
-	{
-		let &Viewport(_, _, vw, vh, _, _) = processing_viewport;
-
-		let evsh = ShaderProgram::new_postprocess_vertex_from_asset(engine, "shaders.smaa.EdgeDetectionV", "main").or_crash();
-		let bwvsh = ShaderProgram::new_postprocess_vertex_from_asset(engine, "shaders.smaa.BlendWeightCalcV", "main").or_crash();
-		let cvsh = ShaderProgram::new_postprocess_vertex_from_asset(engine, "shaders.smaa.CombineV", "main").or_crash();
-		let esh = ShaderProgram::new_fragment_from_asset(engine, "shaders.smaa.EdgeDetection", "main").or_crash();
-		let bwsh = ShaderProgram::new_fragment_from_asset(engine, "shaders.smaa.BlendWeightCalc", "main").or_crash();
-		let csh = ShaderProgram::new_fragment_from_asset(engine, "shaders.smaa.Combine", "main").or_crash();
-
-		let dss = [
-			DescriptorSetLayout::new(engine, vec![Descriptor::CombinedSampler(1, ShaderStage::Fragment)].into()).or_crash(),
-			DescriptorSetLayout::new(engine, vec![Descriptor::CombinedSampler(3, ShaderStage::Fragment)].into()).or_crash(),
-			DescriptorSetLayout::new(engine, vec![Descriptor::CombinedSampler(2, ShaderStage::Fragment)].into()).or_crash()
-		];
-		let epl = PipelineLayout::new(engine, &[&dss[0]], &[]).or_crash();
-		let bwpl = PipelineLayout::new(engine, &[&dss[1]], &[]).or_crash();
-		let cpl = PipelineLayout::new(engine, &[&dss[2]], &[]).or_crash();
-
-		let scons_rt_metrics = vec![
-			(0, ConstantEntry::Float(vw)),
-			(1, ConstantEntry::Float(vh)),
-			(2, ConstantEntry::Float(vw.recip())),
-			(3, ConstantEntry::Float(vh.recip()))
-		];
-		let mut gps =
-		{
-			let eps = GraphicsPipelineBuilder::for_postprocess(engine, &epl, PreciseRenderPass(&render_passes.smaa_edgedetect, 0),
-				PipelineShaderProgram::unspecialized(&esh), processing_viewport).or_crash()
-				.vertex_shader(PipelineShaderProgram(&evsh, scons_rt_metrics.clone()));
-			let bwps = GraphicsPipelineBuilder::for_postprocess(engine, &bwpl, PreciseRenderPass(&render_passes.smaa_blendweight, 0),
-				PipelineShaderProgram(&bwsh, scons_rt_metrics.clone()), processing_viewport).or_crash()
-				.vertex_shader(PipelineShaderProgram(&bwvsh, scons_rt_metrics.clone()));
-			let cps = GraphicsPipelineBuilder::for_postprocess(engine, &cpl, PreciseRenderPass(&render_passes.smaa_combine, 0),
-				PipelineShaderProgram(&csh, scons_rt_metrics.clone()), processing_viewport).or_crash()
-				.vertex_shader(PipelineShaderProgram(&cvsh, scons_rt_metrics));
-			GraphicsPipelines::new(engine, &[&eps, &bwps, &cps]).or_crash()
-		};
-		let cpso = gps.pop().unwrap();
-		let bwpso = gps.pop().unwrap();
-		let epso = gps.pop().unwrap();
-		assert_eq!(gps.len(), 0);
-
-		SMAAPipelineStates
-		{
-			edgedetect_vshader: evsh, blendweight_vshader: bwvsh, combine_vshader: cvsh,
-			edgedetect_shader: esh, blendweight_shader: bwsh, combine_shader: csh,
-			descriptor_sets: dss, edgedetect_layout: epl, blendweight_layout: bwpl, combine_layout: cpl,
-			edgedetect: epso, blendweight_calc: bwpso, combine: cpso
-		}
-	}
-}
-
 fn gen_bullet_gradient(to: &mut [[u8; 4]; 16])
 {
 	fn interpolate(a: u8, b: u8, v: f32) -> u8 { (b as f32 * v + a as f32 * (1.0 - v)) as u8 }
@@ -225,6 +160,19 @@ pub struct GameUpdateArgs<'a>
 }
 unsafe impl<'a> Sync for GameUpdateArgs<'a> {}
 
+pub struct RenderSizes
+{
+	pub entire: Size2, pub game: Size2, pub score: Size2
+}
+pub struct Viewports { pub entire: Viewport, pub game: Viewport, pub score: Viewport }
+impl Viewports
+{
+	fn make_from(source: &RenderSizes) -> Self
+	{
+		Viewports { entire: Viewport::make_from(&source.entire), game: Viewport::make_from(&source.game), score: Viewport::make_from(&source.score) }
+	}
+}
+
 fn main()
 {
 	let engine = EngineBuilder::new("hardgrad_extend".into(), (0, 0, 1), "HardGrad -> Extend".into(), &Size2(640, 480))
@@ -262,8 +210,8 @@ fn main()
 		let circle16_pixels = BC4::compress(&single(&Size2(circle16_image.width as u32, circle16_image.height as u32),
 			circle16_image.layer_raw_channel_image_data(0, PSDChannelIndices::Alpha)
 		), (circle16_image.width, circle16_image.height));
-		mapped.range_mut::<u8>(offsets[4] as usize, 16 * 16 / 2).copy_from_slice(&playerbullet_pixels);
-		mapped.range_mut::<u8>(offsets[5] as usize, 16 * 16 / 2).copy_from_slice(&circle16_pixels);
+		mapped.range_mut(offsets[4] as usize, 16 * 16 / 2).copy_from_slice(&playerbullet_pixels);
+		mapped.range_mut(offsets[5] as usize, 16 * 16 / 2).copy_from_slice(&circle16_pixels);
 		mapped.map_mut::<[[f16; 4]; 4]>(offsets[0] as usize).copy_from_slice(&[
 			[f16::from_f64(2.0), f16::from_f64(1.5), f16::from_f64(1.0), f16::from_f64(1.0)],
 			[f16::from_f64(1.5), f16::from_f64(1.0), f16::from_f64(0.25), f16::from_f64(1.0)],
@@ -274,13 +222,19 @@ fn main()
 	}
 	let appdata = ApplicationBufferData::new(&engine, engine.render_window().size());
 
+	let render_sizes = RenderSizes
+	{
+		entire: engine.render_window().size().clone(),
+		game: Size2(engine.render_window().size().height(), engine.render_window().size().height()),
+		score: Size2(engine.render_window().size().width() - engine.render_window().size().height(), engine.render_window().size().height())
+	};
 	let render_pass = RenderPasses::new(&engine, target_format);
 	let framebuffers = Framebuffers::new(&engine, &render_pass, image_names.bb_sfloat4, image_names.bb_unorm4f, image_names.bb_unorm2, image_names.bb_unorm4,
-		engine.render_window().render_targets(), engine.render_window().size());
+		engine.render_window().render_targets(), &render_sizes);
 
 	// Pipelines //
-	let sc_viewport = Viewport::from(engine.render_window().size().clone());
-	let pipelines = PipelineStates::new(&engine, true, &render_pass, &sc_viewport);
+	let vps = Viewports::make_from(&render_sizes);
+	let pipelines = PipelineStates::new(&engine, true, &render_pass, &vps);
 
 	// Descriptor Set //
 	initialize_descriptor_sets(&engine, &appdata, &pipelines.descriptor_sets, &image_names);
@@ -355,7 +309,7 @@ fn main()
 		DebugLine::Float("CPU Time".to_owned(), &cputime_ms, Some("ms".to_owned())),
 		DebugLine::UnsignedInt("Enemy Count".to_owned(), &enemy_count, None),
 		DebugLine::UnsignedInt("Player Bithash".to_owned(), &player_bithash, None)
-	], &render_pass.smaa_combine, 0, &sc_viewport).or_crash();
+	], &render_pass.smaa_combine, 0, &vps.entire).or_crash();
 
 	info!("Recording Rendering Commands...");
 	// Rendering Commands //
@@ -382,10 +336,10 @@ fn main()
 		).or_crash();
 	}
 	let gcommands = GraphicsCommandBuffers::allocate(&engine, 1).or_crash();
+	let pure_clear_value = AttachmentClearValue::Color(0.0f32, 0.0f32, 0.0f32, 0.0f32);
 	gcommands.begin(0).and_then(|recorder|
 	{
 		let rr_clear_value = AttachmentClearValue::Color(0.0f32, 0.0f32, 0.015625f32, 1.0f32);
-		let pure_clear_value = AttachmentClearValue::Color(0.0f32, 0.0f32, 0.0f32, 0.0f32);
 		let color_output_barriers: Vec<_> = [
 			ImageMemoryBarrier::template(&**image_names.bb_unorm4f, ImageSubresourceRange::base_color()),
 			ImageMemoryBarrier::template(&**image_names.bb_unorm2, ImageSubresourceRange::base_color()),
@@ -466,8 +420,8 @@ fn main()
 			while !exit_flag_uo.load(Ordering::Acquire)
 			{
 				execute_next_signal.wait().and_then(|()| execute_next_signal.clear()).or_crash();
-				Unrecoverable!(engine.submit_transfer_commands(&debug_transfer_commands[..], &[], None, Some(&dbg_copy_completion_sig)));
-				Unrecoverable!(engine.submit_transfer_commands(&update_commands[..], &[], None, Some(&copy_completion_sig)));
+				engine.submit_transfer_commands(&debug_transfer_commands[..], &[], None, Some(&dbg_copy_completion_sig)).or_crash();
+				engine.submit_transfer_commands(&update_commands[..], &[], None, Some(&copy_completion_sig)).or_crash();
 				copy_completion_sig.wait().and_then(|()| copy_completion_sig.clear()).or_crash();
 				dbg_copy_completion_sig.wait().and_then(|()| dbg_copy_completion_sig.clear()).or_crash();
 				srv_update.set();

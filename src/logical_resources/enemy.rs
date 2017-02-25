@@ -112,7 +112,7 @@ impl<'a> Enemy<'a>
 				{
 					15.0f32 + (*living_secs - 0.875f32) * 2.5f32 - 3.0f32
 				};
-				if current_y >= 51.5
+				if current_y >= SCREEN_SIZE * 2.0 + 5.0
 				{
 					rezonator_iref[0] = 0.0;
 					if let Some(lv) = spawngroup.livings.upgrade()

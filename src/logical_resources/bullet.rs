@@ -70,7 +70,7 @@ impl<'a> Bullet<'a>
 				// Linear motion
 				translation[0] += movec[0] * update_args.delta_time;
 				translation[1] += movec[1] * update_args.delta_time;
-				if translation[0].abs() * 0.9 > SCREEN_HSIZE || !(-1.0 <= translation[1] && translation[1] <= SCREEN_VSIZE + 1.0)
+				if translation[0].abs() * 0.9 > SCREEN_SIZE || !(-1.0 <= translation[1] && translation[1] <= SCREEN_SIZE * 2.0 + 1.0)
 				{
 					Some(block_index)
 				}

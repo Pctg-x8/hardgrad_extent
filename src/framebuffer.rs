@@ -1,5 +1,6 @@
 use interlude::*;
 use interlude::ffi::*;
+use RenderSizes;
 
 pub struct RenderPasses
 {
@@ -73,16 +74,16 @@ pub struct Framebuffers
 impl Framebuffers
 {
 	pub fn new(engine: &GraphicsInterface, molds: &RenderPasses, nr_view: &ImageView2D, tonemap_out_view: &ImageView2D,
-		smaa_edgedetect_out_view: &ImageView2D, smaa_blendweight_out_view: &ImageView2D, swapchain_views: &[WindowRenderTargetView], size: &Size2) -> Self
+		smaa_edgedetect_out_view: &ImageView2D, smaa_blendweight_out_view: &ImageView2D, swapchain_views: &[WindowRenderTargetView], sizes: &RenderSizes) -> Self
 	{
-		let &Size2(w, h) = size;
-		let fsz = Size3(w, h, 1);
+		let fsz = { let Size2(w, h) = sizes.entire; Size3(w, h, 1) };
+		let gsz = { let Size2(w, h) = sizes.game; Size3(w, h, 1) };
 
 		Framebuffers
 		{
-			normal_render: Framebuffer::new(engine, &molds.normal_render, &[nr_view, tonemap_out_view], &fsz).or_crash(),
-			smaa_edgedetect: Framebuffer::new(engine, &molds.smaa_edgedetect, &[smaa_edgedetect_out_view], &fsz).or_crash(),
-			smaa_blendweight: Framebuffer::new(engine, &molds.smaa_blendweight, &[smaa_blendweight_out_view], &fsz).or_crash(),
+			normal_render: Framebuffer::new(engine, &molds.normal_render, &[nr_view, tonemap_out_view], &gsz).or_crash(),
+			smaa_edgedetect: Framebuffer::new(engine, &molds.smaa_edgedetect, &[smaa_edgedetect_out_view], &gsz).or_crash(),
+			smaa_blendweight: Framebuffer::new(engine, &molds.smaa_blendweight, &[smaa_blendweight_out_view], &gsz).or_crash(),
 			final_output: swapchain_views.into_iter().map(|v| Framebuffer::new(engine, &molds.smaa_combine, &[v], &fsz))
 				.collect::<Result<_, _>>().or_crash()
 		}

@@ -3,19 +3,19 @@
 # Backbuffer
 Image 2D
 - Format: R16G16B16A16 SFLOAT
-- Extent: $ScreenWidth $ScreenHeight
+- Extent: $ScreenHeight $ScreenHeight
 - Usage: Sampled / ColorAttachment / InputAttachment / DeviceLocal
 Image 2D # Tonemap Result
 - Format: R8G8B8A8 UNORM
-- Extent: $ScreenWidth $ScreenHeight
+- Extent: $ScreenHeight $ScreenHeight
 - Usage: Sampled / ColorAttachment / DeviceLocal
 Image 2D # SMAA EdgeDetect Result
 - Format: R8G8 UNORM
-- Extent: $ScreenWidth $ScreenHeight
+- Extent: $ScreenHeight $ScreenHeight
 - Usage: Sampled / ColorAttachment / DeviceLocal
 Image 2D # SMAA BlendWeight Result
 - Format: R8G8B8A8 UNORM
-- Extent: $ScreenWidth $ScreenHeight
+- Extent: $ScreenHeight $ScreenHeight
 - Usage: Sampled / ColorAttachment / DeviceLocal
 Image 2D # SMAA Area Texture
 - Format: BlockCompression5 UNORM
