@@ -17,7 +17,8 @@ lazy_static = "0.2.1"
 half = "0.1.0"
 
 # interlude = { git = "https://github.com/Pctg-x8/interlude.git" }
-interlude = { path = "./interlude" }
-postludium = { git = "https://github.com/Pctg-x8/postludium.git" }
+interlude = { path = "./postludium/interlude" }
+# postludium = { git = "https://github.com/Pctg-x8/postludium.git" }
+postludium = { path = "./postludium" }
 texture_compression = { path = "./texture_compression" }
 psdloader = { path = "./psdloader" }
