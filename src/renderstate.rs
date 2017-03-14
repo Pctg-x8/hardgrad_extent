@@ -95,7 +95,7 @@ impl PipelineStates
 				.viewport_scissors(&[ViewportWithScissorRect::default_scissor(&viewports.game)])
 				.blend_state(&[AttachmentBlendState::Disabled]);
 			let playerbullet_ps = GraphicsPipelineBuilder::new(&layouts.sprite_layout, normal_render_pass.clone())
-				.vertex_shader(PipelineShaderProgram(&shaderstore.playerbullet_vsh, vec![(0, ConstantEntry::Float(0.75))]))
+				.vertex_shader(PipelineShaderProgram(shaderstore.playerbullet_vsh.clone(), vec![(0, ConstantEntry::Float(0.75))]))
 				.fragment_shader(PipelineShaderProgram::unspecialized(&shaderstore.sprite_fsh))
 				.primitive_topology(PrimitiveTopology::TriangleStrip(false))
 				.viewport_scissors(&[ViewportWithScissorRect::default_scissor(&viewports.game)])
@@ -111,7 +111,7 @@ impl PipelineStates
 				PipelineShaderProgram::unspecialized(&shaderstore.tonemap_fsh), &viewports.game).or_crash()
 				.vertex_shader(PipelineShaderProgram::unspecialized(engine.postprocess_vsh(false).or_crash()));
 			let bullet_ps = GraphicsPipelineBuilder::new(&layouts.bullet_layout, normal_render_pass.clone())
-				.vertex_shader(PipelineShaderProgram(&shaderstore.bullet_vsh, vec![(0, ConstantEntry::Float(0.6875))]))
+				.vertex_shader(PipelineShaderProgram(shaderstore.bullet_vsh.clone(), vec![(0, ConstantEntry::Float(0.6875))]))
 				.fragment_shader(PipelineShaderProgram::unspecialized(&shaderstore.colored_sprite_fsh))
 				.primitive_topology(PrimitiveTopology::TriangleStrip(false))
 				.viewport_scissors(&[ViewportWithScissorRect::default_scissor(&viewports.game)])
@@ -212,7 +212,7 @@ impl SpriteRender
 
 pub struct SMAAPipelineStates
 {
-	#[allow(dead_code)] shaders: (ShaderProgram, ShaderProgram, ShaderProgram, ShaderProgram, ShaderProgram, ShaderProgram),
+	#[allow(dead_code)] shaders: (Rc<VertexShader>, Rc<VertexShader>, Rc<VertexShader>, Rc<FragmentShader>, Rc<FragmentShader>, Rc<FragmentShader>),
 	descriptor_sets: [DescriptorSetLayout; 3],
 	pub edgedetect_layout: PipelineLayout, pub blendweight_layout: PipelineLayout, pub combine_layout: PipelineLayout,
 	pub edgedetect: GraphicsPipeline, pub blendweight_calc: GraphicsPipeline, pub combine: GraphicsPipeline
@@ -223,12 +223,12 @@ impl SMAAPipelineStates
 	{
 		let Viewport(_, _, vw, vh, _, _) = viewports.game;
 
-		let evsh = ShaderProgram::new_postprocess_vertex_from_asset(engine, "shaders.smaa.EdgeDetectionV", "main").or_crash();
-		let bwvsh = ShaderProgram::new_postprocess_vertex_from_asset(engine, "shaders.smaa.BlendWeightCalcV", "main").or_crash();
-		let cvsh = ShaderProgram::new_postprocess_vertex_from_asset(engine, "shaders.smaa.CombineV", "main").or_crash();
-		let esh = ShaderProgram::new_fragment_from_asset(engine, "shaders.smaa.EdgeDetection", "main").or_crash();
-		let bwsh = ShaderProgram::new_fragment_from_asset(engine, "shaders.smaa.BlendWeightCalc", "main").or_crash();
-		let csh = ShaderProgram::new_fragment_from_asset(engine, "shaders.smaa.Combine", "main").or_crash();
+		let evsh = VertexShader::from_asset_for_postprocessing(engine, "shaders.smaa.EdgeDetectionV", "main").or_crash();
+		let bwvsh = VertexShader::from_asset_for_postprocessing(engine, "shaders.smaa.BlendWeightCalcV", "main").or_crash();
+		let cvsh = VertexShader::from_asset_for_postprocessing(engine, "shaders.smaa.CombineV", "main").or_crash();
+		let esh = FragmentShader::from_asset(engine, "shaders.smaa.EdgeDetection", "main").or_crash();
+		let bwsh = FragmentShader::from_asset(engine, "shaders.smaa.BlendWeightCalc", "main").or_crash();
+		let csh = FragmentShader::from_asset(engine, "shaders.smaa.Combine", "main").or_crash();
 
 		let dss = [
 			DescriptorSetLayout::new(engine, vec![Descriptor::CombinedSampler(1, ShaderStage::Fragment)].into()).or_crash(),
@@ -249,13 +249,13 @@ impl SMAAPipelineStates
 		{
 			let eps = GraphicsPipelineBuilder::for_postprocess(engine, &epl, PreciseRenderPass(&render_passes.smaa_edgedetect, 0),
 				PipelineShaderProgram::unspecialized(&esh), &viewports.game).or_crash()
-				.vertex_shader(PipelineShaderProgram(&evsh, scons_rt_metrics.clone()));
+				.vertex_shader(PipelineShaderProgram(evsh.clone(), scons_rt_metrics.clone()));
 			let bwps = GraphicsPipelineBuilder::for_postprocess(engine, &bwpl, PreciseRenderPass(&render_passes.smaa_blendweight, 0),
-				PipelineShaderProgram(&bwsh, scons_rt_metrics.clone()), &viewports.game).or_crash()
-				.vertex_shader(PipelineShaderProgram(&bwvsh, scons_rt_metrics.clone()));
+				PipelineShaderProgram(bwsh.clone(), scons_rt_metrics.clone()), &viewports.game).or_crash()
+				.vertex_shader(PipelineShaderProgram(bwvsh.clone(), scons_rt_metrics.clone()));
 			let cps = GraphicsPipelineBuilder::for_postprocess(engine, &cpl, PreciseRenderPass(&render_passes.smaa_combine, 0),
-				PipelineShaderProgram(&csh, scons_rt_metrics.clone()), &viewports.game).or_crash()
-				.vertex_shader(PipelineShaderProgram(&cvsh, scons_rt_metrics));
+				PipelineShaderProgram(csh.clone(), scons_rt_metrics.clone()), &viewports.game).or_crash()
+				.vertex_shader(PipelineShaderProgram(cvsh.clone(), scons_rt_metrics));
 			GraphicsPipelines::new(engine, &[&eps, &bwps, &cps]).or_crash()
 		};
 		let cpso = gps.pop().unwrap();
